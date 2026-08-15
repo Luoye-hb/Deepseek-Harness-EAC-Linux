@@ -54,20 +54,20 @@ sudo pacman -Rns dsh-desktop
 
 ### Ubuntu / Debian（x86_64）
 
-下载 `Deepseek-Harness-EAC-<版本>-x64.deb` 后安装：
+下载 `Deepseek-Harness-EAC-<版本>-amd64.deb` 后安装：
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-2.0.4-x64.deb
+sudo apt install ./Deepseek-Harness-EAC-2.0.4-amd64.deb
 ```
 
 卸载：`sudo apt remove dsh-desktop`。
 
 ### Fedora（x86_64）
 
-下载 `Deepseek-Harness-EAC-<版本>.x64.rpm` 后安装：
+下载 `Deepseek-Harness-EAC-<版本>.x86_64.rpm` 后安装：
 
 ```bash
-sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x64.rpm
+sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x86_64.rpm
 ```
 
 卸载：`sudo dnf remove dsh-desktop`。
@@ -75,8 +75,8 @@ sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x64.rpm
 ### AppImage（免安装，通用）
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-2.0.4-x64.AppImage
-./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+chmod +x ./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
+./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
 ```
 
 > Ubuntu 24.04 等只有 FUSE3 的发行版，若提示缺少 FUSE2，先安装 `libfuse2`
@@ -215,8 +215,8 @@ npm run dist:appimage          # 构建免安装 AppImage
 ```
 
 生成的包名分别为 `Deepseek-Harness-EAC-<版本>-x64.pacman`、
-`Deepseek-Harness-EAC-<版本>-x64.deb`、`Deepseek-Harness-EAC-<版本>.x64.rpm`
-与 `Deepseek-Harness-EAC-<版本>-x64.AppImage`。`afterPack` 会审核长期记忆
+`Deepseek-Harness-EAC-<版本>-amd64.deb`、`Deepseek-Harness-EAC-<版本>.x86_64.rpm`
+与 `Deepseek-Harness-EAC-<版本>-x86_64.AppImage`。`afterPack` 会审核长期记忆
 插件的 JavaScript 产物、Jieba 和 sqlite-vec 等平台原生运行时，关键文件
 不完整时构建会失败。
 

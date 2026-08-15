@@ -99,10 +99,10 @@ pacman 会自动处理 Electron 所需的 GTK、NSS、通知、密钥环等系�
 
 ### Ubuntu / Debian（x86_64）
 
-下载 `Deepseek-Harness-EAC-<版本>-x64.deb` 后安装：
+下载 `Deepseek-Harness-EAC-<版本>-amd64.deb` 后安装：
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-2.0.4-x64.deb
+sudo apt install ./Deepseek-Harness-EAC-2.0.4-amd64.deb
 ```
 
 安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行
@@ -114,10 +114,10 @@ sudo apt remove dsh-desktop
 
 ### Fedora（x86_64）
 
-下载 `Deepseek-Harness-EAC-<版本>.x64.rpm` 后安装：
+下载 `Deepseek-Harness-EAC-<版本>.x86_64.rpm` 后安装：
 
 ```bash
-sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x64.rpm
+sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x86_64.rpm
 ```
 
 卸载：
@@ -128,11 +128,11 @@ sudo dnf remove dsh-desktop
 
 ### AppImage（Ubuntu / Debian / Fedora 通用，免安装）
 
-下载 `Deepseek-Harness-EAC-<版本>-x64.AppImage` 后：
+下载 `Deepseek-Harness-EAC-<版本>-x86_64.AppImage` 后：
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-2.0.4-x64.AppImage
-./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+chmod +x ./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
+./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
 ```
 
 > Ubuntu 24.04 等默认只有 FUSE3 的发行版，若 AppImage 提示缺少 FUSE2，

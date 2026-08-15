@@ -85,20 +85,20 @@ sudo pacman -Rns dsh-desktop
 
 ### Ubuntu / Debian (x86_64)
 
-Download `Deepseek-Harness-EAC-<version>-x64.deb`, then:
+Download `Deepseek-Harness-EAC-<version>-amd64.deb`, then:
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-2.0.4-x64.deb
+sudo apt install ./Deepseek-Harness-EAC-2.0.4-amd64.deb
 ```
 
 Uninstall: `sudo apt remove dsh-desktop`.
 
 ### Fedora (x86_64)
 
-Download `Deepseek-Harness-EAC-<version>.x64.rpm`, then:
+Download `Deepseek-Harness-EAC-<version>.x86_64.rpm`, then:
 
 ```bash
-sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x64.rpm
+sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x86_64.rpm
 ```
 
 Uninstall: `sudo dnf remove dsh-desktop`.
@@ -106,8 +106,8 @@ Uninstall: `sudo dnf remove dsh-desktop`.
 ### AppImage (any of the above, no install)
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-2.0.4-x64.AppImage
-./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+chmod +x ./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
+./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
 ```
 
 > Ubuntu 24.04+ ships only FUSE3 by default; if the AppImage asks for FUSE2,
