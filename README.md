@@ -9,13 +9,13 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Arch_Linux-x86__64-1793D1?style=flat&logo=archlinux&logoColor=white" alt="Arch Linux"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Linux-x86__64-1793D1?style=flat&logo=linux&logoColor=white" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
-封装为<strong>开箱即用的 Windows / Arch Linux 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
+封装为<strong>开箱即用的 Windows / Linux 桌面客户端</strong>（Arch / Ubuntu / Debian / Fedora），并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
 
@@ -30,7 +30,7 @@
 | 运行方式 | 需先安装 Node.js，`npx @deepseek-ai/dsh web` + 浏览器访问 | **免装 Node**：内置独立 Node 运行时与 npm CLI，双击即用 |
 | 界面皮肤 | 仅官方默认外观 | **内置 10 款 Web UI 皮肤**（XP / QQ98 / 初音未来 / 我的世界 / 同花顺 / 鲸歌…），设置页一键互斥切换，默认不启用保持原生 |
 | 窗口体验 | 浏览器标签页 | **原生无边框窗口**（自绘玻璃栏）+ **系统托盘常驻**，关闭不打断任务 |
-| 便携性 | 无 | Windows 提供**便携版**；Arch Linux 提供 pacman 安装包 |
+| 便携性 | 无 | Windows 提供**便携版**；Linux 提供 pacman / deb / rpm 安装包与通用 AppImage |
 | 余额查看 | 手动上官网查 | 对话底部内联「**本轮 ¥X · 余额 ¥Y**」实时小部件，点击跳转充值 |
 | 文件管理 | 手动翻目录 | **会话文件更改追踪**（行级 diff）+ **一键还原**，全部/逐文件 |
 | 会话内终端 | 无 | **终端标签页**：会话项目目录内持久 PowerShell，SSE 流式，断线重连 |
@@ -38,7 +38,7 @@
 | 插件安装 | 手动 npm | 设置页内置**插件市场**，搜索/一键安装/卸载 dsh 插件 |
 | 更新 | 手动 `npm update` | **双重自动更新**：官方 agent 更新（npm overlay，失败可回退）+ 客户端本体自更新，均经用户同意 |
 | 任务通知 | 无 | agent 任务完成弹出**系统通知**，点击回到窗口 |
-| 系统要求 | Windows/macOS/Linux + Node.js 环境 | Windows 10/11 或 Arch Linux（x86_64），**无需预装 Node.js** |
+| 系统要求 | Windows/macOS/Linux + Node.js 环境 | Windows 10/11 或 Linux x86_64（Arch / Ubuntu / Debian / Fedora），**无需预装 Node.js** |
 
 > 内核零改动：EAC 直接运行官方 `dsh web`，完整保留「一切皆插件」架构与全部官方能力，
 > 与 CLI 共享 `DSH_HOME` 配置，已有会话/API Key 直接生效。
@@ -96,6 +96,47 @@ pacman 会自动处理 Electron 所需的 GTK、NSS、通知、密钥环等系�
 
 > 当前 Linux 包仅支持 x86_64。客户端本体升级应通过新的 pacman 包完成；
 > Windows 的便携版/NSIS 原地自更新流程不适用于 pacman 安装。
+
+### Ubuntu / Debian（x86_64）
+
+下载 `Deepseek-Harness-EAC-<版本>-x64.deb` 后安装：
+
+```bash
+sudo apt install ./Deepseek-Harness-EAC-2.0.4-x64.deb
+```
+
+安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行
+`deepseek-harness-eac`。卸载：
+
+```bash
+sudo apt remove dsh-desktop
+```
+
+### Fedora（x86_64）
+
+下载 `Deepseek-Harness-EAC-<版本>.x64.rpm` 后安装：
+
+```bash
+sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x64.rpm
+```
+
+卸载：
+
+```bash
+sudo dnf remove dsh-desktop
+```
+
+### AppImage（Ubuntu / Debian / Fedora 通用，免安装）
+
+下载 `Deepseek-Harness-EAC-<版本>-x64.AppImage` 后：
+
+```bash
+chmod +x ./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+```
+
+> Ubuntu 24.04 等默认只有 FUSE3 的发行版，若 AppImage 提示缺少 FUSE2，
+> 先安装 `libfuse2`（Fedora 为 `fuse-libs`）或使用 `--appimage-extract-and-run` 启动。
 
 ### 升级部署
 
@@ -161,9 +202,9 @@ pacman 会自动处理 Electron 所需的 GTK、NSS、通知、密钥环等系�
 
 ## 系统要求
 
-- Windows 10/11（x64），或 Arch Linux（x86_64）
+- Windows 10/11（x64），或 Linux x86_64（Arch / Ubuntu / Debian / Fedora）
 - 目标机器无需预装 Node.js；Node.js 与 npm 随应用打包
-- Arch Linux 图形环境需要 X11 或 Wayland，并由 pacman 安装声明的运行时依赖
+- Linux 图形环境需要 X11 或 Wayland，并由各包管理器安装声明的运行时依赖
 
 ## 从源码构建
 
@@ -178,7 +219,9 @@ npm run dist             # 构建 portable + NSIS 安装包 → dist/
 
 > 网络受限时：Electron 镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 
-### Arch Linux
+### Linux（Arch / Ubuntu / Debian / Fedora）
+
+以 Arch Linux 为例：
 
 ```bash
 sudo pacman -S --needed base-devel nodejs npm
@@ -190,7 +233,15 @@ npm run dist:arch        # 输出 dist/Deepseek-Harness-EAC-<版本>-x64.pacman
 ```
 
 也可以运行 `npm run dist:linux` 构建 `electron-builder.yml` 中配置的全部
-Linux 目标。打包脚本会检查 npm 的嵌套依赖、长期记忆插件的 JavaScript
+Linux 目标，或按需构建单个目标：
+
+```bash
+npm run dist:deb       # Ubuntu / Debian 的 .deb
+npm run dist:rpm       # Fedora 的 .rpm
+npm run dist:appimage  # 免安装 AppImage
+```
+
+打包脚本会检查 npm 的嵌套依赖、长期记忆插件的 JavaScript
 产物，以及 Jieba、sqlite-vec 等 Linux 原生运行时；缺少关键文件时会直接
 终止构建，避免生成可安装但无法启动的包。
 
@@ -205,6 +256,22 @@ sudo pacman -U ./dist/Deepseek-Harness-EAC-2.0.4-x64.pacman
 ```bash
 npm test                 # node --test test/*.test.mjs
 ```
+
+### 维护者：用 GitHub Actions 自动构建 Linux 包（免本地编译）
+
+仓库的 `.github/workflows/build-arch-pacman.yml` 会在 **push 到 `main` /
+`codex/arch-linux` 分支、推送 `v*` 标签、或手动 `workflow_dispatch`** 时，
+自动在 Arch Linux 容器里构建 `*.pacman`，并在 Ubuntu runner 上构建
+`*.deb` / `*.rpm` / `*.AppImage`，全部上传为 GitHub Actions Artifact；
+推送 tag 时还会由统一的 Release job 附加到 GitHub Release。fork 维护者只需：
+
+```bash
+git push origin codex/arch-linux   # 触发构建，到 Actions 里下载各发行版包
+git push origin v2.0.5             # 打 tag 发布，自动生成 Release 资产
+```
+
+目标机器上仍然用各发行版包管理器安装（`pacman -U` / `apt install` /
+`dnf install`），Linux 端升级继续由包管理器拥有，不进入应用内自更新流程。
 
 ## 架构
 

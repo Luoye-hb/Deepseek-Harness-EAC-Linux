@@ -1,6 +1,6 @@
 # Deepseek Harness EAC（揽尽万象 · Embracing All Creation）
 
-把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows / Arch Linux 桌面客户端。
+把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows / Linux 桌面客户端（Arch / Ubuntu / Debian / Fedora）。
 
 - ✅ **免安装 Node**：内置独立的 Node 运行时与 npm CLI，目标机器无需安装 Node.js
 - ✅ **内置 dsh CLI**：完整打包 `@deepseek-ai/dsh` 及其全部插件，离线可用
@@ -51,6 +51,36 @@ sudo pacman -Rns dsh-desktop
 
 应用内置 Node.js 与 npm，目标机器无需预装 Node.js。Linux 客户端升级应安装
 新的 pacman 包；Windows 便携版/NSIS 的原地自更新流程不适用于 pacman 安装。
+
+### Ubuntu / Debian（x86_64）
+
+下载 `Deepseek-Harness-EAC-<版本>-x64.deb` 后安装：
+
+```bash
+sudo apt install ./Deepseek-Harness-EAC-2.0.4-x64.deb
+```
+
+卸载：`sudo apt remove dsh-desktop`。
+
+### Fedora（x86_64）
+
+下载 `Deepseek-Harness-EAC-<版本>.x64.rpm` 后安装：
+
+```bash
+sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x64.rpm
+```
+
+卸载：`sudo dnf remove dsh-desktop`。
+
+### AppImage（免安装，通用）
+
+```bash
+chmod +x ./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+./Deepseek-Harness-EAC-2.0.4-x64.AppImage
+```
+
+> Ubuntu 24.04 等只有 FUSE3 的发行版，若提示缺少 FUSE2，先安装 `libfuse2`
+> （Fedora 为 `fuse-libs`），或使用 `--appimage-extract-and-run` 启动。
 
 ## 跟随官方更新（用户同意后自动更新）
 
@@ -179,12 +209,22 @@ npm install
 npm run fetch-runtime          # 内置 Linux x64 Node.js + npm CLI
 npm test
 npm run dist:arch              # 构建 pacman 包，输出到 dist/
+npm run dist:deb               # 构建 Ubuntu / Debian 的 .deb
+npm run dist:rpm               # 构建 Fedora 的 .rpm
+npm run dist:appimage          # 构建免安装 AppImage
 ```
 
-生成的包名为 `Deepseek-Harness-EAC-<版本>-x64.pacman`，使用
-`sudo pacman -U ./dist/<包名>` 安装。`afterPack` 会审核长期记忆插件的
-JavaScript 产物、Jieba 和 sqlite-vec 等平台原生运行时，关键文件不完整时
-构建会失败。
+生成的包名分别为 `Deepseek-Harness-EAC-<版本>-x64.pacman`、
+`Deepseek-Harness-EAC-<版本>-x64.deb`、`Deepseek-Harness-EAC-<版本>.x64.rpm`
+与 `Deepseek-Harness-EAC-<版本>-x64.AppImage`。`afterPack` 会审核长期记忆
+插件的 JavaScript 产物、Jieba 和 sqlite-vec 等平台原生运行时，关键文件
+不完整时构建会失败。
+
+> **免本地编译**：仓库根目录的 `.github/workflows/build-arch-pacman.yml`
+> 可在 GitHub Actions 的 Arch Linux 容器中自动构建 pacman 包，并在 Ubuntu
+> runner 上构建 deb / rpm / AppImage。推送 `main` / `codex/arch-linux` 分支
+> 或 `v*` 标签即触发；到 Actions 里下载 Artifact（打 tag 时自动发布为
+> Release 资产），本地用各发行版包管理器安装即可。
 
 ## 架构
 
