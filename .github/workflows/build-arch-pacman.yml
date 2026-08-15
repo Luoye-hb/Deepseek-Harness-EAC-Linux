@@ -1,0 +1,139 @@
+name: Build Linux packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - codex/arch-linux
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-pacman:
+    name: Build pacman package on Arch Linux
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Install toolchain
+        run: |
+          pacman -Syu --noconfirm
+          # 使用系统 Ruby + fpm 而不是 electron-builder 下载的预编译 fpm：
+          # 后者自带的 ruby 依赖 libcrypt.so.1，Arch 官方仓库没有该 ABI。
+          pacman -S --needed --noconfirm nodejs npm git ruby ruby-erb
+
+      - name: Install fpm gem
+        run: |
+          gem install fpm --no-document --bindir /usr/local/bin
+          /usr/local/bin/fpm --version
+
+      - uses: actions/checkout@v4
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: dsh-desktop
+
+      - name: Fetch bundled Node runtime and npm CLI
+        run: npm run fetch-runtime
+        working-directory: dsh-desktop
+
+      - name: Run tests
+        run: npm test
+        working-directory: dsh-desktop
+
+      # 国内网络不佳的 fork 可以打开下面两行镜像：
+      # env:
+      #   ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      #   ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+      - name: Build pacman package
+        run: npm run dist:arch
+        working-directory: dsh-desktop
+        env:
+          USE_SYSTEM_FPM: "true"
+
+      - name: Show built artifacts
+        run: ls -lh dist/
+        working-directory: dsh-desktop
+
+      - name: Upload pacman artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-pacman-${{ github.run_id }}
+          path: dsh-desktop/dist/*.pacman
+          if-no-files-found: error
+          retention-days: 30
+
+  build-deb-rpm-appimage:
+    name: Build deb / rpm / AppImage on Ubuntu
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: dsh-desktop
+
+      - name: Fetch bundled Node runtime and npm CLI
+        run: npm run fetch-runtime
+        working-directory: dsh-desktop
+
+      - name: Run tests
+        run: npm test
+        working-directory: dsh-desktop
+
+      # 国内网络不佳的 fork 可以打开下面两行镜像：
+      # env:
+      #   ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      #   ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+      - name: Build deb / rpm / AppImage
+        run: npm run dist:deb && npm run dist:rpm && npm run dist:appimage
+        working-directory: dsh-desktop
+
+      - name: Show built artifacts
+        run: ls -lh dist/
+        working-directory: dsh-desktop
+
+      - name: Upload deb / rpm / AppImage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-linux-packages-${{ github.run_id }}
+          path: |
+            dsh-desktop/dist/*.deb
+            dsh-desktop/dist/*.rpm
+            dsh-desktop/dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Attach Linux packages to GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-pacman, build-deb-rpm-appimage]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-desktop-*
+          merge-multiple: true
+          path: release-artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**/*
+          draft: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
