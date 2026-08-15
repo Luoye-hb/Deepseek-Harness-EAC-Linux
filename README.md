@@ -9,12 +9,13 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Arch_Linux-x86__64-1793D1?style=flat&logo=archlinux&logoColor=white" alt="Arch Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
-封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
+封装为<strong>开箱即用的 Windows / Arch Linux 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
 
@@ -29,15 +30,15 @@
 | 运行方式 | 需先安装 Node.js，`npx @deepseek-ai/dsh web` + 浏览器访问 | **免装 Node**：内置独立 Node 运行时与 npm CLI，双击即用 |
 | 界面皮肤 | 仅官方默认外观 | **内置 10 款 Web UI 皮肤**（XP / QQ98 / 初音未来 / 我的世界 / 同花顺 / 鲸歌…），设置页一键互斥切换，默认不启用保持原生 |
 | 窗口体验 | 浏览器标签页 | **原生无边框窗口**（自绘玻璃栏）+ **系统托盘常驻**，关闭不打断任务 |
-| 便携性 | 无 | **便携版**数据跟随 exe，拷到 U 盘即用 |
+| 便携性 | 无 | Windows 提供**便携版**；Arch Linux 提供 pacman 安装包 |
 | 余额查看 | 手动上官网查 | 对话底部内联「**本轮 ¥X · 余额 ¥Y**」实时小部件，点击跳转充值 |
 | 文件管理 | 手动翻目录 | **会话文件更改追踪**（行级 diff）+ **一键还原**，全部/逐文件 |
 | 会话内终端 | 无 | **终端标签页**：会话项目目录内持久 PowerShell，SSE 流式，断线重连 |
 | 配置上手 | 手编 YAML | **设置页可视化**：视觉模型一键选择、`soul.md` 人设可视化编辑、**从 Codex / Claude Code 一键迁移 skills + MCP + 记忆** |
 | 插件安装 | 手动 npm | 设置页内置**插件市场**，搜索/一键安装/卸载 dsh 插件 |
 | 更新 | 手动 `npm update` | **双重自动更新**：官方 agent 更新（npm overlay，失败可回退）+ 客户端本体自更新，均经用户同意 |
-| 任务通知 | 无 | agent 任务完成弹 **Windows 系统通知**，点击回到窗口 |
-| 系统要求 | Windows/macOS/Linux + Node.js 环境 | Windows 10/11（x64），**无需任何运行时** |
+| 任务通知 | 无 | agent 任务完成弹出**系统通知**，点击回到窗口 |
+| 系统要求 | Windows/macOS/Linux + Node.js 环境 | Windows 10/11 或 Arch Linux（x86_64），**无需预装 Node.js** |
 
 > 内核零改动：EAC 直接运行官方 `dsh web`，完整保留「一切皆插件」架构与全部官方能力，
 > 与 CLI 共享 `DSH_HOME` 配置，已有会话/API Key 直接生效。
@@ -67,6 +68,34 @@
 
 > 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC\`。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
+
+### Arch Linux（x86_64）
+
+Arch Linux 版本以 pacman 本地包形式提供。下载或自行构建
+`Deepseek-Harness-EAC-<版本>-x64.pacman` 后安装：
+
+```bash
+sudo pacman -U ./Deepseek-Harness-EAC-2.0.4-x64.pacman
+```
+
+安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行：
+
+```bash
+deepseek-harness-eac
+```
+
+卸载：
+
+```bash
+sudo pacman -Rns dsh-desktop
+```
+
+pacman 会自动处理 Electron 所需的 GTK、NSS、通知、密钥环等系统依赖。
+应用内置 Node.js 与 npm，目标机器无需另行安装 Node.js。默认配置和会话仍使用
+`~/.dsh`；需要隔离配置时可在启动前设置 `DSH_HOME`。
+
+> 当前 Linux 包仅支持 x86_64。客户端本体升级应通过新的 pacman 包完成；
+> Windows 的便携版/NSIS 原地自更新流程不适用于 pacman 安装。
 
 ### 升级部署
 
@@ -132,10 +161,13 @@
 
 ## 系统要求
 
-- Windows 10/11（x64）
-- 无需预装 Node.js 或任何其他运行时
+- Windows 10/11（x64），或 Arch Linux（x86_64）
+- 目标机器无需预装 Node.js；Node.js 与 npm 随应用打包
+- Arch Linux 图形环境需要 X11 或 Wayland，并由 pacman 安装声明的运行时依赖
 
 ## 从源码构建
+
+### Windows
 
 ```powershell
 cd dsh-desktop
@@ -146,9 +178,31 @@ npm run dist             # 构建 portable + NSIS 安装包 → dist/
 
 > 网络受限时：Electron 镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 
+### Arch Linux
+
+```bash
+sudo pacman -S --needed base-devel nodejs npm
+cd dsh-desktop
+npm install
+npm run fetch-runtime    # 下载 Linux x64 Node 运行时并准备 npm CLI
+npm test
+npm run dist:arch        # 输出 dist/Deepseek-Harness-EAC-<版本>-x64.pacman
+```
+
+也可以运行 `npm run dist:linux` 构建 `electron-builder.yml` 中配置的全部
+Linux 目标。打包脚本会检查 npm 的嵌套依赖、长期记忆插件的 JavaScript
+产物，以及 Jieba、sqlite-vec 等 Linux 原生运行时；缺少关键文件时会直接
+终止构建，避免生成可安装但无法启动的包。
+
+安装本地构建产物：
+
+```bash
+sudo pacman -U ./dist/Deepseek-Harness-EAC-2.0.4-x64.pacman
+```
+
 运行测试：
 
-```powershell
+```bash
 npm test                 # node --test test/*.test.mjs
 ```
 
@@ -161,11 +215,11 @@ npm test                 # node --test test/*.test.mjs
 │  · 会话完成监听 (session-watcher.js) → 系统通知            │
 │  · 官方更新 (updater.js) → 用户同意后安装 overlay          │
 │  · 客户端自更新 (client-updater.js) → 下载/替换/重启       │
-│  · spawn vendor|resources 里的 node.exe                   │
+│  · spawn vendor|resources 里的平台专用 Node 运行时          │
 └──────────────┬───────────────────────────────────────────┘
                │  dsh web --host 127.0.0.1 --port 0
                ▼
-       内置 node.exe + @deepseek-ai/dsh
+       内置 Node.js + @deepseek-ai/dsh
        路径解析：用户目录 overlay > 内置包
        输出 "dsh web: http://127.0.0.1:<port>"
                │  解析 URL，轮询 HTTP 200
@@ -193,7 +247,7 @@ dsh-desktop/                  # Electron 桌面端
 │                             # （含 vendor 与自包含运行时依赖，随仓库分发）
 ├── scripts/                  # 构建与开发辅助脚本
 ├── build/icon.png            # electron-builder 图标
-├── vendor/                   # 内置 node.exe / npm CLI（不入库）
+├── vendor/                   # 内置平台专用 Node.js / npm CLI（不入库）
 ├── electron-builder.yml      # 打包配置
 └── dist/                     # 构建产物（不入库，发布到 Releases）
 openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）

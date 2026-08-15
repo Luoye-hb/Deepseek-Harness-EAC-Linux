@@ -14,7 +14,7 @@ directories:
 afterPack: scripts/after-pack.js
 
 # Native modules (sharp / node-pty / koffi) are loaded by the bundled plain
-# node.exe, so keep everything as real files and never rebuild for Electron.
+# Node runtime, so keep everything as real files and never rebuild for Electron.
 asar: false
 npmRebuild: false
 buildDependenciesFromSource: false
@@ -34,8 +34,8 @@ files:
   - "!**/*.md"
 
 extraResources:
-  - from: vendor/node/node.exe
-    to: node/node.exe
+  - from: vendor/node
+    to: node
   - from: vendor/npm
     to: npm
 
@@ -48,6 +48,29 @@ win:
     - target: nsis
       arch:
         - x64
+
+linux:
+  icon: build/icon.png
+  executableName: deepseek-harness-eac
+  syncDesktopName: true
+  category: Development
+  target:
+    - target: pacman
+      arch:
+        - x64
+
+pacman:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+  depends:
+    - alsa-lib
+    - gtk3
+    - libnotify
+    - nss
+    - libxss
+    - libxtst
+    - xdg-utils
+    - at-spi2-core
+    - libsecret
 
 # No ${version} in artifact names: the README links to
 # releases/latest/download/<fixed-name>.exe, which must stay valid across

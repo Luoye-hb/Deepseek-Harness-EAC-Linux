@@ -9,8 +9,8 @@
 //   4. Checks for official @deepseek-ai/dsh releases and, with the user's
 //      consent, self-updates the agent (see updater.js).
 //
-// The dsh CLI is spawned with the bundled node.exe (vendor/node/node.exe in
-// dev, resources/node/node.exe when packaged) so that prebuilt native
+// The dsh CLI is spawned with the bundled Node executable (vendor/node/node*
+// in dev, resources/node/node* when packaged) so that prebuilt native
 // modules (sharp, node-pty, koffi, ...) match the Node ABI they were
 // installed for. We deliberately never rebuild them against Electron.
 
@@ -117,8 +117,9 @@ function log(tag, msg) {
 }
 
 function nodeExe() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'node', 'node.exe');
-  return path.resolve(__dirname, 'vendor', 'node', 'node.exe');
+  const executable = IS_WIN ? 'node.exe' : 'node';
+  if (app.isPackaged) return path.join(process.resourcesPath, 'node', executable);
+  return path.resolve(__dirname, 'vendor', 'node', executable);
 }
 
 function npmCli() {
@@ -164,6 +165,12 @@ function killTree(proc) {
       }, 1500);
     } else {
       try { process.kill(-proc.pid, 'SIGTERM'); } catch { proc.kill('SIGTERM'); }
+      const pid = proc.pid;
+      setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch {
+          try { process.kill(pid, 'SIGKILL'); } catch {}
+        }
+      }, 1500).unref();
     }
   } catch (err) {
     log('killTree', String(err));
@@ -182,19 +189,25 @@ function childEnv() {
   return env;
 }
 
-// 等待一个子进程真正退出（taskkill 先优雅后强杀，锁住的 DLL 要等进程
-// 终止才释放）。轮询 tasklist，超时后放行由调用方自行处理。
+// 等待一个子进程真正退出。Windows 轮询 tasklist，POSIX 用 signal 0
+// 探测进程组；超时后放行由调用方自行处理。
 function waitForProcExit(proc, timeoutMs) {
   return new Promise((resolve) => {
     if (!proc || !proc.pid) return resolve();
     const pid = proc.pid;
     const started = Date.now();
     const check = () => {
-      try {
-        const out = require('node:child_process').execSync(
-          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
-        if (!out.includes('"' + pid + '"')) return resolve();
-      } catch { return resolve(); }
+      if (IS_WIN) {
+        try {
+          const out = require('node:child_process').execSync(
+            'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
+          if (!out.includes('"' + pid + '"')) return resolve();
+        } catch { return resolve(); }
+      } else {
+        try { process.kill(-pid, 0); } catch {
+          try { process.kill(pid, 0); } catch { return resolve(); }
+        }
+      }
       if (Date.now() - started >= timeoutMs) {
         log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
         return resolve();
@@ -235,6 +248,7 @@ function startServer() {
     const proc = spawn(nodeBin, [bin, 'web', '--host', '127.0.0.1', '--port', '0'], {
       cwd: userDataDir,
       env: childEnv(),
+      detached: !IS_WIN,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -1127,7 +1141,7 @@ function processPendingMarketOps() {
         // CI=true 与市场插件 host 侧一致：pnpm v10 无 TTY 时对被忽略的构建
         // 脚本（如 node-llama-cpp）静默放行，而不是 ERR_PNPM_IGNORED_BUILDS 硬失败。
         env: { ...childEnv(), CI: 'true' },
-        windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        detached: !IS_WIN, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       });
       let tail = '';
       const onData = (c) => {
@@ -1143,7 +1157,7 @@ function processPendingMarketOps() {
       child.stderr.on('data', onData);
       const timer = setTimeout(() => {
         log('market-pending', '排队任务超时（5 分钟），强制终止');
-        try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {}
+        killTree(child);
       }, 5 * 60 * 1000);
       child.on('error', (err) => {
         clearTimeout(timer);
@@ -1161,7 +1175,6 @@ function processPendingMarketOps() {
 }
 
 function syncCompanionPlugins() {
-  if (!IS_WIN) return;
   try {
     const home = dshHome || path.join(os.homedir(), '.dsh');
     const profileDirP = path.join(home, 'profiles', 'web');
@@ -1345,6 +1358,18 @@ function warnTempRun() {
 
 async function runClientUpdateFlow(manual) {
   if (quitting) return;
+  if (!IS_WIN) {
+    if (manual) {
+      await showBox({
+        type: 'info',
+        title: '客户端更新',
+        message: 'Linux 版本由系统包管理器更新。',
+        detail: 'Arch Linux 请下载新的 .pacman 包后运行：\n\nsudo pacman -U ./Deepseek-Harness-EAC-*.pacman',
+        buttons: ['确定'],
+      });
+    }
+    return;
+  }
   if (clientUpdateBusy) {
     if (manual) await showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
     return;
@@ -1459,6 +1484,7 @@ async function runClientUpdateFlow(manual) {
 }
 
 function offerPendingClientUpdate() {
+  if (!IS_WIN) return;
   const ctx = updCtx();
   const settings = updater.loadSettings(ctx);
   const pending = settings.pendingClientUpdate;
@@ -1622,14 +1648,14 @@ function boot() {
       maintainShortcuts();
       warnTempRun();
       startBalanceLoop();
-      offerPendingClientUpdate();
+      if (IS_WIN) offerPendingClientUpdate();
 
       if (!process.env.DSH_DESKTOP_SKIP_AUTO_UPDATE) {
         // dsh agent 更新：启动 15 秒后 + 每 6 小时。
         setTimeout(() => runUpdateFlow(false), 15000).unref();
         setInterval(() => runUpdateFlow(false), AUTO_UPDATE_INTERVAL_MS).unref();
       }
-      if (!process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) {
+      if (IS_WIN && !process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) {
         // 客户端（封装）更新：启动 60 秒后 + 每 12 小时。
         setTimeout(() => runClientUpdateFlow(false), 60000).unref();
         setInterval(() => runClientUpdateFlow(false), 12 * 3600 * 1000).unref();

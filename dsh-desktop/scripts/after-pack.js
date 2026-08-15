@@ -5,14 +5,13 @@
 // electron-builder's file copier strips nested node_modules directories from
 // extraResources, but the bundled npm CLI needs its own bundled deps
 // (graceful-fs, semver, ...). Copy vendor/npm verbatim into the packed app
-// after packaging; both the portable and NSIS targets then archive this copy.
+// after packaging; Windows and Linux targets then archive this copy.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
 module.exports = async function afterPack(context) {
   const { appOutDir, electronPlatformName } = context;
-  if (electronPlatformName !== 'win32') return;
   const src = path.resolve(__dirname, '..', 'vendor', 'npm');
   const dest = path.join(appOutDir, 'resources', 'npm');
   if (!fs.existsSync(src)) {
@@ -34,12 +33,50 @@ module.exports = async function afterPack(context) {
     fs.rmSync(pluginsDest, { recursive: true, force: true });
     fs.cpSync(pluginsSrc, pluginsDest, { recursive: true });
     console.log('afterPack: bundled plugins copied verbatim');
+    auditBundledPluginRuntime(pluginsDest, electronPlatformName);
   }
 
-  trimLongPathFiles(appOutDir);
-  dedupeNestedModules(appOutDir);
-  auditLongPaths(appOutDir);
+  if (electronPlatformName === 'win32') {
+    trimLongPathFiles(appOutDir);
+    dedupeNestedModules(appOutDir);
+    auditLongPaths(appOutDir);
+  }
 };
+
+function auditBundledPluginRuntime(pluginsRoot, platform) {
+  const tdai = path.join(pluginsRoot, 'dsh-tdai-memory', 'node_modules');
+  const required = [
+    path.join(tdai, '@tencentdb-agent-memory', 'tcvdb-text', 'dist', 'index.js'),
+    path.join(tdai, '@ai-sdk', 'gateway', 'dist', 'index.mjs'),
+    path.join(tdai, '@ai-sdk', 'openai', 'dist', 'index.mjs'),
+    path.join(tdai, '@ai-sdk', 'provider', 'dist', 'index.mjs'),
+    path.join(tdai, '@ai-sdk', 'provider-utils', 'dist', 'index.mjs'),
+    path.join(tdai, '@standard-schema', 'spec', 'dist', 'index.js'),
+    path.join(tdai, '@vercel', 'oidc', 'dist', 'index.js'),
+    path.join(tdai, 'ai', 'dist', 'index.mjs'),
+    path.join(tdai, 'eventsource-parser', 'dist', 'index.js'),
+    path.join(tdai, 'json5', 'dist', 'index.mjs'),
+  ];
+  if (platform === 'linux') {
+    required.push(
+      path.join(tdai, '@node-rs', 'jieba-linux-x64-gnu', 'jieba.linux-x64-gnu.node'),
+      path.join(tdai, 'sqlite-vec-linux-x64', 'vec0.so')
+    );
+  } else if (platform === 'win32') {
+    required.push(
+      path.join(tdai, '@node-rs', 'jieba-win32-x64-msvc', 'jieba.win32-x64-msvc.node'),
+      path.join(tdai, 'sqlite-vec-windows-x64', 'vec0.dll')
+    );
+  }
+  const missing = required.filter((file) => !fs.existsSync(file));
+  if (missing.length) {
+    throw new Error(
+      `afterPack: bundled tdai-memory runtime is incomplete for ${platform}:\n` +
+      missing.map((file) => `  ${path.relative(pluginsRoot, file)}`).join('\n')
+    );
+  }
+  console.log(`afterPack: bundled tdai-memory runtime audit passed (${platform})`);
+}
 
 // electron-builder's dependency collector needlessly nests some deps under
 // their dependents (e.g. @opentelemetry/resources@2.10.0 under

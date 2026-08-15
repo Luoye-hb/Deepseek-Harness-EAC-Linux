@@ -1,10 +1,15 @@
 {
   "name": "dsh-desktop",
   "productName": "Deepseek Harness EAC",
+  "desktopName": "deepseek-harness-eac",
   "version": "2.0.4",
-  "description": "DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI",
+  "description": "DeepSeek Harness (dsh) 开箱即用的桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI",
   "main": "main.js",
-  "author": "DSH Desktop",
+  "author": {
+    "name": "DSH Desktop",
+    "email": "zouyuxuan122@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/zouyuxuan122/Deepseek-Harness-EAC",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -12,6 +17,8 @@
     "fetch-node": "node scripts/fetch-node.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dist:arch": "electron-builder --linux pacman --x64",
     "fetch-npm": "node scripts/fetch-npm.js",
     "fetch-runtime": "node scripts/fetch-node.js && node scripts/fetch-npm.js",
     "electron:fetch": "node node_modules/electron/install.js",
