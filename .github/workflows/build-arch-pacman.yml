@@ -8,6 +8,10 @@ on:
       - codex/arch-linux
     tags:
       - "v*"
+    # 纯文档提交不触发构建（README / docs 等）
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
 
 permissions:
   contents: write
