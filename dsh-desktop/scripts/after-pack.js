@@ -121,6 +121,16 @@ function auditBundledPluginRuntime(pluginsRoot, platform) {
       path.join(tdai, '@node-rs', 'jieba-win32-x64-msvc', 'jieba.win32-x64-msvc.node'),
       path.join(tdai, 'sqlite-vec-windows-x64', 'vec0.dll')
     );
+  } else if (platform === 'darwin') {
+    // darwin 负载由 scripts/fetch-darwin-natives.js 在 dist:mac 前注入；
+    // x64/arm64 同时打包进同一个包（与 linux/win 只带本平台相反，两个
+    // mac 产物都带双架构负载，便于以后做 universal 或互换）。
+    required.push(
+      path.join(tdai, '@node-rs', 'jieba-darwin-x64', 'jieba.darwin-x64.node'),
+      path.join(tdai, '@node-rs', 'jieba-darwin-arm64', 'jieba.darwin-arm64.node'),
+      path.join(tdai, 'sqlite-vec-darwin-x64', 'vec0.dylib'),
+      path.join(tdai, 'sqlite-vec-darwin-arm64', 'vec0.dylib')
+    );
   }
   const missing = required.filter((file) => !fs.existsSync(file));
   if (missing.length) {
