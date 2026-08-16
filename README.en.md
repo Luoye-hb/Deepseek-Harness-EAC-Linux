@@ -201,7 +201,11 @@ npm run dist             # build portable + NSIS installer -> dist/
 On Arch Linux:
 
 ```bash
-sudo pacman -S --needed base-devel nodejs npm
+# Pin Node to 22 LTS (nodejs-lts-jod, Provides: nodejs=22.x); do NOT use the
+# rolling nodejs package: native modules (node-pty) are compiled against the
+# bundled Node ABI, so a version drift yields an unstartable package (3.0.1
+# Arch incident). python is needed for node-pty's node-gyp build.
+sudo pacman -S --needed base-devel nodejs-lts-jod npm python
 cd dsh-desktop
 npm install
 npm run fetch-runtime    # bundle Linux x64 Node runtime + npm CLI

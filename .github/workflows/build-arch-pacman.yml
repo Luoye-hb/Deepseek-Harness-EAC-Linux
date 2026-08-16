@@ -29,7 +29,14 @@ jobs:
           pacman -Syu --noconfirm
           # 使用系统 Ruby + fpm 而不是 electron-builder 下载的预编译 fpm：
           # 后者自带的 ruby 依赖 libcrypt.so.1，Arch 官方仓库没有该 ABI。
-          pacman -S --needed --noconfirm nodejs npm git ruby ruby-erb
+          # Node 固定到 22 LTS（nodejs-lts-jod，Provides: nodejs=22.x），与
+          # deb/rpm/AppImage CI 的 node-version: 22 保持一致——不再跟随滚动版
+          # nodejs（3.0.1 事故：Arch 包捆绑 Node 26 而其余 Linux 包是 Node 22）。
+          # python 用于 node-pty 的 node-gyp 编译：该包 1.1.0 不带 linux-x64
+          # 预编译产物，Linux 安装时必须现场编译出 build/Release/pty.node。
+          pacman -S --needed --noconfirm nodejs-lts-jod npm git ruby ruby-erb python
+          node --version
+          npm --version
 
       - name: Install fpm gem
         run: |
@@ -42,8 +49,23 @@ jobs:
         run: npm ci --allow-remote=all
         working-directory: dsh-desktop
 
+      # node-pty@1.1.0 的 npm 包只随附 darwin/win32 的 prebuilds，linux-x64 没有，
+      # 必须在安装阶段由 node-gyp 现场编译出 build/Release/pty.node。若这里没
+      # 生成（脚本被跳过 / 工具链缺失），装出来的包启动即报
+      # "Cannot find module './prebuilds/linux-x64//pty.node'"（3.0.1 Arch 事故）。
+      # 用与打包完全相同的 Node 立即加载一次，让失败发生在 CI 而不是用户机器上。
+      - name: Verify node-pty native module compiles and loads
+        run: node -e "const pty = require('node-pty'); if (typeof pty.spawn !== 'function') throw new Error('node-pty API 异常'); console.log('node-pty OK @', process.version, process.platform + '-' + process.arch)"
+        working-directory: dsh-desktop
+
       - name: Fetch bundled Node runtime and npm CLI
         run: npm run fetch-runtime
+        working-directory: dsh-desktop
+
+      - name: Report bundled runtime versions
+        run: |
+          ./vendor/node/node --version
+          ./vendor/node/node vendor/npm/bin/npm-cli.js --version
         working-directory: dsh-desktop
 
       - name: Run tests
@@ -59,6 +81,24 @@ jobs:
         working-directory: dsh-desktop
         env:
           USE_SYSTEM_FPM: "true"
+
+      # 打包后的最后一道防线：从 pacman 归档里检查 node-pty 原生模块是否真的
+      # 进去了，并用归档内捆绑的 Node 实际导入一次。3.0.1 Arch 事故就是缺这层
+      # 校验——afterPack 审计只覆盖展开目录，归档阶段仍可能丢文件。
+      - name: Verify pacman payload contains a loadable node-pty
+        run: |
+          set -euo pipefail
+          pkg="$(ls dist/*.pacman)"
+          rm -rf /tmp/pacman-audit
+          mkdir -p /tmp/pacman-audit
+          tar --zstd -xf "$pkg" -C /tmp/pacman-audit
+          pty_file="$(find /tmp/pacman-audit \( -path '*/node-pty/build/Release/pty.node' -o -path '*/node-pty/prebuilds/linux-x64/pty.node' \) -type f | head -n1)"
+          test -n "$pty_file" || { echo "ERROR: node-pty native module missing from pacman payload"; exit 1; }
+          node_bin="$(find /tmp/pacman-audit -path '*/resources/node/node' -type f | head -n1)"
+          test -n "$node_bin" || { echo "ERROR: bundled node missing from pacman payload"; exit 1; }
+          node_pty_root="$(dirname "$(dirname "$(dirname "$pty_file")")")"
+          "$node_bin" -e "const p = require(process.argv[1]); if (typeof p.spawn !== 'function') process.exit(2); console.log('pacman node-pty loadable @', process.version)" "$node_pty_root"
+          echo "OK: node-pty native module present ($pty_file)"
 
       - name: Show built artifacts
         run: ls -lh dist/
@@ -87,8 +127,20 @@ jobs:
         run: npm ci --allow-remote=all
         working-directory: dsh-desktop
 
+      # 与 pacman 构建相同的 node-pty 加载校验：Linux 安装时 node-pty 必须由
+      # node-gyp 现场编译（npm 包不带 linux-x64 prebuilds），缺了安装包即废。
+      - name: Verify node-pty native module compiles and loads
+        run: node -e "const pty = require('node-pty'); if (typeof pty.spawn !== 'function') throw new Error('node-pty API 异常'); console.log('node-pty OK @', process.version, process.platform + '-' + process.arch)"
+        working-directory: dsh-desktop
+
       - name: Fetch bundled Node runtime and npm CLI
         run: npm run fetch-runtime
+        working-directory: dsh-desktop
+
+      - name: Report bundled runtime versions
+        run: |
+          ./vendor/node/node --version
+          ./vendor/node/node vendor/npm/bin/npm-cli.js --version
         working-directory: dsh-desktop
 
       - name: Run tests
