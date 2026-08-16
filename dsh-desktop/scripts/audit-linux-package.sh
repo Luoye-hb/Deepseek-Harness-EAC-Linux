@@ -19,9 +19,15 @@ if [[ $# -lt 1 ]]; then
   exit 2
 fi
 
+# 校验存在性并把参数统一为绝对路径：rpm / AppImage 解包要在子 shell 里
+# cd 到临时目录，相对路径（CI 里的 dist/*.rpm）在 cd 之后就不存在了
+# （deb 不 cd，所以之前侥幸通过——CI 实测 rpm/AppImage 双双挂在解包）。
+abs_pkgs=()
 for pkg in "$@"; do
   [[ -f "$pkg" ]] || { echo "ERROR: 不是文件: $pkg" >&2; exit 1; }
+  abs_pkgs+=("$(realpath "$pkg")")
 done
+set -- "${abs_pkgs[@]}"
 
 extract_pkg() {
   local pkg="$1" dest="$2"
