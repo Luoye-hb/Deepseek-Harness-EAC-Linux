@@ -239,10 +239,13 @@ npm run dist             # 构建 portable + NSIS 安装包 → dist/
 以 Arch Linux 为例：
 
 ```bash
-sudo pacman -S --needed base-devel nodejs npm
+# Node 固定到 22 LTS（nodejs-lts-jod，Provides: nodejs=22.x），不要用滚动版
+# nodejs：node-pty 等原生模块按捆绑 Node 的 ABI 编译，版本漂移会产生
+# 无法启动的安装包（3.0.1 Arch 事故）。python 供 node-pty 的 node-gyp 编译用。
+sudo pacman -S --needed base-devel nodejs-lts-jod npm python
 cd dsh-desktop
 npm install
-npm run fetch-runtime    # 下载 Linux x64 Node 运行时并准备 npm CLI
+npm run fetch-runtime    # 内置 Linux x64 Node 运行时并准备 npm CLI
 npm test
 npm run dist:arch        # 输出 dist/Deepseek-Harness-EAC-<版本>-x64.pacman
 ```
@@ -257,8 +260,8 @@ npm run dist:appimage  # 免安装 AppImage
 ```
 
 打包脚本会检查 npm 的嵌套依赖、长期记忆插件的 JavaScript
-产物，以及 Jieba、sqlite-vec 等 Linux 原生运行时；缺少关键文件时会直接
-终止构建，避免生成可安装但无法启动的包。
+产物，以及 Jieba、sqlite-vec、node-pty（pty.node）等 Linux 原生运行时；
+缺少关键文件时会直接终止构建，避免生成可安装但无法启动的包。
 
 安装本地构建产物：
 
