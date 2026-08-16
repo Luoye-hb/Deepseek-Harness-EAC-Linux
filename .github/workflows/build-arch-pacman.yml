@@ -98,6 +98,7 @@ jobs:
           test -n "$node_bin" || { echo "ERROR: bundled node missing from pacman payload"; exit 1; }
           "$node_bin" -e "require(process.argv[1]); console.log('pacman pty.node loadable @', process.version)" "$pty_file"
           echo "OK: node-pty native module present ($pty_file)"
+        working-directory: dsh-desktop
 
       - name: Show built artifacts
         run: ls -lh dist/
