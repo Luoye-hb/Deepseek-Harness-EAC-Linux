@@ -4,8 +4,9 @@
 
 This repository contains the Electron desktop wrapper in `dsh-desktop/` plus
 optional plugins and research material. The desktop application supports
-Windows x64 and Arch Linux x86_64. Keep platform-specific behavior isolated
-behind `process.platform` checks and preserve both targets when changing shared
+Windows x64 and Linux x86_64 (Arch / Ubuntu / Debian / Fedora via
+pacman / deb / rpm / AppImage). Keep platform-specific behavior isolated
+behind `process.platform` checks and preserve all targets when changing shared
 startup, updater, tray, notification, or process-lifecycle code.
 
 ## Working Directory
@@ -23,6 +24,9 @@ Build targets:
 ```bash
 npm run dist          # Windows portable + NSIS
 npm run dist:arch     # Arch Linux x86_64 pacman package
+npm run dist:deb      # Ubuntu / Debian x86_64 .deb package
+npm run dist:rpm      # Fedora x86_64 .rpm package
+npm run dist:appimage # distro-agnostic x86_64 AppImage
 npm run dist:linux    # All configured Linux targets
 ```
 
@@ -40,7 +44,9 @@ runtime and npm CLI.
 - Windows process-tree cleanup uses `taskkill`; Linux cleanup uses process
   groups and signals. Do not introduce shell commands that assume only one OS.
 - Windows portable/NSIS self-update behavior is not automatically suitable for
-  pacman installations. Arch package upgrades should remain owned by pacman.
+  Linux package installations. Linux package upgrades should remain owned by
+  each distribution's package manager (pacman / apt / dnf) or AppImage
+  replacement.
 - Paths, environment variables, config directories, and executable permissions
   must be tested on both Windows and Linux.
 
@@ -76,9 +82,9 @@ Before considering a packaging change complete:
 9. Inspect the pacman archive for `.PKGINFO`, `.MTREE`, `.INSTALL`, desktop
    entry, icon, executable, and bundled runtime files.
 
-The known-good Arch Linux v2.0.4 artifact is
-`dsh-desktop/dist/Deepseek-Harness-EAC-2.0.4-x64.pacman` with SHA-256
-`5b448e4201e23915fc2b37fd5bd6c8d9bcdad5956f3c6af9739a6c45550f7aed`.
+The known-good Arch Linux v3.0.0 artifact is
+`dsh-desktop/dist/Deepseek-Harness-EAC-3.0.0-x64.pacman` (SHA-256 is recorded
+after the first verified v3.0.0 build).
 
 ## Change Discipline
 

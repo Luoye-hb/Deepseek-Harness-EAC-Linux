@@ -75,7 +75,7 @@ Arch Linux 版本以 pacman 本地包形式提供。下载或自行构建
 `Deepseek-Harness-EAC-<版本>-x64.pacman` 后安装：
 
 ```bash
-sudo pacman -U ./Deepseek-Harness-EAC-2.0.4-x64.pacman
+sudo pacman -U ./Deepseek-Harness-EAC-3.0.0-x64.pacman
 ```
 
 安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行：
@@ -102,7 +102,7 @@ pacman 会自动处理 Electron 所需的 GTK、NSS、通知、密钥环等系�
 下载 `Deepseek-Harness-EAC-<版本>-amd64.deb` 后安装：
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-2.0.4-amd64.deb
+sudo apt install ./Deepseek-Harness-EAC-3.0.0-amd64.deb
 ```
 
 安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行
@@ -117,7 +117,7 @@ sudo apt remove dsh-desktop
 下载 `Deepseek-Harness-EAC-<版本>.x86_64.rpm` 后安装：
 
 ```bash
-sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x86_64.rpm
+sudo dnf install ./Deepseek-Harness-EAC-3.0.0.x86_64.rpm
 ```
 
 卸载：
@@ -131,8 +131,8 @@ sudo dnf remove dsh-desktop
 下载 `Deepseek-Harness-EAC-<版本>-x86_64.AppImage` 后：
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
-./Deepseek-Harness-EAC-2.0.4-x86_64.AppImage
+chmod +x ./Deepseek-Harness-EAC-3.0.0-x86_64.AppImage
+./Deepseek-Harness-EAC-3.0.0-x86_64.AppImage
 ```
 
 > Ubuntu 24.04 等默认只有 FUSE3 的发行版，若 AppImage 提示缺少 FUSE2，
@@ -248,7 +248,7 @@ npm run dist:appimage  # 免安装 AppImage
 安装本地构建产物：
 
 ```bash
-sudo pacman -U ./dist/Deepseek-Harness-EAC-2.0.4-x64.pacman
+sudo pacman -U ./dist/Deepseek-Harness-EAC-3.0.0-x64.pacman
 ```
 
 运行测试：
