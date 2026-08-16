@@ -2,6 +2,12 @@ name: Build Linux packages
 
 on:
   workflow_dispatch:
+  # PR 也跑 CI：修复分支不必先合进 main 才能验证 workflow 改动
+  # （此前 fix 分支只能 workflow_dispatch 手动触发，调试 CI 很痛苦）。
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   push:
     branches:
       - main
@@ -44,9 +50,8 @@ jobs:
             node /usr/local/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js rebuild
             cp build/Release/pty.node /out/pty.node
           '
-          max_glibc="$(objdump -T pty-artifact/pty.node | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n | tail -1 | cut -d. -f2)"
-          test "$max_glibc" -le 34 || { echo "ERROR: pty.node 要求 GLIBC_2.$max_glibc，超过基线 2.34"; exit 1; }
-          echo "OK: pty.node glibc ≤ 2.34（实测 2.$max_glibc）"
+          # glibc 基线检查：阈值与扫描逻辑统一在 dsh-desktop/scripts/check-glibc.cjs
+          node dsh-desktop/scripts/check-glibc.cjs pty-artifact/pty.node
 
       - name: Upload pty.node artifact
         uses: actions/upload-artifact@v4
@@ -102,9 +107,7 @@ jobs:
           set -euo pipefail
           mkdir -p node_modules/node-pty/build/Release
           cp pty-artifact/pty.node node_modules/node-pty/build/Release/pty.node
-          max_glibc="$(objdump -T node_modules/node-pty/build/Release/pty.node | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n | tail -1 | cut -d. -f2)"
-          test "$max_glibc" -le 34 || { echo "ERROR: pty.node 要求 GLIBC_2.$max_glibc"; exit 1; }
-          echo "OK: pty.node glibc 2.$max_glibc ≤ 2.34"
+          node scripts/check-glibc.cjs node_modules/node-pty/build/Release/pty.node
         working-directory: dsh-desktop
 
       # node-pty@1.1.0 的 npm 包只随附 darwin/win32 的 prebuilds，linux-x64 没有，
@@ -140,26 +143,12 @@ jobs:
         env:
           USE_SYSTEM_FPM: "true"
 
-      # 打包后的最后一道防线：从 pacman 归档里检查 node-pty 原生模块是否真的
-      # 进去了，并用归档内捆绑的 Node 实际导入一次。3.0.1 Arch 事故就是缺这层
-      # 校验——afterPack 审计只覆盖展开目录，归档阶段仍可能丢文件。
-      - name: Verify pacman payload contains a loadable node-pty
-        run: |
-          set -euo pipefail
-          pkg="$(ls dist/*.pacman)"
-          rm -rf /tmp/pacman-audit
-          mkdir -p /tmp/pacman-audit
-          bsdtar -xf "$pkg" -C /tmp/pacman-audit
-          pty_file="$(find /tmp/pacman-audit \( -path '*/node-pty/build/Release/pty.node' -o -path '*/node-pty/prebuilds/linux-x64/pty.node' \) -type f | head -n1)"
-          test -n "$pty_file" || { echo "ERROR: node-pty native module missing from pacman payload"; exit 1; }
-          node_bin="$(find /tmp/pacman-audit -path '*/resources/node/node' -type f | head -n1)"
-          test -n "$node_bin" || { echo "ERROR: bundled node missing from pacman payload"; exit 1; }
-          "$node_bin" -e "require(process.argv[1]); console.log('pacman pty.node loadable @', process.version)" "$pty_file"
-          # glibc 兼容性复核：基线 ≤ 2.34（docs/support-matrix.md）
-          max_glibc="$(objdump -T "$pty_file" | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n | tail -1 | cut -d. -f2)"
-          test "$max_glibc" -le 34 || { echo "ERROR: pacman 内 pty.node 要求 GLIBC_2.$max_glibc，超过基线 2.34"; exit 1; }
-          echo "OK: pacman pty.node glibc 2.$max_glibc ≤ 2.34"
-          echo "OK: node-pty native module present ($pty_file)"
+      # 打包后的最后一道防线：在最终 pacman 归档层面复核 node-pty 存在性 /
+      # 捆绑 Node 可加载 / 全部原生载荷 glibc ≤ 2.34（scripts/audit-linux-package.sh）。
+      # 3.0.1 Arch 事故就是缺这层校验——afterPack 审计只覆盖展开目录，
+      # 归档阶段仍可能丢文件。
+      - name: Verify pacman payload (archive-level audit)
+        run: bash scripts/audit-linux-package.sh dist/*.pacman
         working-directory: dsh-desktop
 
       - name: Show built artifacts
@@ -203,9 +192,7 @@ jobs:
           set -euo pipefail
           mkdir -p node_modules/node-pty/build/Release
           cp pty-artifact/pty.node node_modules/node-pty/build/Release/pty.node
-          max_glibc="$(objdump -T node_modules/node-pty/build/Release/pty.node | grep -o 'GLIBC_2\.[0-9]*' | sort -t. -k2 -n | tail -1 | cut -d. -f2)"
-          test "$max_glibc" -le 34 || { echo "ERROR: pty.node 要求 GLIBC_2.$max_glibc"; exit 1; }
-          echo "OK: pty.node glibc 2.$max_glibc ≤ 2.34"
+          node scripts/check-glibc.cjs node_modules/node-pty/build/Release/pty.node
         working-directory: dsh-desktop
 
       # 与 pacman 构建相同的 node-pty 加载校验：Linux 安装时 node-pty 必须由
@@ -234,6 +221,17 @@ jobs:
       #   ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
       - name: Build deb / rpm / AppImage
         run: npm run dist:deb && npm run dist:rpm && npm run dist:appimage
+        working-directory: dsh-desktop
+
+      # 归档级终检工具（rpm 解包用）：ubuntu runner 默认不带 rpm2cpio / cpio。
+      - name: Install archive audit tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm2cpio cpio
+
+      # 与 pacman job 相同的最后一道防线：在最终 deb / rpm / AppImage 归档层面
+      # 复核 node-pty 存在性 / 捆绑 Node 可加载 / 全部原生载荷 glibc ≤ 2.34。
+      # 此前只有 pacman 有归档审计，三种格式缺同样的防线。
+      - name: Verify deb / rpm / AppImage payloads (archive-level audit)
+        run: bash scripts/audit-linux-package.sh dist/*.deb dist/*.rpm dist/*.AppImage
         working-directory: dsh-desktop
 
       - name: Show built artifacts

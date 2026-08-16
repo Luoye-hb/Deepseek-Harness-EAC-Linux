@@ -67,8 +67,8 @@ sudo chroot /var/lib/dsh-pty-build bash -c '
 
 ```bash
 PTY=<产物路径>/pty.node
-# ① glibc 上限 ≤ 2.34
-objdump -T "$PTY" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1
+# ① glibc 上限 ≤ 2.34（阈值与扫描逻辑的唯一实现：scripts/check-glibc.cjs）
+node dsh-desktop/scripts/check-glibc.cjs "$PTY"
 # ② 不得链接 libnode
 objdump -p "$PTY" | grep NEEDED        # 只应有 libstdc++ / libgcc_s / libc
 # ③ 捆绑 node 可加载（N-API 兼容）
@@ -84,11 +84,20 @@ cd dsh-desktop && npm run dist:deb && npm run dist:rpm && npm run dist:appimage 
 
 ## 4. 自动审计
 
-- `dsh-desktop/scripts/after-pack.js`：`auditNodePty()` 在打包时检查 pty.node 存在性、
-  捆绑 node 可加载性，以及 **glibc 上限 ≤ 2.34**（超标直接 fail 构建）。
+- **`dsh-desktop/scripts/check-glibc.cjs`**：glibc 基线（GLIBC_2.34）与扫描逻辑的
+  **唯一实现**，可 CLI 使用（`node scripts/check-glibc.cjs <文件>...`，支持
+  `--baseline <minor>` 覆盖阈值），也被下列审计引用。调整基线只改这一个文件。
+- `dsh-desktop/scripts/after-pack.js`：`auditNodePty()` 在打包时检查 pty.node
+  存在性、捆绑 node 可加载性，以及 glibc 上限 ≤ 2.34（超标直接 fail 构建）。
+- **`dsh-desktop/scripts/audit-linux-package.sh`**：归档级终检——解包
+  pacman / deb / rpm / AppImage 最终安装包，复核 pty.node 存在、捆绑 Node
+  可加载、归档内全部原生载荷（`*.node` / `*.so` / 捆绑 node）glibc ≤ 2.34。
+  CI 对四种 Linux 包格式都会执行（afterPack 只覆盖展开目录，归档阶段仍可能
+  丢文件——3.0.1 Arch 事故的教训）。
 - `.github/workflows/build-arch-pacman.yml`：CI 在 debian:12 容器中重编 pty.node，
-  并在 pacman 归档层面复核 glibc（最后一道防线）。
-- `dsh-desktop/test/node-pty-audit.test.mjs`：覆盖审计逻辑（含 glibc 阈值）的单元测试。
+  两个打包 job 均用 `check-glibc.cjs` 复核并跑归档审计（最后一道防线）。
+- `dsh-desktop/test/check-glibc.test.mjs`、`dsh-desktop/test/node-pty-audit.test.mjs`：
+  覆盖审计逻辑（含 glibc 阈值）的单元测试。
 
 ## 5. 发版验证清单
 
