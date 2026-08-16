@@ -82,9 +82,9 @@ Before considering a packaging change complete:
 9. Inspect the pacman archive for `.PKGINFO`, `.MTREE`, `.INSTALL`, desktop
    entry, icon, executable, and bundled runtime files.
 
-The known-good Arch Linux v3.0.0 artifact is
-`dsh-desktop/dist/Deepseek-Harness-EAC-3.0.0-x64.pacman` (SHA-256 is recorded
-after the first verified v3.0.0 build).
+The known-good Arch Linux v3.0.1 artifact is
+`dsh-desktop/dist/Deepseek-Harness-EAC-3.0.1-x64.pacman` (SHA-256 is recorded
+after the first verified v3.0.1 build).
 
 ## Change Discipline
 
