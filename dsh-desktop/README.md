@@ -40,7 +40,7 @@
 下载或构建 pacman 包后安装：
 
 ```bash
-sudo pacman -U ./Deepseek-Harness-EAC-3.0.1-x64.pacman
+sudo pacman -U ./Deepseek-Harness-EAC-3.0.2-x64.pacman
 ```
 
 安装完成后从桌面应用菜单启动，或运行 `deepseek-harness-eac`。卸载命令：
@@ -57,7 +57,7 @@ sudo pacman -Rns dsh-desktop
 下载 `Deepseek-Harness-EAC-<版本>-amd64.deb` 后安装：
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-3.0.1-amd64.deb
+sudo apt install ./Deepseek-Harness-EAC-3.0.2-amd64.deb
 ```
 
 卸载：`sudo apt remove dsh-desktop`。
@@ -67,7 +67,7 @@ sudo apt install ./Deepseek-Harness-EAC-3.0.1-amd64.deb
 下载 `Deepseek-Harness-EAC-<版本>.x86_64.rpm` 后安装：
 
 ```bash
-sudo dnf install ./Deepseek-Harness-EAC-3.0.1.x86_64.rpm
+sudo dnf install ./Deepseek-Harness-EAC-3.0.2.x86_64.rpm
 ```
 
 卸载：`sudo dnf remove dsh-desktop`。
@@ -75,8 +75,8 @@ sudo dnf install ./Deepseek-Harness-EAC-3.0.1.x86_64.rpm
 ### AppImage（免安装，通用）
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-3.0.1-x86_64.AppImage
-./Deepseek-Harness-EAC-3.0.1-x86_64.AppImage
+chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
+./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
 ```
 
 > Ubuntu 24.04 等只有 FUSE3 的发行版，若提示缺少 FUSE2，先安装 `libfuse2`
@@ -197,7 +197,7 @@ npm run dist                   # 构建 portable + NSIS 安装包，输出到 di
 
 > 网络受限时：Electron 二进制镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`（可 `npm run electron:fetch` 手动补拉）；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 >
-> 开发辅助脚本：`node scripts/check-latest.js`（检查/试装更新）、`node scripts/test-watcher.js`（通知检测单测）、`node scripts/inspect-session.js <file>`（会话日志事件词表）。
+> 开发辅助脚本：`node scripts/check-latest.js`（检查/试装更新）、`node scripts/inspect-session.js <file>`（会话日志事件词表）；通知检测已并入测试套件（`npm test`）。
 
 ### Arch Linux
 
@@ -297,7 +297,8 @@ dsh-desktop/
 │   ├── build-icon.ps1    # 生成应用图标（透明圆角蒙版）+ 托盘图标
 │   ├── check-latest.js   # agent 更新链路测试工具
 │   ├── check-client-latest.js # 客户端更新链路测试工具
-│   ├── test-watcher.js   # 通知检测单测
+│   ├── check-glibc.cjs   # glibc 基线检查（唯一实现，CI/打包审计共用）
+│   ├── audit-linux-package.sh # Linux 安装包归档级终检
 │   └── inspect-session.js# 会话日志解析工具
 ├── build/icon.png        # electron-builder 图标源
 ├── vendor/               # 内置平台专用 Node.js / npm CLI（fetch-runtime 生成，不入库）

@@ -22,25 +22,12 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { loadSettings, saveSettings } = require('./settings');
 
 const PKG = '@deepseek-ai/dsh';
 const IS_WIN = process.platform === 'win32';
 
 let activeProc = null;
-
-// --- settings -------------------------------------------------------------
-
-function settingsPath(ctx) { return path.join(ctx.userDataDir, 'settings.json'); }
-
-function loadSettings(ctx) {
-  try { return JSON.parse(fs.readFileSync(settingsPath(ctx), 'utf8')); }
-  catch { return {}; }
-}
-
-function saveSettings(ctx, s) {
-  try { fs.writeFileSync(settingsPath(ctx), JSON.stringify(s, null, 2) + '\n'); }
-  catch (err) { ctx.log('update', '保存 settings 失败: ' + err.message); }
-}
 
 // --- overlay paths --------------------------------------------------------
 

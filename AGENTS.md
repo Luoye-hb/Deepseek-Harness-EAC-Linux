@@ -66,6 +66,32 @@ For Arch Linux x86_64, required memory-plugin payloads include:
 - `@node-rs/jieba-linux-x64-gnu`
 - `sqlite-vec-linux-x64/vec0.so`
 
+### Linux support window and glibc baseline
+
+The official Linux support window is **distributions released between
+2025-01-01 and 2026-08-15** (see `docs/support-matrix.md` for the per-distro
+table). Every bundled native payload must keep its maximum referenced glibc
+symbol at or below `GLIBC_2.34` — the empirical floor of a Debian 12 build —
+so the whole window (glibc 2.41+) plus still-maintained older LTS releases
+work from one artifact.
+
+`node-pty`'s `pty.node` is the only payload compiled at install time
+(node-pty@1.1.0 ships no linux-x64 prebuild), so it is the one that must be
+rebuilt deliberately:
+
+- Rebuild it in the Debian 12 chroot (`/var/lib/dsh-pty-build` on the dev
+  host) with the official Node v24.19.0 tarball — never with a distro's
+  `nodejs` package (its node-gyp links `libnode.so.*`) and never on the
+  build host itself.
+- Verify before packaging: max glibc ≤ `GLIBC_2.34` via
+  `node scripts/check-glibc.cjs <pty.node>` (the single source of the
+  baseline), no `libnode` NEEDED entry, and the bundled Node imports it.
+- CI enforces this: `build-node-pty` compiles in a `debian:12` container and
+  both Linux package jobs override `node_modules` with that artifact;
+  `after-pack.js` rejects any `pty.node` exceeding the baseline, and
+  `scripts/audit-linux-package.sh` re-verifies the final archives for all
+  four Linux package formats.
+
 ## Verification
 
 Before considering a packaging change complete:
@@ -79,12 +105,21 @@ Before considering a packaging change complete:
 7. Import the memory plugin, Jieba, and sqlite-vec from the packed tree.
 8. Run `ldd` on Electron, bundled Node, and native modules on Linux; no
    dependency may report `not found`.
-9. Inspect the pacman archive for `.PKGINFO`, `.MTREE`, `.INSTALL`, desktop
-   entry, icon, executable, and bundled runtime files.
+9. Run the glibc scan on all bundled native payloads using
+   `node scripts/check-glibc.cjs <file>...` (the single implementation of
+   the `GLIBC_2.34` support-matrix baseline, see `docs/support-matrix.md`);
+   nothing may exceed it. For whole packages,
+   `bash scripts/audit-linux-package.sh <pkg>` extracts the archive and
+   scans every native payload. In particular `node-pty`'s `pty.node` must be
+   rebuilt in a low-glibc chroot (Debian 12 + official Node), never compiled
+   on the build host, or Debian 13 and older systems crash at launch.
+10. Inspect the pacman archive for `.PKGINFO`, `.MTREE`, `.INSTALL`, desktop
+    entry, icon, executable, and bundled runtime files.
 
-The known-good Arch Linux v3.0.1 artifact is
-`dsh-desktop/dist/Deepseek-Harness-EAC-3.0.1-x64.pacman` (SHA-256 is recorded
-after the first verified v3.0.1 build).
+The glibc-2.34 fix ships as **v3.0.2** (`dsh-desktop/dist/Deepseek-Harness-EAC-3.0.2-x64.pacman`);
+record its SHA-256 after the first verified build. The original v3.0.1 pacman
+shipped a build-host-compiled `pty.node` and crashes on Debian 13 and older
+systems — do not install it there.
 
 ## Change Discipline
 
