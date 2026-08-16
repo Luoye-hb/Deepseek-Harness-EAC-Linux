@@ -12,6 +12,14 @@
   "homepage": "https://github.com/zouyuxuan122/Deepseek-Harness-EAC",
   "license": "MIT",
   "private": true,
+  "allowScripts": {
+    "@deepseek-ai/dsh-subprocess-local@0.1.0-rc.6": true,
+    "@google/genai@1.52.0": true,
+    "electron-winstaller@5.4.0": true,
+    "koffi@3.1.5": true,
+    "node-pty@1.1.0": true,
+    "protobufjs@7.6.5": true
+  },
   "scripts": {
     "start": "electron .",
     "fetch-node": "node scripts/fetch-node.js",
