@@ -562,8 +562,23 @@ function handleBootFailure(err) {
       }
     });
   } else {
-    fatal('DeepSeek Harness 启动失败', err);
+    fatal('Deepseek Harness 启动失败', err);
   }
+  // dsh web 起不来（如 v3.0.0 schemastery 闭包缺陷）的用户永远走不到
+  // 成功链上的自动更新定时器，只能手动重装。主动查一次客户端更新，
+  // manual=true 绕过 skip/稍后 抑制，让修复版本能下载并自愈。
+  scheduleClientUpdateRescue();
+}
+
+// 启动失败救援（防重入）：一次会话只主动查一次，避免与用户的重试操作
+// 互相干扰；网络失败不打扰（runClientUpdateFlow 的 manual 弹窗已够）。
+let clientUpdateRescueArmed = false;
+function scheduleClientUpdateRescue() {
+  if (clientUpdateRescueArmed || process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) return;
+  clientUpdateRescueArmed = true;
+  setTimeout(() => {
+    runClientUpdateFlow(true).catch((e) => log('client-update', '救援检查失败: ' + e.message));
+  }, 5000).unref();
 }
 
 // ---------------------------------------------------------------------------

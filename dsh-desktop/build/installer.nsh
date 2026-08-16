@@ -125,6 +125,17 @@
       DeleteRegValue SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" QuietUninstallString
     ${EndIf}
   ${EndIf}
+
+  ; Drop stale shortcuts from versioned/legacy builds. After the heal/takeover
+  ; the old exe paths no longer exist; Windows resolving the app AUMID through
+  ; a dead .lnk shows a blank taskbar icon (issue #14 problem 2). The current
+  ; "Deepseek Harness EAC.lnk" is recreated by the standard install steps.
+  Delete "$DESKTOP\Deepseek Harness EAC v2.0.lnk"
+  Delete "$DESKTOP\Deepseek Harness EAC v1.0.lnk"
+  Delete "$DESKTOP\DSH Desktop.lnk"
+  Delete "$SMPROGRAMS\Deepseek Harness EAC v2.0.lnk"
+  Delete "$SMPROGRAMS\Deepseek Harness EAC v1.0.lnk"
+  Delete "$SMPROGRAMS\DSH Desktop.lnk"
 !macroend
 
 ; Dialog-free replacement for the built-in CHECK_APP_RUNNING: wait (up to

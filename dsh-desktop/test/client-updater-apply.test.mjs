@@ -16,7 +16,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildApplyScript } from '../client-updater.js';
+import { buildApplyScript, buildSpawnCommandLine } from '../client-updater.js';
 
 const CTX = { userDataDir: 'C:\\userData' };
 
@@ -87,4 +87,20 @@ test('all generated lines are ASCII with no bare CRLF inside line content', () =
       assert.doesNotMatch(line, /\r|\n/, 'embedded newline in line: ' + JSON.stringify(line));
     }
   }
+});
+
+// v2.0.x 回归（蓝七反馈“点立即重启没反应”）：spawn('cmd.exe', ['/c', script,
+// ...args]) 让 Node 给含空格参数加引号，cmd /c 剥掉首尾引号后路径在空格处
+// 断开（'C:\...\Deepseek' is not recognized），且 stdio:'ignore' 吞掉报错 →
+// apply-update.cmd 静默不执行。修复 = /d /s /c + windowsVerbatimArguments +
+// 整行外层再包一对引号（/s 剥外层后还原标准参数行）。
+test('spawn command line wraps the whole arg row in an extra outer quote pair', () => {
+  const script = 'C:\\Users\\a b\\AppData\\Roaming\\Deepseek Harness EAC\\updates\\apply-update.cmd';
+  const args = [
+    'C:\\Users\\a b\\AppData\\Roaming\\Deepseek Harness EAC\\updates\\Deepseek-Harness-EAC-Setup-x64.exe',
+    'Deepseek Harness EAC.exe',
+  ];
+  const line = buildSpawnCommandLine(script, args);
+  // 期望形式：""script" "arg1" "arg2"" —— /s 剥外层后还原为每参数带引号的标准行
+  assert.equal(line, '"' + [script, ...args].map((a) => `"${a}"`).join(' ') + '"');
 });

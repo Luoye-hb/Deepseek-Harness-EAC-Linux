@@ -246,6 +246,12 @@ function injectChrome() {
   style.textContent = CHROME_CSS;
   document.head.appendChild(style);
 
+  // 声明自绘标题栏高度：better-sidebar 等客户端插件据此自动下移其
+  // fixed 定位的顶部元素（标签栏 + 折叠按钮）。不设置时它们渲染在视口
+  // 顶部 0-36px，正好被本玻璃栏盖住——用户“看不到标签栏、无法折叠”
+  // 的根因。dsh web 本体不消费该属性，不会双重下移。
+  document.documentElement.setAttribute('data-dsh-title-bar-height', String(BAR_HEIGHT));
+
   // 内容区整体下移，避免遮挡 Web UI 顶部。
   const layout = document.createElement('style');
   layout.textContent = `body{box-sizing:border-box!important;padding-top:${BAR_HEIGHT}px!important}`;

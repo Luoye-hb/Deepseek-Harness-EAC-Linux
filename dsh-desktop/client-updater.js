@@ -12,7 +12,13 @@
 //      限制把安装包拆成 .part1/.part2 分片，此时自动按序下载并拼接。
 //   3. downloadRelease(): 流式下载（带进度回调）到 <userData>/updates/。
 //   4. applyUpdate(): 写一个纯 ASCII 的 cmd 脚本并以 detached 方式启动，随后
-//      主进程退出：
+//      主进程退出。启动方式是整行引用 + /d /s /c：spawn('cmd.exe',
+//      ['/c', script, a1, a2]) 让 Node 给每个含空格参数加引号，cmd /c 的
+//      剥引号规则会把首尾引号剥掉，路径在空格处断开 → "'C:\...\Deepseek'
+//      is not recognized" 且被 stdio:'ignore' 吞掉 → 脚本静默不执行，
+//      用户点“立即重启”后毫无反应（v2.0.x 反馈）。/s + 外层再包一对引号
+//      剥掉后原样还原为带引号参数行；参数经 Unicode 命令行传递，中文
+//      用户名不受 cmd 文件 ANSI 编码影响：
 //      · 便携版：等旧 exe 解锁 → 备份 → 用新 exe 原地替换 → 重新启动；
 //        若旧 exe 所在目录只读，则退化为直接启动新 exe（保留旧文件）。
 //      · 安装版：等 Deepseek Harness EAC 进程退出 → 以向导方式启动新 Setup 安装包
@@ -467,6 +473,18 @@ function buildApplyScript({ newExe, oldExe, portable }) {
   return lines;
 }
 
+/**
+ * 构造 spawn cmd.exe 用的整行命令（配合 /d /s /c 与 windowsVerbatimArguments）。
+ *
+ * 形如：""C:\app dir\apply-update.cmd" "C:\...\Setup.exe" "app.exe""
+ * /s 语义下 cmd 剥掉最外层引号对，还原为带引号的标准参数行；脚本本体
+ * 里的 %~1/%~2 因此拿到完整路径。中文路径经 Unicode 命令行传递不受影响
+ * （实测 if exist 判定通过）。
+ */
+function buildSpawnCommandLine(script, args) {
+  return '"' + [script, ...args].map((a) => `"${a}"`).join(' ') + '"';
+}
+
 function applyUpdate(ctx, pending) {
   const newExe = pending.path;
   const portable = isPortable();
@@ -476,13 +494,15 @@ function applyUpdate(ctx, pending) {
   const lines = buildApplyScript({ newExe, oldExe, portable });
   fs.writeFileSync(script, lines.join('\r\n'));
   ctx.log('client-update', `启动更新脚本: ${script}（新: ${newExe}，旧: ${oldExe}）`);
-  const child = spawn('cmd.exe', ['/c', script, newExe, portable ? oldExe : exeBase, portable ? '' : oldExe], {
+  const args = [newExe, portable ? oldExe : exeBase, portable ? '' : oldExe];
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', buildSpawnCommandLine(script, args)], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
+    windowsVerbatimArguments: true,
   });
   child.unref();
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, buildApplyScript, isPortable, resolveRepos, DEFAULT_REPOS };
+module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, buildApplyScript, buildSpawnCommandLine, isPortable, resolveRepos, DEFAULT_REPOS };
