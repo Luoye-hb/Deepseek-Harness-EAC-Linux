@@ -84,6 +84,7 @@ function isUnderFileRoots(p) {
 }
 
 const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
 const APP_VERSION = app.getVersion();
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 
@@ -620,6 +621,46 @@ function scheduleClientUpdateRescue() {
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
+
+// macOS 需要保留原生菜单栏：setApplicationMenu(null) 会连 Cmd+C/V/Q/W 等
+// 系统快捷键一起干掉（macOS 的剪贴板/退出快捷键依赖菜单存在）。这里装一个
+// 最小菜单（App / 文件 / 编辑 / 视图 / 窗口），其余平台维持无菜单栏——
+// Windows/Linux 的全部功能由自绘 chrome 提供。
+function installAppMenu() {
+  if (!IS_MAC) {
+    Menu.setApplicationMenu(null);
+    return;
+  }
+  const template = [
+    { role: 'appMenu' },
+    {
+      label: '文件',
+      submenu: [{ role: 'close' }], // Cmd+W 关窗；应用常驻 Dock，activate 时重开
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { label: '重新加载', accelerator: 'CmdOrCtrl+R', click: () => reloadMainWindow() },
+        {
+          label: '开发者工具',
+          accelerator: 'CmdOrCtrl+Shift+I',
+          click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.toggleDevTools(); },
+        },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
 
 function createWindow({ startHidden = false } = {}) {
   mainWindow = new BrowserWindow({
@@ -1247,8 +1288,27 @@ function trayHintOnce() {
   }
 }
 
+// macOS：窗口已关闭（关窗不退出）后从 Dock / 通知回来时重建主窗口。
+// 服务还活着就直接加载已有 webUrl，否则走完整启动链（会 loadURL 到新窗口）。
+function reopenMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    showMainWindow();
+    return;
+  }
+  createWindow();
+  const serverAlive = serverProc && serverProc.exitCode === null && !serverProc.killed;
+  if (webUrl && serverAlive) {
+    mainWindow.loadURL(webUrl).catch((err) => log('boot', '重开窗口加载失败: ' + err.message));
+  } else {
+    startAndShow().catch((err) => handleBootFailure(err));
+  }
+}
+
 function showMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    if (IS_MAC) reopenMainWindow();
+    return;
+  }
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -2018,7 +2078,8 @@ function boot() {
   log('boot', `Deepseek Harness EAC（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
-  Menu.setApplicationMenu(null);
+  // macOS 例外：保留最小原生菜单（否则 Cmd+C/V/Q/W 等系统快捷键失效）。
+  installAppMenu();
   startPreviewStaticServer();
   registerChromeIpc();
   createTray();
@@ -2107,9 +2168,15 @@ if (!gotLock) {
     if (balanceTimer) clearInterval(balanceTimer);
     if (tray) { try { tray.destroy(); } catch {} tray = null; }
   });
-  // 关闭窗口后常驻托盘；托盘不存在时才随窗口退出。
+  // macOS 惯例：关闭所有窗口不退出应用（dsh web 服务与会话继续运行，
+  // 点 Dock 图标经 activate 重建窗口）；Windows 有托盘时同样常驻。
   app.on('window-all-closed', () => {
+    if (IS_MAC) return;
     if (!IS_WIN || !tray) app.quit();
+  });
+  // macOS：点击 Dock 图标（无窗口时）重新打开主窗口。
+  app.on('activate', () => {
+    if (IS_MAC) reopenMainWindow();
   });
   app.whenReady().then(boot).catch((err) => fatal('应用初始化失败', err));
 }

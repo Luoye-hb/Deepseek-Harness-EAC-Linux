@@ -9,9 +9,8 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Linux-x86__64-1793D1?style=flat&logo=linux&logoColor=white" alt="Linux"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v3.0.2-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v2.0.4-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
@@ -61,14 +60,14 @@
 
 ### Linux（x64）
 
-Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v2.0.4-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v2.0.4-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
+Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v3.0.2-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v3.0.2-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
 
 | 发行版 | 包 | 安装 |
 | --- | --- | --- |
-| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v2.0.4-linux/Deepseek-Harness-EAC-2.0.4-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-2.0.4-x64.pacman` |
-| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v2.0.4-linux/Deepseek-Harness-EAC-2.0.4-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-2.0.4-amd64.deb` |
-| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v2.0.4-linux/Deepseek-Harness-EAC-2.0.4.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-2.0.4.x86_64.rpm` |
-| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v2.0.4-linux/Deepseek-Harness-EAC-2.0.4-x86_64.AppImage) | `chmod +x` 后直接运行 |
+| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-3.0.2-x64.pacman` |
+| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-3.0.2-amd64.deb` |
+| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-3.0.2.x86_64.rpm` |
+| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2-x86_64.AppImage) | `chmod +x` 后直接运行 |
 
 > - 卸载：`pacman -Rns dsh-desktop` / `apt remove dsh-desktop` / `dnf remove dsh-desktop`
 > - 与 Windows 版一致：内置 Node.js 与 npm CLI，目标机器无需预装 Node.js；数据目录沿用 `~/.dsh`（`DSH_HOME`）

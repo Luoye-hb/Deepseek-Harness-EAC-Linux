@@ -32,6 +32,8 @@
     "dist:deb": "node scripts/check-syntax.js && node scripts/patch-deps.js && electron-builder --linux deb --x64",
     "dist:rpm": "node scripts/check-syntax.js && node scripts/patch-deps.js && electron-builder --linux rpm --x64",
     "dist:appimage": "node scripts/check-syntax.js && node scripts/patch-deps.js && electron-builder --linux AppImage --x64",
+    "dist:mac": "node scripts/check-syntax.js && node scripts/patch-deps.js && node scripts/fetch-darwin-natives.js && electron-builder --mac",
+    "fetch-darwin-natives": "node scripts/fetch-darwin-natives.js",
     "postinstall": "node scripts/patch-deps.js || exit 0",
     "fetch-npm": "node scripts/fetch-npm.js",
     "fetch-runtime": "node scripts/fetch-node.js && node scripts/fetch-npm.js",

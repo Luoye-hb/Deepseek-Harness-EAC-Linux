@@ -132,6 +132,17 @@ rpm:
 appImage:
   artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
 
+# macOS（仅在 macOS 主机上构建，见 .github/workflows/build-macos.yml）。
+# 架构由 CLI 传入（--x64 / --arm64），不在这里写死；
+# 无签名证书时产出未签名包，后续可用 CSC_LINK / notarytool 补签名公证。
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+
 # No ${version} in artifact names: the README links to
 # releases/latest/download/<fixed-name>.exe, which must stay valid across
 # releases (hard-coded v2.0.1 names 404'd after v2.0.2 shipped).
