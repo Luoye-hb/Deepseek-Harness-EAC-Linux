@@ -7,6 +7,30 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 2.0.0（社区插件市场 + 视觉/记忆/人设插件全家桶 + 重启窗口期排队任务 + 插件原样分发）→
 3.0.0（本版：升级链路根治 + 崩溃自恢复/看门狗 + 右侧边栏 + 上游预设全家桶）。
 
+## [3.0.1] — 2026-08-16
+
+### 修复
+- 右侧边栏覆盖窗口内容；自更新后 dsh web 未随应用退出而残留；陈旧快捷方式清理。
+
+## [3.0.2] — 2026-08-16
+
+### 修复（Linux glibc 兼容，2026-08 Debian 事故）
+- **Debian 13（glibc 2.41）及更老系统启动即崩**：node-pty@1.1.0 不带 linux-x64
+  预编译，此前在构建机（Arch glibc 2.42 / 最新 Ubuntu runner）现场编译的
+  pty.node 绑定新 glibc（GLIBC_2.42）。自本版起 CI 统一在 debian:12 容器用
+  官方 Node v24.19.0 重编，产物最高引用 ≤ GLIBC_2.34，覆盖支持矩阵窗口
+  （2025-01 ~ 2026-08 发布的系统，见 `docs/support-matrix.md`）。
+- **基线机制收敛**：glibc 阈值与扫描逻辑统一为 `scripts/check-glibc.cjs`
+  单一实现；新增 `scripts/audit-linux-package.sh` 对 pacman / deb / rpm /
+  AppImage 四种最终安装包做归档级终检（pty.node 存在 + 捆绑 Node 可加载 +
+  全部原生载荷 glibc 扫描）；CI 增加 `pull_request` 触发，修复分支不再依赖
+  手动 `workflow_dispatch`。
+
+### 工程（无行为变化）
+- `DSH_HOME` 解析统一为 `dsh-home.js`（此前 6 处两种写法）；设置存储从
+  updater.js 剥离为 `settings.js`；退出/重启仪式、tasklist PID 探测去重；
+  删除死代码 wsl-backend.js；zstd 帧扫描去重；通知检测并入 `npm test`。
+
 ## [3.0.0] — 2026-08-16
 
 ### 修复（升级/启动可靠性，issues #7 #8 根因）
