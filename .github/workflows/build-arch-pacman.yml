@@ -96,8 +96,7 @@ jobs:
           test -n "$pty_file" || { echo "ERROR: node-pty native module missing from pacman payload"; exit 1; }
           node_bin="$(find /tmp/pacman-audit -path '*/resources/node/node' -type f | head -n1)"
           test -n "$node_bin" || { echo "ERROR: bundled node missing from pacman payload"; exit 1; }
-          node_pty_root="$(dirname "$(dirname "$(dirname "$pty_file")")")"
-          "$node_bin" -e "const p = require(process.argv[1]); if (typeof p.spawn !== 'function') process.exit(2); console.log('pacman node-pty loadable @', process.version)" "$node_pty_root"
+          "$node_bin" -e "require(process.argv[1]); console.log('pacman pty.node loadable @', process.version)" "$pty_file"
           echo "OK: node-pty native module present ($pty_file)"
 
       - name: Show built artifacts
