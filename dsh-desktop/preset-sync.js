@@ -29,6 +29,20 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const src = path.join(assetsRoot, entry.name);
+    // Shared resource directories (upstream `_preset/`): preset manifests
+    // reference them as `../_preset/<file>.mjs`, so they must be installed
+    // next to the presets. Same skip-if-exists semantics.
+    if (entry.name.startsWith('_')) {
+      const sharedDest = path.join(presetsRoot, entry.name);
+      if (fs.existsSync(sharedDest)) continue;
+      try {
+        fs.cpSync(src, sharedDest, { recursive: true });
+        log('installed bundled preset shared dir: ' + entry.name);
+      } catch (err) {
+        log('failed to install bundled preset shared dir ' + entry.name + ': ' + err.message);
+      }
+      continue;
+    }
     // A preset directory must carry preset.yml; anything else in assets is
     // not a preset and is ignored.
     if (!fs.existsSync(path.join(src, 'preset.yml'))) continue;

@@ -5,6 +5,10 @@ appId: com.deepseek.dsh.desktop
 # silently drops those files and dsh web crashes with MODULE_NOT_FOUND (issue #4).
 productName: Deepseek Harness EAC
 copyright: MIT License
+# 仅保留中英文，移除 Electron 其余语言包（.pak，约 80MB），不影响功能体验。
+electronLanguages:
+  - en-US
+  - zh-CN
 directories:
   output: dist
   buildResources: build
@@ -28,10 +32,22 @@ files:
   - profile-module-heal.js
   - patch-row-heal.js
   - preset-sync.js
+  - bundle-integrity.js
+  - stable-port.js
+  - koffi-preflight.js
+  - renderer-recovery.js
+  - watchdog.js
   - preload.js
   - assets/**/*
+  # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）等必须在成品里存在。
+  - scripts/koffi-preflight.cjs
   - package.json
   - "!**/*.md"
+  # `!**/*.md` above would strip every .md from node_modules too, which removes
+  # the SKILL.md files the bundled @deepseek-ai/dsh ships for its agent presets
+  # and silently breaks the 创造模式 skills. Re-include them: later patterns
+  # override earlier ones.
+  - "**/SKILL.md"
 
 extraResources:
   - from: vendor/node
@@ -119,6 +135,9 @@ appImage:
 # releases (hard-coded v2.0.1 names 404'd after v2.0.2 shipped).
 portable:
   artifactName: Deepseek-Harness-EAC-Portable-${arch}.${ext}
+  # 稳定缓存目录名：配合 scripts/patch-portable-template.js 复用已解压目录，
+  # 避免每次启动都解压 app-64.7z（Defender 扫描 2.4 万文件导致分钟级冷启动）。
+  unpackDirName: deepseek-harness-eac-portable
 
 nsis:
   artifactName: Deepseek-Harness-EAC-Setup-${arch}.${ext}

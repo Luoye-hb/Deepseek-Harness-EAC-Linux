@@ -102,6 +102,52 @@ test('is idempotent — a second run removes nothing and does not throw', () => 
   }
 });
 
+test('keeps shadow copies when the fallback link target is damaged (issue #7)', () => {
+  // When the app's bundled node_modules is damaged (empty package skeletons
+  // after a botched upgrade), the fallback junction points into that damaged
+  // tree. Removing the profile's real copies then destroys the LAST healthy
+  // copy — heal must verify the junction target is healthy first.
+  const home = mkdtempSync(join(tmpdir(), 'dsh-heal-broken-'));
+  try {
+    const sources = join(home, 'sources');
+    const fallback = join(home, 'profiles', 'node_modules');
+    const nm = join(home, 'profiles', 'web', 'node_modules');
+
+    // damaged source: dir exists but package.json missing (empty skeleton)
+    mkdirSync(join(sources, 'commander-skeleton'), { recursive: true });
+    mkdirSync(join(fallback), { recursive: true });
+    symlinkSync(join(sources, 'commander-skeleton'), join(fallback, 'commander'), 'junction');
+
+    // profile shadow: real copy WITH package.json — the last healthy copy
+    mkdirSync(join(nm, 'commander'), { recursive: true });
+    writeFileSync(join(nm, 'commander', 'package.json'), JSON.stringify({ name: 'commander' }));
+
+    const removed = healProfileModuleShadowing(home);
+    assert.deepEqual(removed, [], 'must not remove the shadow when the junction target is damaged');
+    assert.equal(existsSync(join(nm, 'commander')), true, 'last healthy copy must survive');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('keeps shadow copies when the fallback link is dangling', () => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-heal-dangling-'));
+  try {
+    const fallback = join(home, 'profiles', 'node_modules');
+    const nm = join(home, 'profiles', 'web', 'node_modules');
+    mkdirSync(fallback, { recursive: true });
+    symlinkSync(join(home, 'sources', 'gone'), join(fallback, 'js-yaml'), 'junction');
+    mkdirSync(join(nm, 'js-yaml'), { recursive: true });
+    writeFileSync(join(nm, 'js-yaml', 'package.json'), JSON.stringify({ name: 'js-yaml' }));
+
+    const removed = healProfileModuleShadowing(home);
+    assert.deepEqual(removed, [], 'must not remove the shadow when the junction is dangling');
+    assert.equal(existsSync(join(nm, 'js-yaml')), true, 'shadow copy must survive a dangling fallback link');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('is a no-op when the fallback directory does not exist', () => {
   const home = mkdtempSync(join(tmpdir(), 'dsh-heal-empty-'));
   try {

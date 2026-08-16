@@ -69,6 +69,28 @@ test('syncBundledPresets: assets 目录不存在时安全返回', () => {
   }
 });
 
+test('syncBundledPresets: _preset 共享目录随 preset 一起同步（whoami/zero-anchored 依赖 ../_preset/*.mjs）', () => {
+  const dir = tmp();
+  try {
+    const assets = join(dir, 'assets');
+    mkdirSync(join(assets, '_preset'), { recursive: true });
+    writeFileSync(join(assets, '_preset', 'instruction-hint.mjs'), '// shared\n');
+    mkdirSync(join(assets, 'whoami-standard'), { recursive: true });
+    writeFileSync(join(assets, 'whoami-standard', 'preset.yml'), 'name: whoami\n');
+    writeFileSync(join(assets, 'whoami-standard', 'agent.cordis.yml'), "name: ../_preset/instruction-hint.mjs\n");
+    const presetsRoot = join(dir, '.agent-presets');
+    syncBundledPresets(assets, presetsRoot);
+    assert.ok(existsSync(join(presetsRoot, '_preset', 'instruction-hint.mjs')),
+      '_preset shared dir must be installed next to presets');
+    // 幂等：用户改过的 _preset 不被覆盖
+    writeFileSync(join(presetsRoot, '_preset', 'user-note.txt'), 'keep');
+    syncBundledPresets(assets, presetsRoot);
+    assert.ok(existsSync(join(presetsRoot, '_preset', 'user-note.txt')));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // --- ensureDefaultAgentPreset ------------------------------------------------
 
 function presetDir(home, id = 'anchored-standard') {
@@ -170,6 +192,25 @@ test('内置 preset 目录完整：三个 preset 均带 preset.yml 与组合文�
     const yml = readFileSync(join(dir, 'agent.cordis.yml'), 'utf8');
     for (const m of yml.matchAll(/name:\s*'(\.\/[^']+)'/g)) {
       assert.ok(existsSync(join(dir, m[1])), name + ' 引用的 ' + m[1] + ' 缺失');
+    }
+  }
+});
+
+test('上游新增 preset 完整：目录自包含或引用的 ../_preset 共享件随包存在', () => {
+  const assetsRoot = join(root, 'assets', 'agent-presets');
+  const upstream = ['minimal-win', 'whoami-standard', 'zero-anchored-standard', 'warmupbetter', 'warmupbetter-replay', 'v4-flash-godmode-opencode-go'];
+  for (const name of upstream) {
+    const dir = join(assetsRoot, name);
+    assert.ok(existsSync(join(dir, 'preset.yml')), name + ' 缺 preset.yml（未从上游同步）');
+    const yml = readFileSync(join(dir, 'agent.cordis.yml'), 'utf8');
+    for (const m of yml.matchAll(/name:\s*'([^']+)'/g)) {
+      const ref = m[1];
+      if (ref.startsWith('./')) {
+        assert.ok(existsSync(join(dir, ref)), name + ' 引用的 ' + ref + ' 缺失');
+      } else if (ref.startsWith('../_preset/')) {
+        assert.ok(existsSync(join(assetsRoot, '_preset', ref.slice('../_preset/'.length))),
+          name + ' 引用的共享件 ' + ref + ' 缺失（_preset 未同步）');
+      }
     }
   }
 });

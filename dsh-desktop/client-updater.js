@@ -378,17 +378,25 @@ async function downloadRelease(ctx, release, { onProgress } = {}) {
 
 // --- 应用更新（detached 脚本 + 主进程退出） ---------------------------------
 
-function applyUpdate(ctx, pending) {
-  const newExe = pending.path;
-  const portable = isPortable();
-  const oldExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
-  const exeBase = path.basename(oldExe);
-  const script = path.join(ctx.userDataDir, 'updates', 'apply-update.cmd');
+/**
+ * 生成 apply-update.cmd 的行内容（纯 ASCII，join('\r\n') 后落盘）。
+ *
+ * issue #8 回归约束（对应 test/client-updater-apply.test.mjs）：
+ *   1. 安装版分支：等待旧进程退出必须有界（约 30s），超时 taskkill /F /T
+ *      强杀——托盘应用关窗后进程仍存活，无界等待会让 Setup 永远不执行。
+ *   2. 全程写 apply-update.log（与脚本同目录），记录等待/强杀/运行/退出码。
+ *   3. Setup 失败：保留安装包与日志供诊断，并拉起旧版应用，用户不被困住。
+ *   4. 清理（删安装包+自删）仅在成功路径发生。
+ *   5. 便携版分支保留 备份→替换→失败回滚 语义，同样有界等待并写日志。
+ */
+function buildApplyScript({ newExe, oldExe, portable }) {
   const lines = ['@echo off'];
   if (portable) {
     lines.push(
       'set "NEW=%~1"',
       'set "OLD=%~2"',
+      'set "LOG=%~dp0apply-update.log"',
+      'echo [%date% %time%] portable apply-update start > "%LOG%"',
       'set /a tries=0',
       ':wait',
       'set /a tries+=1',
@@ -400,6 +408,7 @@ function applyUpdate(ctx, pending) {
       'del /f /q "%OLD%" >nul 2>&1',
       'if exist "%OLD%" goto wait',
       ':replace',
+      'echo [%date% %time%] replacing portable exe >> "%LOG%"',
       'copy /y "%NEW%" "%OLD%" >nul 2>&1',
       'if errorlevel 1 goto failed',
       'del "%NEW%" >nul 2>&1',
@@ -408,6 +417,7 @@ function applyUpdate(ctx, pending) {
       'del "%~f0" >nul 2>&1',
       'exit /b 0',
       ':failed',
+      'echo [%date% %time%] portable update failed, restoring >> "%LOG%"',
       // M3 修复：超时后先尽力复制回原位再启动，避免便携版从 updates 目录
       // 直接启动导致新建 data 目录、丢失设置。
       'if exist "%OLD%.bak" copy /y "%OLD%.bak" "%OLD%" >nul 2>&1',
@@ -421,19 +431,52 @@ function applyUpdate(ctx, pending) {
     lines.push(
       'set "SETUP=%~1"',
       'set "EXENAME=%~2"',
+      'set "OLD=%~3"',
+      'set "LOG=%~dp0apply-update.log"',
+      'echo [%date% %time%] apply-update start > "%LOG%"',
+      'set /a tries=0',
       ':wait',
+      'set /a tries+=1',
+      'if %tries% gtr 15 goto kill',
       'ping -n 2 127.0.0.1 >nul',
       'tasklist /fi "IMAGENAME eq %EXENAME%" 2>nul | find /i "%EXENAME%" >nul',
       'if not errorlevel 1 goto wait',
+      'echo [%date% %time%] app exited after %tries% checks >> "%LOG%"',
+      'goto run',
+      ':kill',
+      'echo [%date% %time%] app still alive, force killing >> "%LOG%"',
+      'taskkill /F /T /IM "%EXENAME%" >> "%LOG%" 2>&1',
+      'ping -n 3 127.0.0.1 >nul',
+      ':run',
+      'echo [%date% %time%] running setup >> "%LOG%"',
       'start /wait "" "%SETUP%"',
+      'echo [%date% %time%] setup exit code %errorlevel% >> "%LOG%"',
+      'if errorlevel 1 goto failed',
+      'goto success',
+      ':success',
+      'echo [%date% %time%] update applied >> "%LOG%"',
       'del "%SETUP%" >nul 2>&1',
       'del "%~f0" >nul 2>&1',
-      'exit /b 0'
+      'exit /b 0',
+      ':failed',
+      'echo [%date% %time%] update failed, installer kept for diagnosis >> "%LOG%"',
+      'if not "%OLD%" == "" if exist "%OLD%" start "" "%OLD%"',
+      'exit /b 1'
     );
   }
+  return lines;
+}
+
+function applyUpdate(ctx, pending) {
+  const newExe = pending.path;
+  const portable = isPortable();
+  const oldExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+  const exeBase = path.basename(oldExe);
+  const script = path.join(ctx.userDataDir, 'updates', 'apply-update.cmd');
+  const lines = buildApplyScript({ newExe, oldExe, portable });
   fs.writeFileSync(script, lines.join('\r\n'));
   ctx.log('client-update', `启动更新脚本: ${script}（新: ${newExe}，旧: ${oldExe}）`);
-  const child = spawn('cmd.exe', ['/c', script, newExe, portable ? oldExe : exeBase], {
+  const child = spawn('cmd.exe', ['/c', script, newExe, portable ? oldExe : exeBase, portable ? '' : oldExe], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -442,4 +485,4 @@ function applyUpdate(ctx, pending) {
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, isPortable, resolveRepos, DEFAULT_REPOS };
+module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, buildApplyScript, isPortable, resolveRepos, DEFAULT_REPOS };

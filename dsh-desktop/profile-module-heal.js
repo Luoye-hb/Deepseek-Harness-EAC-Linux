@@ -45,6 +45,22 @@ function healProfileModuleShadowing(home, log = () => {}) {
 
   const removed = [];
   for (const { full, rel } of names) {
+    // Issue #7 guard: only delete the profile's real copy when the fallback
+    // link it should fall back to is actually healthy (target dir has a
+    // package.json). A damaged app node_modules (empty skeletons after a
+    // botched upgrade) or a dangling junction means the shadow is the LAST
+    // healthy copy — removing it would brick module resolution for good.
+    const fallbackEntry = path.join(fallbackDir, rel);
+    let fallbackHealthy = false;
+    try {
+      const st = fs.lstatSync(fallbackEntry);
+      const target = st.isSymbolicLink() ? fs.realpathSync(fallbackEntry) : fallbackEntry;
+      fallbackHealthy = fs.existsSync(path.join(target, 'package.json'));
+    } catch { fallbackHealthy = false; }
+    if (!fallbackHealthy) {
+      log('fallback entry unhealthy, keeping shadow copy: ' + full);
+      continue;
+    }
     const shadow = path.join(profileModulesDir, rel);
     let stat;
     try { stat = fs.lstatSync(shadow); } catch { continue; }

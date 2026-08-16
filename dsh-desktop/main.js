@@ -15,16 +15,25 @@
 // installed for. We deliberately never rebuild them against Electron.
 
 const { app, BrowserWindow, Menu, Tray, shell, dialog, Notification, ipcMain, clipboard } = require('electron');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 
 const updater = require('./updater');
 const clientUpdater = require('./client-updater');
 const balance = require('./balance');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
+const bundleIntegrity = require('./bundle-integrity');
+const { RendererRecovery } = require('./renderer-recovery');
+const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
+const {
+  runKoffiPreflight,
+  enablePickerBrowseOverlay,
+  clearAutoPickerBrowseOverlay,
+} = require('./koffi-preflight');
 const { configLinesFor, healSoulMdPatchRow, removeBundledRowDuplicates } = require('./patch-row-heal');
 const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
@@ -97,6 +106,13 @@ let clientUpdateBusy = false;
 let balanceCache = null;
 let balanceTimer = null;
 let restartingServer = false;
+// 渲染进程崩溃/挂起自恢复状态机（renderer-recovery.js，上游 Issue #9 修复）。
+let recovery = null;
+// koffi 预检失败时注入的目录选择器降级 overlay 路径（koffi-preflight.js）。
+let pickerBrowseOverlay = null;
+// 集成测试钩子：DSH_DESKTOP_TEST_FORCE_UNSAFE=1 时把第一次探测到的端口强制
+// 视为受限端口（6000），端到端验证「重启换端口」交接路径。
+let testForceUnsafeOnce = process.env.DSH_DESKTOP_TEST_FORCE_UNSAFE === '1';
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -177,6 +193,100 @@ function killTree(proc) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 运行状态标记 + 看门狗（上游集成：防「进程/托盘凭空消失且无任何提醒」）。
+// run-state.json 由主进程维护；watchdog.js 以分离的 Node 进程轮询父 PID：
+//   cleanExit=true → 用户主动退出/更新，看门狗安静退出；
+//   有更新实例接管 → 旧看门狗退出；
+//   否则视为意外崩溃 → 拉起应用（10 分钟内最多 5 次）。
+// ---------------------------------------------------------------------------
+
+function runStatePath() {
+  return path.join(userDataDir, 'run-state.json');
+}
+
+function writeRunState(extra = {}) {
+  try {
+    fs.writeFileSync(runStatePath(), JSON.stringify({
+      pid: process.pid,
+      exe: process.execPath,
+      cleanExit: false,
+      startedAt: new Date().toISOString(),
+      version: APP_VERSION,
+      ...extra,
+    }));
+  } catch (err) {
+    log('watchdog', '写运行状态失败: ' + err.message);
+  }
+}
+
+function markCleanExit() {
+  try {
+    const p = runStatePath();
+    let state = {};
+    try { state = JSON.parse(fs.readFileSync(p, 'utf8')); } catch {}
+    state.cleanExit = true;
+    state.endedAt = new Date().toISOString();
+    fs.writeFileSync(p, JSON.stringify(state));
+  } catch (err) {
+    log('watchdog', '写退出标记失败: ' + err.message);
+  }
+}
+
+function detectUncleanPreviousRun() {
+  try {
+    const prev = JSON.parse(fs.readFileSync(runStatePath(), 'utf8'));
+    if (prev && prev.cleanExit !== true && prev.pid && Number(prev.pid) !== process.pid) {
+      log('crash', '检测到上次运行未正常退出: ' + JSON.stringify(prev));
+      return prev;
+    }
+  } catch {}
+  return null;
+}
+
+function notifyUncleanRestart(prev) {
+  try {
+    const started = prev && prev.startedAt ? new Date(prev.startedAt) : null;
+    const when = started && !Number.isNaN(started.getTime())
+      ? started.toLocaleString('zh-CN', { hour12: false })
+      : '上次';
+    const n = new Notification({
+      title: 'Deepseek Harness EAC 已自动恢复',
+      body: `检测到应用在 ${when} 前后未正常退出，看门狗已重新启动应用。`,
+      icon: path.join(__dirname, 'assets', 'icon.png'),
+    });
+    n.on('click', () => showMainWindow());
+    n.show();
+  } catch (err) {
+    log('crash', '恢复通知发送失败: ' + err.message);
+  }
+}
+
+function startWatchdog() {
+  // 仅安装版启用：开发模式下重启 Electron 会与调试流程互相干扰。
+  if (!app.isPackaged || !IS_WIN) return;
+  const watchdogJs = path.join(__dirname, 'watchdog.js');
+  if (!fs.existsSync(watchdogJs)) return;
+  try {
+    const child = spawn(nodeExe(), [
+      watchdogJs,
+      '--pid=' + process.pid,
+      '--exe=' + process.execPath,
+      '--state=' + runStatePath(),
+      '--log=' + path.join(logsDir, 'watchdog.log'),
+    ], {
+      cwd: path.dirname(process.execPath),
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    log('watchdog', `看门狗已启动 pid=${child.pid}`);
+  } catch (err) {
+    log('watchdog', '看门狗启动失败: ' + err.message);
+  }
+}
+
 // Environment for the dsh child: drop harness/session leftovers so the
 // desktop instance boots clean, keep everything else (proxy, API keys, ...).
 function childEnv() {
@@ -227,14 +337,26 @@ function showBox(opts) {
 // dsh web server lifecycle
 // ---------------------------------------------------------------------------
 
-function startServer() {
+// stable-port.js 的依赖注入适配器：把 updater 的 settings 读写桥接过去。
+function stablePortCtx() {
+  const c = updCtx();
+  return {
+    loadSettings: () => updater.loadSettings(c),
+    saveSettings: (_ctx, s) => updater.saveSettings(c, s),
+  };
+}
+
+async function startServer(unsafePortRetries = 4, overlays = []) {
+  // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
+  if (serverProc && !serverProc.killed && !quitting) {
+    log('dsh', 'startServer 重入：先终结旧进程再启动');
+    killTree(serverProc);
+    serverProc = null;
+  }
+  // 稳定端口（stable-port.js）：复用 settings.webPort，避免每次 --port 0
+  // 换 origin 导致 localStorage 偏好丢失；同时避开 Chromium 受限端口。
+  const webPort = await chooseStableWebPort(stablePortCtx());
   return new Promise((resolve, reject) => {
-    // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
-    if (serverProc && !serverProc.killed && !quitting) {
-      log('dsh', 'startServer 重入：先终结旧进程再启动');
-      killTree(serverProc);
-      serverProc = null;
-    }
     const nodeBin = nodeExe();
     const bin = dshBin();
     if (!fs.existsSync(nodeBin)) {
@@ -244,8 +366,13 @@ function startServer() {
       ));
     }
     const out = fs.createWriteStream(path.join(logsDir, 'dsh-web.log'), { flags: 'a' });
-    log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port 0`);
-    const proc = spawn(nodeBin, [bin, 'web', '--host', '127.0.0.1', '--port', '0'], {
+    log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port ${webPort}`);
+    // --use-system-ca: 让 dsh web 进程信任系统证书库（代理/MITM 场景下内置 node 的
+    // 默认 CA 无法验证，导致插件市场等对外 fetch 失败）。
+    const patchArgs = overlays
+      .filter((p) => typeof p === 'string' && p && fs.existsSync(p))
+      .flatMap((p) => ['--patch', p]);
+    const proc = spawn(nodeBin, ['--use-system-ca', bin, 'web', '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
       cwd: userDataDir,
       env: childEnv(),
       detached: !IS_WIN,
@@ -253,7 +380,16 @@ function startServer() {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     serverProc = proc;
+    watchServerProc(proc, out, { expectedPort: webPort, unsafePortRetries, overlays }).then(resolve, reject);
+  });
+}
+
+// 等待 dsh web 子进程 stdout 出现就绪 URL 行；进程提前退出 / 启动超时则拒绝。
+// 退出时若服务已就绪过（webUrl 已设）且非主动重启，弹「DSH 服务已停止」对话框。
+function watchServerProc(proc, out, opts = {}) {
+  return new Promise((resolve, reject) => {
     let settled = false;
+    let handedOff = false; // 受限端口重启：本实例的退出不再影响外层 Promise/弹窗
     let bootTimer = null;
     const finish = (fn, value) => {
       if (!settled) { settled = true; fn(value); }
@@ -264,7 +400,41 @@ function startServer() {
       const text = chunk.toString();
       for (const line of text.split(/\r?\n/)) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
-        if (m) finish(resolve, m[1]);
+        if (!m) continue;
+        let blocked;
+        if (testForceUnsafeOnce) {
+          testForceUnsafeOnce = false;
+          blocked = 6000; // 测试钩子：仅第一次强制视为受限端口
+        } else {
+          blocked = restrictedPortOf(m[1]);
+        }
+        if (blocked && opts.unsafePortRetries > 0) {
+          // 端口命中 Chromium 受限列表：结束该实例重启换端口（有上限）。
+          // 标记 handedOff，本实例的 exit 事件不得提前 reject 外层 Promise
+          // 或弹出「服务已停止」对话框，结果交由递归重启决定。
+          handedOff = true;
+          log('dsh', `端口 ${blocked} 属于 Chromium 受限端口（ERR_UNSAFE_PORT），重启服务换端口（剩余重试 ${opts.unsafePortRetries} 次）`);
+          killTree(proc);
+          setTimeout(() => {
+            if (quitting) return finish(reject, new Error('应用正在退出'));
+            startServer(opts.unsafePortRetries - 1, opts.overlays).then(
+              (url) => finish(resolve, url),
+              (err) => finish(reject, err)
+            );
+          }, 600);
+          return;
+        }
+        // 稳定端口：若 dsh 最终监听端口与请求的不同（极端兜底），以实际为准并保存。
+        try {
+          const actual = Number(new URL(m[1]).port) || 0;
+          if (opts.expectedPort != null && actual > 0 && actual !== opts.expectedPort) {
+            const c = updCtx();
+            const settings = updater.loadSettings(c);
+            settings.webPort = actual;
+            updater.saveSettings(c, settings);
+          }
+        } catch {}
+        finish(resolve, m[1]);
       }
     };
     proc.stdout.on('data', onData);
@@ -276,8 +446,10 @@ function startServer() {
       // 原地重启（插件市场）或已替换为新进程时，不打扰用户、也不清掉新进程的句柄。
       const intentional = restartingServer || serverProc !== proc;
       if (serverProc === proc) serverProc = null;
-      finish(reject, new Error(`dsh web 启动失败（退出码 ${code}）。日志: ${path.join(logsDir, 'dsh-web.log')}`));
-      if (!quitting && !intentional && webUrl && mainWindow && !mainWindow.isDestroyed()) {
+      if (!handedOff) {
+        finish(reject, new Error(`dsh web 启动失败（退出码 ${code}）。日志: ${path.join(logsDir, 'dsh-web.log')}`));
+      }
+      if (!quitting && !intentional && !handedOff && webUrl && mainWindow && !mainWindow.isDestroyed()) {
         showBox({
           type: 'error',
           title: 'DSH 服务已停止',
@@ -318,8 +490,14 @@ function waitUntilUp(url, timeoutMs = 120000) {
   });
 }
 
-function startAndShow() {
-  return startServer()
+function startAndShow(overlays = []) {
+  // koffi 预检失败注入的目录选择器降级 overlay 一并交给 dsh web（--patch）。
+  const merged = [];
+  if (pickerBrowseOverlay && fs.existsSync(pickerBrowseOverlay)) merged.push(pickerBrowseOverlay);
+  for (const p of overlays) {
+    if (typeof p === 'string' && p && fs.existsSync(p) && !merged.includes(p)) merged.push(p);
+  }
+  return startServer(4, merged)
     .then(waitUntilUp)
     .then((url) => {
       webUrl = url;
@@ -329,6 +507,37 @@ function startAndShow() {
       }
       return url;
     });
+}
+
+// ---------------------------------------------------------------------------
+// koffi 预检与目录选择器降级（koffi-preflight.js）：koffi 3.1.3/3.1.4 的
+// win32-x64 预编译二进制在部分 Windows 机器上会在 load 时原生崩溃
+// （0xC0000005），目录选择器 worker 无消息退出。启动前用内置 node 在子
+// 进程里做一次 FFI 冒烟；失败则注入 browse 后端 overlay。
+// ---------------------------------------------------------------------------
+function pickerBrowseOverlayPath() {
+  return path.join(userDataDir, 'picker-browse.overlay.yml');
+}
+
+function preflightLogger(msg) {
+  log('preflight', msg);
+}
+
+function applyKoffiPreflight() {
+  const file = pickerBrowseOverlayPath();
+  const ok = runKoffiPreflight({
+    spawnSync,
+    nodeExe: nodeExe(),
+    script: path.join(__dirname, 'scripts', 'koffi-preflight.cjs'),
+    log: preflightLogger,
+  });
+  if (ok) {
+    clearAutoPickerBrowseOverlay({ file, log: preflightLogger });
+    pickerBrowseOverlay = null;
+  } else {
+    pickerBrowseOverlay = enablePickerBrowseOverlay({ file, log: preflightLogger });
+  }
+  return ok;
 }
 
 function handleBootFailure(err) {
@@ -361,7 +570,7 @@ function handleBootFailure(err) {
 // Window
 // ---------------------------------------------------------------------------
 
-function createWindow() {
+function createWindow({ startHidden = false } = {}) {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -383,7 +592,7 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'assets', 'loading.html'));
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => { if (!startHidden) mainWindow.show(); });
   // Keep the app brand in the OS title bar (the web UI sets its own <title>).
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault();
@@ -437,7 +646,7 @@ function createWindow() {
     if (input.key === 'F11') { mainWindow.setFullScreen(!mainWindow.isFullScreen()); event.preventDefault(); }
     else if (input.key === 'F12') { mainWindow.webContents.toggleDevTools(); event.preventDefault(); }
     else if (input.control && input.shift && key === 'i') { mainWindow.webContents.toggleDevTools(); event.preventDefault(); }
-    else if (input.control && key === 'r') { mainWindow.reload(); event.preventDefault(); }
+    else if (input.control && key === 'r') { reloadMainWindow(); event.preventDefault(); }
     else if (input.alt && key === 'f4') { mainWindow.close(); event.preventDefault(); }
   });
 
@@ -462,6 +671,79 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // 渲染进程崩溃/挂起的自恢复由 renderer-recovery.js 统一接管（保留上方
+  // render-process-gone 的日志 handler，二者互补：一个记录、一个恢复）。
+  wireWindowRecovery();
+}
+
+// ---------------------------------------------------------------------------
+// 渲染进程自恢复：装配 renderer-recovery 状态机（上游 Issue #9 根治修复）
+// ---------------------------------------------------------------------------
+
+function initRendererRecovery() {
+  if (recovery) return recovery;
+  const opts = {
+    log: (msg) => log('recovery', msg),
+    isQuitting: () => quitting,
+    isServerAlive: () => !!serverProc && serverProc.exitCode === null && !serverProc.killed,
+    getTarget: () => (webUrl ? { kind: 'url', url: webUrl } : null),
+    loadingPage: path.join(__dirname, 'assets', 'loading.html'),
+    recoveryPage: path.join(__dirname, 'assets', 'recovery.html'),
+    rebuildMainWindow: ({ startHidden } = {}) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.destroy();
+      createWindow({ startHidden: !!startHidden });
+      return mainWindow;
+    },
+    waitServerUp: (maxMs) => {
+      if (!webUrl) return Promise.reject(new Error('webUrl 未知'));
+      return waitUntilUp(webUrl, maxMs);
+    },
+    onGaveUp: (lastFailure) => {
+      writeRunState({ renderer: { state: 'gave-up', lastFailure, at: new Date().toISOString() } });
+    },
+    onStable: () => {
+      writeRunState({ renderer: { state: 'healthy', at: new Date().toISOString() } });
+    },
+    notify: (title, body) => {
+      try {
+        const n = new Notification({
+          title,
+          body,
+          icon: path.join(__dirname, 'assets', 'icon.png'),
+        });
+        n.on('click', () => showMainWindow());
+        n.show();
+      } catch (err) {
+        log('recovery', '通知发送失败: ' + err.message);
+      }
+    },
+  };
+  recovery = new RendererRecovery(opts);
+  return recovery;
+}
+
+function wireWindowRecovery() {
+  if (recovery && mainWindow && !mainWindow.isDestroyed()) recovery.attach(mainWindow, 'main');
+}
+
+function startHeartbeatLoop() {
+  // renderer 心跳由 preload 每 5s 上报；这里周期性判定「可见窗口」是否失联
+  // （窗口不可见时页面定时器被节流，判定只针对可见窗口）。
+  setInterval(() => { if (recovery) recovery.checkHeartbeats(); }, 15000).unref();
+}
+
+// 统一的「重新加载」入口：处于恢复页（已放弃自动恢复）时走恢复流程，
+// 否则普通 reload。菜单与 Ctrl+R 共用。
+function reloadMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const st = recovery ? recovery.stateOf(mainWindow) : null;
+  if (st && st.gaveUp) {
+    log('recovery', '用户在恢复页触发重新加载');
+    recovery.retryNow(mainWindow);
+    return;
+  }
+  mainWindow.reload();
 }
 
 function fatal(title, err) {
@@ -469,6 +751,7 @@ function fatal(title, err) {
   const detail = '错误：' + ((err && err.message) || err) + '\n\n日志目录：' + logsDir;
   if (!mainWindow || mainWindow.isDestroyed()) {
     dialog.showErrorBox(title, detail);
+    markCleanExit(); // 启动失败属已知退出：避免看门狗反复拉起反复失败
     app.exit(1);
     return;
   }
@@ -583,6 +866,7 @@ async function runUpdateFlow(manual) {
     });
     if (r2 === 0) {
       quitting = true;
+      markCleanExit();
       killTree(serverProc);
       app.relaunch();
       app.exit(0);
@@ -693,6 +977,55 @@ function registerChromeIpc() {
       repoUrls: urls,
       staticPort: previewStaticPort,
     };
+  });
+
+  // Renderer 心跳：preload 每 5s 上报一次，恢复状态机用它兜底判定
+  // 「挂起但 Chromium 未发出 unresponsive」的场景。
+  ipcMain.on('dsh:renderer-heartbeat', (event) => {
+    if (recovery) recovery.noteHeartbeat(event.sender.id);
+  });
+
+  // 恢复页面（assets/recovery.html）的按钮与状态读取。全部校验来源必须是主窗。
+  ipcMain.handle('chrome:recovery-state', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+    return {
+      appVersion: APP_VERSION,
+      logsDir,
+      crashDumpsDir: app.getPath('crashDumps'),
+      state: recovery ? recovery.stateOf(mainWindow) : null,
+    };
+  });
+
+  ipcMain.handle('chrome:recovery-reload', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    // 服务进程已退出时先重启服务（可能换新端口），再恢复加载。
+    if (!serverProc || serverProc.exitCode !== null || serverProc.killed) {
+      try {
+        await startAndShow();
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    }
+    recovery.retryNow(mainWindow);
+    return { ok: true };
+  });
+
+  ipcMain.handle('chrome:recovery-restart', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    log('recovery', '用户在恢复页面选择重启客户端');
+    quitting = true;
+    forceQuit = true;
+    markCleanExit();
+    killTree(serverProc);
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
+  });
+
+  ipcMain.handle('chrome:recovery-open-logs', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    shell.openPath(logsDir);
+    return { ok: true };
   });
 
   ipcMain.handle('chrome:window', (event, { action } = {}) => {
@@ -971,6 +1304,10 @@ const COMPANION_PLUGINS = [
   { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
   { id: 'tdai-memory', name: 'dsh-tdai-memory', dir: 'dsh-tdai-memory' },
   { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
+  // VSCode 风格右侧边栏（文件树 / 编辑器 / 终端 / Git，按会话隔离）。
+  // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
+  // schemastery（已加入 app 闭包，见 package.json）。
+  { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
 ];
 
 // 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
@@ -1462,6 +1799,7 @@ async function runClientUpdateFlow(manual) {
     if (r2 === 0) {
       quitting = true;
       forceQuit = true;
+      markCleanExit();
       killTree(serverProc);
       updater.abort();
       if (sessionWatcher) sessionWatcher.stop();
@@ -1511,6 +1849,7 @@ function offerPendingClientUpdate() {
     if (response !== 0) return;
     quitting = true;
     forceQuit = true;
+    markCleanExit();
     killTree(serverProc);
     updater.abort();
     if (sessionWatcher) sessionWatcher.stop();
@@ -1596,6 +1935,37 @@ function startPreviewStaticServer() {
   server.on("error", (err) => log("boot", "预览静态服务失败: " + err.message));
 }
 
+// Issue #7: verify the bundled node_modules against the build-time manifest
+// before starting dsh web. A botched upgrade leaves empty package skeletons;
+// Node then dies with ERR_MODULE_NOT_FOUND in a loop. Tell the user to
+// reinstall instead (with an escape hatch to continue anyway).
+function verifyBundledModules() {
+  if (!app.isPackaged) return Promise.resolve();
+  const appDir = path.join(process.resourcesPath, 'app');
+  const manifestPath = path.join(appDir, 'bundle-manifest.json');
+  let manifest = null;
+  try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return Promise.resolve(); }
+  const r = bundleIntegrity.verifyBundle(path.join(appDir, 'node_modules'), manifest);
+  if (r.skipped || r.ok) return Promise.resolve();
+  const sample = r.damaged.slice(0, 5).map((d) => `${d.name}（${d.reason}）`).join('、');
+  log('boot', `捆绑依赖完整性校验失败（${r.damaged.length} 个包受损）: ${sample}${r.damaged.length > 5 ? ' 等' : ''}`);
+  return showBox({
+    type: 'error',
+    title: '程序文件受损',
+    message: `检测到 ${r.damaged.length} 个捆绑依赖包文件缺失，可能是升级中断或安全软件清理所致。`,
+    detail: `受损包: ${sample}${r.damaged.length > 5 ? `（共 ${r.damaged.length} 个）` : ''}\n\n建议重新下载安装包覆盖安装（GitHub Releases 最新版）。\n选择「仍然启动」大概率无法正常运行。`,
+    buttons: ['仍然启动', '退出'],
+    defaultId: 0,
+    cancelId: 1,
+  }).then(({ response }) => {
+    if (response !== 0) {
+      forceQuit = true;
+      markCleanExit(); // 用户选择退出：不让看门狗拉起一个已知损坏的安装
+      app.exit(1);
+    }
+  });
+}
+
 function boot() {
   // Portable builds keep all data next to the exe.
   if (!app.isPackaged && process.env.DSH_DESKTOP_USERDATA) {
@@ -1619,9 +1989,21 @@ function boot() {
   startPreviewStaticServer();
   registerChromeIpc();
   createTray();
+  // 看门狗 + 运行状态标记（安装版）：意外崩溃后自动拉起并告知用户。
+  writeRunState();
+  startWatchdog();
+  const uncleanPrev = detectUncleanPreviousRun();
+  if (uncleanPrev) notifyUncleanRestart(uncleanPrev);
+  // 渲染进程崩溃/挂起自恢复状态机：必须在 createWindow 之前装配。
+  initRendererRecovery();
+  startHeartbeatLoop();
   syncCompanionPlugins();
   healProfileModules();
   createWindow();
+  // koffi FFI 预检（koffi-preflight.js）：失败则注入目录选择器降级 overlay，
+  // 由 startAndShow 以 --patch 交给 dsh web。必须在 startAndShow 之前执行。
+  // 仅 Windows：探针加载 kernel32.dll，Linux 上必然失败，不应误注入降级 overlay。
+  if (IS_WIN) applyKoffiPreflight();
   // 插件市场排队任务（服务运行中撞文件锁转待重启的安装/卸载）：趁服务
   // 尚未启动、无文件锁时先完成，再拉起 Web 服务。
   processPendingMarketOps()
@@ -1632,6 +2014,7 @@ function boot() {
       syncCompanionPlugins();
       healProfileModules();
     })
+    .then(() => verifyBundledModules())
     .then(() => startAndShow())
     .then(() => {
       // Session-completion notifications: watch dsh session logs under the
@@ -1684,6 +2067,7 @@ if (!gotLock) {
     quitting = true;
     forceQuit = true;
     log('boot', '正在退出，停止 dsh web 进程树…');
+    markCleanExit();
     killTree(serverProc);
     updater.abort();
     if (sessionWatcher) sessionWatcher.stop();

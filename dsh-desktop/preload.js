@@ -49,6 +49,13 @@ const dshDesktop = {
   openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
   // 复制文本到剪贴板（更新源地址等）。
   copyText: (text) => ipcRenderer.invoke('dsh:copy-text', { text }),
+  // 恢复页面（assets/recovery.html）使用的动作与状态读取。
+  recovery: {
+    getState: () => ipcRenderer.invoke('chrome:recovery-state'),
+    reload: () => ipcRenderer.invoke('chrome:recovery-reload'),
+    restart: () => ipcRenderer.invoke('chrome:recovery-restart'),
+    openLogs: () => ipcRenderer.invoke('chrome:recovery-open-logs'),
+  },
 };
 
 contextBridge.exposeInMainWorld('dshDesktop', dshDesktop);
@@ -296,4 +303,20 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', injectChrome);
 } else {
   injectChrome();
+}
+
+// ---------------------------------------------------------------------------
+// Renderer 心跳：每 5s 向主进程上报一次。主进程用它兜底判定「挂起但
+// Chromium 未发出 unresponsive 事件」的场景（窗口不可见时页面定时器会被
+// 节流，主进程只对可见窗口做判定；重新可见时立即补报一次心跳）。
+// ---------------------------------------------------------------------------
+{
+  const beat = () => {
+    try { ipcRenderer.send('dsh:renderer-heartbeat'); } catch {}
+  };
+  beat();
+  setInterval(beat, 5000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') beat();
+  });
 }

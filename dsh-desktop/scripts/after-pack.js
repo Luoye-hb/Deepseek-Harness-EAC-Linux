@@ -9,6 +9,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { buildBundleManifest } = require('../bundle-integrity.js');
 
 module.exports = async function afterPack(context) {
   const { appOutDir, electronPlatformName } = context;
@@ -41,7 +42,22 @@ module.exports = async function afterPack(context) {
     dedupeNestedModules(appOutDir);
     auditLongPaths(appOutDir);
   }
+  // Linux 包同样生成 bundle manifest，让启动时的完整性校验在 Linux 上也生效。
+  writeBundleManifest(appOutDir);
 };
+
+// Issue #7: record a per-package file-count manifest of the FINAL payload
+// (after trim/dedupe) so the installed app can detect stripped packages
+// (empty skeletons after a botched upgrade) at boot and tell the user to
+// reinstall instead of looping on ERR_MODULE_NOT_FOUND.
+function writeBundleManifest(appOutDir) {
+  const nmRoot = path.join(appOutDir, 'resources', 'app', 'node_modules');
+  if (!fs.existsSync(nmRoot)) return;
+  const manifest = buildBundleManifest(nmRoot);
+  const out = path.join(appOutDir, 'resources', 'app', 'bundle-manifest.json');
+  fs.writeFileSync(out, JSON.stringify(manifest, null, 2));
+  console.log(`afterPack: bundle manifest written (${Object.keys(manifest.packages).length} packages)`);
+}
 
 function auditBundledPluginRuntime(pluginsRoot, platform) {
   const tdai = path.join(pluginsRoot, 'dsh-tdai-memory', 'node_modules');
