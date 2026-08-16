@@ -56,7 +56,11 @@ for pkg in "$@"; do
     echo "ERROR: $pkg 缺少捆绑 Node 运行时" >&2
     exit 1
   fi
-  "$node_bin" -e "const pty = require(process.argv[1]); if (typeof pty.spawn !== 'function') throw new Error('node-pty API 异常'); console.log('OK: node-pty loadable @ ' + process.version)" "$pty_file"
+  # 与 afterPack 审计一致：加载 node-pty 包入口（lib/index.js），而不是裸
+  # pty.node——原生二进制只导出 fork/open/resize/process，spawn 由 JS 包装
+  # 层提供（node-pty@1.1.0），裸加载会把好包误判为坏包。
+  node_pty_root="$(dirname "$(dirname "$(dirname "$pty_file")")")"
+  "$node_bin" -e "const pty = require(process.argv[1]); if (typeof pty.spawn !== 'function') throw new Error('node-pty API 异常'); console.log('OK: node-pty loadable @ ' + process.version)" "$node_pty_root"
 
   # 全部原生载荷的 glibc 基线扫描（阈值与逻辑统一在 check-glibc.cjs）。
   mapfile -t payloads < <(find "$tmp" -type f \( -name '*.node' -o -name '*.so' -o -path '*/resources/node/node' \) | sort)
