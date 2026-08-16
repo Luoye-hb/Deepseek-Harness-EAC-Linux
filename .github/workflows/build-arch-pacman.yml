@@ -91,7 +91,7 @@ jobs:
           pkg="$(ls dist/*.pacman)"
           rm -rf /tmp/pacman-audit
           mkdir -p /tmp/pacman-audit
-          tar --zstd -xf "$pkg" -C /tmp/pacman-audit
+          bsdtar -xf "$pkg" -C /tmp/pacman-audit
           pty_file="$(find /tmp/pacman-audit \( -path '*/node-pty/build/Release/pty.node' -o -path '*/node-pty/prebuilds/linux-x64/pty.node' \) -type f | head -n1)"
           test -n "$pty_file" || { echo "ERROR: node-pty native module missing from pacman payload"; exit 1; }
           node_bin="$(find /tmp/pacman-audit -path '*/resources/node/node' -type f | head -n1)"
