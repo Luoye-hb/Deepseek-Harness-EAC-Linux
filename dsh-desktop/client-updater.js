@@ -28,6 +28,7 @@ const https = require('node:https');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { compareVersions } = require('./updater');
 
@@ -69,16 +70,21 @@ function resolveRepos(repos) {
 
 function apiEndpoints() {
   if (process.env.DSH_DESKTOP_RELEASE_API) {
+    // 自定义镜像：兼容 latest 单对象与 releases 列表两种形态。
     return [{ name: '自定义镜像', url: process.env.DSH_DESKTOP_RELEASE_API }];
   }
   const { github, gitee } = resolveRepos();
   return [
     {
       name: 'GitHub',
-      url: `https://api.github.com/repos/${github}/releases/latest`,
+      // V4：改用 releases 列表（而非 /latest 单对象）—— 本仓库同时发布
+      // Windows 与 Linux 产物；当最新 release 只有 Linux 资产时，/latest
+      // 会把 Windows 客户端引向一次必然失败的更新（selectAsset 找不到
+      // .exe）。列表自新向旧扫，取「第一个含本平台资产的 release」。
+      url: `https://api.github.com/repos/${github}/releases?per_page=20`,
       headers: { Accept: 'application/vnd.github+json' },
     },
-    { name: 'Gitee', url: `https://gitee.com/api/v5/repos/${gitee}/releases/latest` },
+    { name: 'Gitee', url: `https://gitee.com/api/v5/repos/${gitee}/releases?page=1&per_page=20` },
   ];
 }
 
@@ -160,11 +166,20 @@ function normalizeRelease(source, data) {
   const version = tag.replace(/^v/i, '');
   const assets = Array.isArray(data.assets)
     ? data.assets
-        .map((a) => ({
-          name: String(a.name || ''),
-          url: String(a.browser_download_url || a.url || ''),
-          size: Number(a.size || 0),
-        }))
+        .map((a) => {
+          const item = {
+            name: String(a.name || ''),
+            url: String(a.browser_download_url || a.url || ''),
+            size: Number(a.size || 0),
+          };
+          // V4：GitHub Releases API 的 digest 字段（"sha256:<hex>"）——发布
+          // 侧带 digest 时下载后做内容校验（此前只比文件大小，与不校验
+          // 没有差别；用户反馈：下载完应算 SHA-256 与公布值比对，不一致
+          // 就中止替换）。
+          const digest = String(a.digest || '');
+          if (/^sha256:[0-9a-f]{64}$/i.test(digest)) item.sha256 = digest.slice(7).toLowerCase();
+          return item;
+        })
         .filter((a) => a.name && a.url)
     : [];
   return {
@@ -182,13 +197,38 @@ async function checkLatest(ctx, currentVersion) {
   for (const ep of apiEndpoints()) {
     try {
       const data = await httpGetJson(ep.url, ep.headers || {});
-      const rel = normalizeRelease(ep.name, data);
-      if (!rel.version || !rel.assets.length) {
-        throw new Error('上游 release 缺少版本号或安装包资产');
+      // 兼容两种形态：/releases/latest 的单对象 与 /releases 列表数组。
+      const rawList = Array.isArray(data) ? data : [data];
+      // 与 /latest 同语义：过滤 draft / prerelease；再按版本号降序稳定排序
+      // （API 默认按创建时间，releases 被编辑/补传资产时版本序更可靠）。
+      const releases = rawList
+        .filter((r) => r && !r.draft && !r.prerelease)
+        .map((r) => normalizeRelease(ep.name, r))
+        .filter((r) => r.version)
+        .sort((a, b) => compareVersions(b.version, a.version));
+      if (!releases.length) throw new Error('上游没有可见的 release');
+      // 自新向旧找「第一个含本平台（Windows）资产的 release」。只有
+      // Linux 资产（.AppImage/.deb/.zip 等）的版本对 selectAsset 不可选，
+      // 记录后跳过 —— Windows 用户接不到 Linux-only 更新，也不会漏掉
+      // 更早的 Windows 版本（回退语义）。
+      const skippedNoAsset = [];
+      let picked = null;
+      for (const rel of releases) {
+        try {
+          selectAsset(rel);
+          picked = rel;
+          break;
+        } catch {
+          skippedNoAsset.push(rel.version);
+        }
       }
-      rel.isNewer = compareVersions(rel.version, currentVersion) > 0;
-      ctx.log('client-update', `[${ep.name}] latest=${rel.version} 当前=${currentVersion} 资产数=${rel.assets.length}`);
-      return rel;
+      if (!picked) {
+        throw new Error('最近 20 个 release 都没有本平台（Windows）的安装包资产');
+      }
+      picked.isNewer = compareVersions(picked.version, currentVersion) > 0;
+      ctx.log('client-update', `[${ep.name}] 本平台最新=${picked.version} 当前=${currentVersion} 资产数=${picked.assets.length}` +
+        (skippedNoAsset.length ? `；跳过无 Windows 资产的版本: ${skippedNoAsset.join(', ')}` : ''));
+      return picked;
     } catch (err) {
       errors.push(`${ep.name}: ${err.message}`);
       ctx.log('client-update', `[${ep.name}] 查询失败: ${err.message}`);
@@ -205,8 +245,11 @@ function selectAsset(release) {
   // 对 "…-v2.0.1-Setup-x64.exe"（-Setup- 直接连 x64.exe）永远匹配失败，
   // 更新流程卡死在"未找到匹配的安装包资产"。锚定 \.exe$ 保证 .blockmap
   // 等附属资产不会被误选。
+  // V4 平台围栏：文件名带 linux/arm64 等标记的一律不选（双平台发布时
+  // 防止误拿；x64 正则本身已排除 arm64，这里再显式拒绝）。
   const wanted = isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
-  const direct = release.assets.find((a) => wanted.test(a.name));
+  const platformOk = (name) => !/linux|arm64|aarch64|appimage|\.deb$|\.rpm$|\.snap$/i.test(name);
+  const direct = release.assets.find((a) => wanted.test(a.name) && platformOk(a.name));
   if (direct) return { parts: [direct], name: direct.name, totalSize: direct.size };
 
   // Gitee 单文件 100MB 限制：安装包拆分为 <file>.part1 / <file>.part2 …
@@ -346,6 +389,69 @@ async function concatFiles(sources, dest) {
   });
 }
 
+// --- SHA-256 内容校验（V4）--------------------------------------------------
+//
+// 此前下载完成只比对文件大小（±2MB 还只告警不拦截），与不做内容校验没有
+// 差别：传输损坏 / 投毒的镜像 / 被劫持的下载源都会把替换流程照走到底。
+// 现在按以下优先级取“公布哈希”，取到即强校验，不一致 → 删除文件并中止：
+//   1. release 资产自带的 digest 字段（GitHub API 提供，"sha256:<hex>"）；
+//   2. release 里的 SHA256SUMS.txt 资产（发布脚本随包生成，Gitee 也可用；
+//      覆盖 Gitee 分片合并后的最终文件名）；
+//   3. 都没有（老 release / 自定义镜像）：记录告警后放行，保持向后兼容。
+
+/** 流式计算文件 SHA-256（hex 小写）。 */
+function computeSha256(file) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash('sha256');
+    const rs = fs.createReadStream(file);
+    rs.on('data', (c) => h.update(c));
+    rs.on('error', reject);
+    rs.on('end', () => resolve(h.digest('hex')));
+  });
+}
+
+/** 找到 release 里的 SHA256SUMS.txt 资产并解析成 Map（文件名小写 → hex）。 */
+async function fetchSumsMap(ctx, release) {
+  const sumsAsset = release.assets.find((a) => /^sha-?256-?sums?\.txt$/i.test(a.name));
+  if (!sumsAsset) return null;
+  try {
+    const { status, stream } = await getResponse(sumsAsset.url, { timeoutMs: 20000 });
+    if (status !== 200) { stream.resume(); return null; }
+    let text = '';
+    await new Promise((resolve, reject) => {
+      stream.setEncoding('utf8');
+      stream.on('data', (c) => {
+        text += c;
+        if (text.length > 65536) stream.destroy(new Error('sums 过大'));
+      });
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+    const map = new Map();
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$/.exec(line);
+      if (m) map.set(m[2].toLowerCase(), m[1].toLowerCase());
+    }
+    return map;
+  } catch (err) {
+    ctx.log('client-update', `SHA256SUMS 获取失败（跳过该来源）: ${err.message}`);
+    return null;
+  }
+}
+
+/** 组装“期望哈希”：digest 字段优先，其次 SHA256SUMS 条目。 */
+async function expectedSha256(ctx, release, sel) {
+  // 单资产（无分片）：digest 直接可用。
+  if (sel.parts.length === 1 && sel.parts[0].sha256) return sel.parts[0].sha256;
+  // 分片合并 / 无 digest：查 SHA256SUMS（按最终文件名）。
+  const sums = await fetchSumsMap(ctx, release);
+  if (sums) {
+    const hit = sums.get(sel.name.toLowerCase());
+    if (hit) return hit;
+  }
+  return null;
+}
+
 async function downloadRelease(ctx, release, { onProgress } = {}) {
   const dir = path.join(ctx.userDataDir, 'updates');
   fs.mkdirSync(dir, { recursive: true });
@@ -375,11 +481,28 @@ async function downloadRelease(ctx, release, { onProgress } = {}) {
     fs.rmSync(finalPath, { force: true });
     throw new Error('下载文件异常（仅 ' + Math.round(stat.size / 1048576) + ' MB），已丢弃');
   }
-  if (sel.totalSize > 0 && Math.abs(stat.size - sel.totalSize) > 2 * 1024 * 1024) {
-    ctx.log('client-update', `大小与上游声明不一致：期望 ${sel.totalSize} 实际 ${stat.size}（继续，安装器会自校验）`);
+  // V4：SHA-256 内容校验 —— 有公布哈希即强校验；不一致删除文件并中止
+  // 更新（绝不运行被篡改/损坏的安装包）。
+  const expected = await expectedSha256(ctx, release, sel);
+  if (expected) {
+    ctx.log('client-update', `校验 SHA-256（期望 ${expected.slice(0, 16)}…）`);
+    const actual = await computeSha256(finalPath);
+    if (actual !== expected) {
+      fs.rmSync(finalPath, { force: true });
+      throw new Error(
+        `SHA-256 校验失败，已中止更新并删除下载文件（期望 ${expected}，实际 ${actual}）。` +
+        '文件可能在传输中损坏或下载源被篡改，请稍后重试或手动从官方 Release 下载。'
+      );
+    }
+    ctx.log('client-update', 'SHA-256 校验通过');
+  } else {
+    ctx.log('client-update', '上游未提供哈希（无 digest / SHA256SUMS.txt），跳过内容校验（大小校验兜底）');
+    if (sel.totalSize > 0 && Math.abs(stat.size - sel.totalSize) > 2 * 1024 * 1024) {
+      ctx.log('client-update', `大小与上游声明不一致：期望 ${sel.totalSize} 实际 ${stat.size}（继续，安装器会自校验）`);
+    }
   }
   ctx.log('client-update', `下载完成: ${finalPath}（${Math.round(stat.size / 1048576)} MB）`);
-  return { filePath: finalPath, size: stat.size };
+  return { filePath: finalPath, size: stat.size, sha256Verified: !!expected };
 }
 
 // --- 应用更新（detached 脚本 + 主进程退出） ---------------------------------
@@ -505,4 +628,4 @@ function applyUpdate(ctx, pending) {
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, buildApplyScript, buildSpawnCommandLine, isPortable, resolveRepos, DEFAULT_REPOS };
+module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, buildApplyScript, buildSpawnCommandLine, isPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, DEFAULT_REPOS };

@@ -27,6 +27,7 @@ const entryFiles = [
   'koffi-preflight.js',
   'profile-module-heal.js',
   'patch-row-heal.js',
+  'plugin-guard.js',
   'preset-sync.js',
 ];
 

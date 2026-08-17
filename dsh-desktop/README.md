@@ -4,20 +4,25 @@
 
 - ✅ **免安装 Node**：内置独立的 Node 运行时与 npm CLI，目标机器无需安装 Node.js
 - ✅ **内置 dsh CLI**：完整打包 `@deepseek-ai/dsh` 及其全部插件，离线可用
-- ✅ **一键启动**：双击即启动 `dsh web`，自动挑空闲端口，就绪后加载到原生窗口
+- ✅ **一键启动**：双击即启动 `dsh web`，自动挑空闲端口，就绪后加载到原生窗口（stdout 就绪行与 HTTP 探测并行判定，首启装依赖自动放宽时限）
 - ✅ **风格化无边框窗口**：无原生标题栏/菜单栏，自绘 36px 玻璃栏（圆角图标 + 拖拽 + ⋯ 菜单 + 窗口控制），Win11 原生圆角；快捷键 Ctrl+R / F12 / F11 保留
-- ✅ **系统托盘常驻**：点关闭默认隐藏到托盘（可关闭），托盘菜单提供显示/检查更新/退出
-- ✅ **退出即清理**：退出应用自动结束 dsh 进程树，不留孤儿进程
+- ✅ **多窗口（v4）**：会话头部「弹出到独立窗口」分屏多任务；侧边临时会话浮窗追问（Ctrl+Shift+S，不写主会话）
+- ✅ **系统托盘常驻**：点关闭默认隐藏到托盘（可关闭），托盘菜单提供显示/检查更新/重启 Web 服务/退出
+- ✅ **退出即清理**：退出应用有界等待 dsh 进程树真正退出（优雅 → 强杀），不留孤儿进程（v4 根治「退出残留一对进程」）
 - ✅ **便携版**：`portable` 版数据（日志、配置）跟随 exe 所在目录，拷到 U 盘就能用
 - ✅ **与 CLI 共享配置**：默认沿用 dsh 自身的 `DSH_HOME`（通常是 `~\.dsh`），已有会话/API Key 直接生效
 - ✅ **跟随官方更新**：官方 @deepseek-ai/dsh 发新版时弹窗提醒，经用户同意后自动下载安装，重启生效，失败自动保留旧版
-- ✅ **客户端自更新**：自动检查上游仓库（GitHub→Gitee 双源，Gitee 分片自动合并）发布的 DSH Desktop 新版本，经用户同意后下载、替换、重启；便携版/安装版各自适配
-- ✅ **快捷方式自动维护**：便携版首次运行自动创建开始菜单 + 桌面快捷方式；exe 移动后自动重建（修复"快捷方式指向的文件消失"）；从临时目录运行时给出提示
+- ✅ **客户端自更新 + SHA-256 校验（v4）**：自动检查上游仓库（GitHub→Gitee 双源，Gitee 分片自动合并）发布的封装新版本，经用户同意后下载（完成内容 SHA-256 校验，不一致中止替换并删除文件）、替换、重启；便携版/安装版各自适配
+- ✅ **快捷方式自动维护**：按「目标 exe」识别既有快捷方式（用户改名/换图标不再重复新建），自定义图标绝不覆盖；⋯ 菜单可关闭桌面快捷方式自动维护
 - ✅ **DeepSeek 余额小部件**：对话底部统计栏内联显示「本轮 ¥X.XX · 余额 ¥Y.YY」（自动注入配套 dsh 客户端插件，点击跳转充值）
-- ✅ **文件更改追踪 + 一键还原**：详情面板新增「文件」标签页，聚合本会话 agent 修改过的全部文件（新建/修改/删除、行级 diff、逐文件或全部还原）；数据只读复用会话日志已持久化的 `tool/result.meta.diffs`，还原由桌面壳做内容精确匹配后替换，失败安全提示
+- ✅ **文件更改追踪 + 一键还原 + AI 变更审核（v4）**：详情面板「文件」标签页聚合本会话改动（行级 diff、逐文件或全部还原）；「AI 变更审核」可手动/自动让模型复查自己刚做的改动（正确性/安全性/目标一致性）
+- ✅ **会话删除与归档管理（v4）**：会话行菜单「删除对话」+ 设置内归档恢复/删除面板（官方只有归档，运行时补丁幂等打通全链路）
+- ✅ **微信 ClawBot / OpenClaw 桥（v4）**：设置页「ClawBot」栏扫码绑定微信官方 ClawBot 小程序，微信里直接驱动常驻 DSH 会话（每用户独立会话/工作区/白名单）；OpenAI 兼容端点供 OpenClaw 网关接入
 - ✅ **会话完成系统通知**：agent 任务跑完时弹 Windows 系统通知，点击回到窗口
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 10 款 Web UI 皮肤（9 款 dsh-web-ui 皮肤 + 1 款深海女仆工坊），互斥切换、默认不启用、重启生效；随包标注出处与许可（详见「界面皮肤」章节）
-- ✅ **内置社区插件套件**（v2.0 新增，详见「内置社区插件」章节）：插件市场 / 外置视觉模型 / 长期记忆 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
+- ✅ **内置社区插件套件**（v2.0 起，详见「内置社区插件」章节）：插件市场 / 外置视觉模型 / 长期记忆 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
+- ✅ **崩溃急救与撤销（v4，dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
+- ✅ **插件启停管理（v4）**：设置页「插件 → 管理」不重启切换任意插件启停（含默认禁用的大肥鱼桌宠）
 - ✅ **一键迁移（一键夺舍）**：设置页选择任意已有 AI 工具目录（如 Codex / Claude 安装目录）→ 自动新建工作区与对话 → 发送迁移指令，AI 在对话中全程可视化提取 skills / MCP 配置 / 长期记忆
 
 ## 快速开始（成品用户）
@@ -40,7 +45,7 @@
 下载或构建 pacman 包后安装：
 
 ```bash
-sudo pacman -U ./Deepseek-Harness-EAC-3.0.2-x64.pacman
+sudo pacman -U ./Deepseek-Harness-EAC-4.0.1-x64.pacman
 ```
 
 安装完成后从桌面应用菜单启动，或运行 `deepseek-harness-eac`。卸载命令：
@@ -57,7 +62,7 @@ sudo pacman -Rns dsh-desktop
 下载 `Deepseek-Harness-EAC-<版本>-amd64.deb` 后安装：
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-3.0.2-amd64.deb
+sudo apt install ./Deepseek-Harness-EAC-4.0.1-amd64.deb
 ```
 
 卸载：`sudo apt remove dsh-desktop`。
@@ -75,8 +80,8 @@ sudo dnf install ./Deepseek-Harness-EAC-3.0.2.x86_64.rpm
 ### AppImage（免安装，通用）
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
-./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
+chmod +x ./Deepseek-Harness-EAC-4.0.1-x86_64.AppImage
+./Deepseek-Harness-EAC-4.0.1-x86_64.AppImage
 ```
 
 > Ubuntu 24.04 等只有 FUSE3 的发行版，若提示缺少 FUSE2，先安装 `libfuse2`
@@ -95,6 +100,7 @@ chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
 
 - 启动 60 秒后及此后每 12 小时，自动查询上游仓库的最新 release（**GitHub Releases → Gitee Releases 双源回退**；可用环境变量 `DSH_DESKTOP_RELEASE_API` 指向自定义镜像 API），比较当前版本。
 - 发现新版本时弹窗询问：**立即更新 / 跳过此版本 / 稍后**；同意后带进度条下载安装包（便携版选 `*-portable-x64.exe`，安装版选 `Setup-*-x64.exe`；Gitee 因单文件 100MB 限制拆分的 `.part1/.part2` 分片会自动按序下载并合并），下载到 `<数据目录>\updates\`。
+- **SHA-256 内容校验（v4）**：下载完成后强制校验文件哈希 —— 优先用 GitHub Release 资产自带的 digest 字段，其次取 Release 附带的 `SHA256SUMS.txt`（`npm run dist` 自动生成，发布时随资产上传）；不一致 → 删除文件并中止更新，绝不运行被篡改或损坏的安装包。上游未提供哈希时记录告警并放行（老 Release 兼容）。
 - 确认重启后：**便携版**用 detached 脚本等待旧 exe 解锁 → 备份 → 原地替换 → 自动启动新版本（只读目录自动退化为直接启动新 exe）；**安装版**等待进程退出后以向导方式启动新安装包。失败自动保留当前版本，下次启动继续提示待安装更新。
 - 菜单入口：chrome 栏 ⋯ 菜单 →「检查客户端更新…」；托盘菜单同样可用。跳过版本记录在 `settings.json`（`skipClientVersion`）。
 - **更新源可见可复制**：⋯ 菜单内「更新源」区块与「关于 Deepseek Harness EAC」对话框展示项目仓库地址（GitHub），一键复制到剪贴板。
@@ -171,16 +177,41 @@ chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
-| `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测） | 设置 → 插件 → 插件市场 |
-| `dsh-tool-vision` | 外置视觉模型：`inspect_image` 把本地图片/URL 发给任意 OpenAI 兼容视觉端点（GLM-4V / qwen-vl / Ollama…），主模型保持不变 | 设置 → 视觉模型 |
+| `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测）；目录中已被客户端内置的插件显示「已内置」徽标并拒绝重复安装 | 设置 → 插件 → 插件市场 |
+| `zat-dsh-engine` | 第二插件市场（Zat 可视化市场）：GitHub `dsh-plugin` topic 检索、中文插件简介、国内镜像兜底 | 设置 → 插件 → Zat 标签页 |
+| `dsh-plugin-manager`（v4） | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停 | 设置 → 插件 → 管理 |
+| `dsh-message-rewind` | 对话回退（Trae 风格）：悬停任意用户消息 →「编辑并回退」→ 从该消息之前分叉新会话并自动重发编辑后内容，原会话保留 | 对话界面（消息 hover 按钮） |
+| `dsh-dock-settings` | Skills 与 MCP 管理：技能目录浏览（EAC 内置/用户来源徽标、打开目录）+ MCP 服务增删改（stdio / streamable-http），保存后一键重启生效 | 设置 → Skills 与 MCP |
+| `dsh-pet` | 桌面宠物：28 个透明动画的悬浮宠物，空闲呼吸、随机动作、屏幕游走 | 随包自动启用 |
+| `dsh-dafeiyu`（v4） | 大肥鱼桌宠：真实会话状态驱动的原生置顶窗口（六态动画 + 项目状态卡 + 摸头/戳一戳；角色素材按 ASSET_LICENSE 分发） | 默认禁用，「插件 → 管理」启用 |
+| `dsh-tool-vision` | 外置视觉模型：`inspect_image` 把本地图片/URL 发给任意 OpenAI 兼容视觉端点（GLM-4V / qwen-vl / Ollama…），主模型保持不变；文本模型贴图自动转为 `inspect_image` 指引，另有「请求兜底」在请求发出前降级图片块，杜绝 UNSUPPORTED_CONTENT 整轮失败 | 设置 → 视觉模型 |
 | `dsh-tdai-memory` | 长期记忆（腾讯云 Agent Memory 移植）：L0 对话 → L1 结构化事实 → L2 场景 → L3 画像，自动召回注入 + 记忆/对话搜索工具，数据存于 `~/.memory-tencentdb/memory-tdai` | 设置 → 长期记忆 |
 | `dsh-soul-md` | soul.md 人设卡：可视化编辑人设，热重载即时生效；未配置时注册空 section，**完全不影响官方系统提示词** | 设置 → 人设卡 |
 | `dsh-web-mobile-fix` | Web UI 移动端适配修复 | 随包自动启用 |
 | `dsh-easy-setup` | 一键迁移（一键夺舍）：选择目录 → 新建工作区与对话 → AI 全程可视化迁移 skills / MCP / 记忆 | 设置 → 一键迁移 |
+| `dsh-change-review`（v4） | AI 变更审核：监控本会话文件改动，手动/自动让模型复查自己刚做的改动（正确性/安全性/目标一致性），配合「文件」页一键还原 | 设置 → AI 变更审核 |
+| `dsh-undo-savepoint`（v4） | 崩溃急救与撤销：配置/插件代码快照、undo/redo、一键安全模式、密钥脱敏 vault、跨机迁移 ZIP | 对话顶部 undo/redo 按钮 + 快照面板 |
+| `@deepseek-ai/dsh-openclaw-bridge`（v4） | 微信 ClawBot / OpenClaw 桥：微信扫码绑定后在小程序里驱动常驻 DSH 会话；OpenAI 兼容端点；第三方模型端点 | 设置 → ClawBot |
+| `@deepseek-ai/dsh-float-window`（v4） | 会话浮窗：把会话弹出到独立窗口分屏多任务 | 会话头部「弹出到独立窗口」 |
+| `@dsh-external/dsh-side-session`（v4） | 侧边临时会话：浮窗追问、不写主会话、多种回答引擎 | Ctrl+Shift+S |
+| `dsh-session-manager`（v4） | 会话删除与归档管理：会话行「删除对话」+ 归档恢复/删除面板 | 会话菜单 + 设置面板 |
+| `@vlln/dsh-navbar`（v4） | 对话节点导航条：右缘节点串快速跳转 user 消息（悬停预览/点击跳转/滚轮切换） | 随包自动启用 |
+| `@deepseek-ai/dsh-conversation-tweaks`（v4） | 对话微调：隐藏大量工具调用/结果/思考输出，保留每轮最终总结 | 设置 → 通用 |
+| `@deepseek-ai/dsh-prompt-custom`（v4） | 自定义注入提示词：整体替换/追加官方 persona | 设置 → 提示词 |
+| `@deepseek-ai/dsh-third-party-thinking`（v4） | 第三方 OpenAI 兼容模型的 reasoning_effort 控件（字段名可自定义） | 模型参数区 |
+| `dsh-offpeak`（v4） | 峰谷价格卫士：高峰时段（北京时间 9-12 / 14-18 点）发送前拦截提醒，一键继续或定时到闲时价自动执行（浏览器不在线也执行） | 发送时弹窗（「插件 → 管理」可关闭） |
 
 > **Windows 文件锁排队**：运行中的 Web 服务加载着原生模块（sqlite-vec 等 DLL）时，插件安装/卸载会遇到 `EPERM` 文件锁 —— 任务会自动排队（`.dsh-market-pending.json`），下次服务重启前（无锁窗口）自动完成，市场界面提供「立即重启并完成」按钮。
 >
 > **NSIS 升级修复**：安装器在卸载旧版前自动结束新旧进程，修复了旧版 "Failed to uninstall old application files: 2"（应用运行中导致文件被锁）。
+
+## 退出行为三档（v2.2）
+
+标题栏「⋯」菜单 →「关闭窗口时」：**每次询问 / 后台运行（最小化到托盘）/ 直接退出**。选「每次询问」时点关闭弹窗（「最小化到后台 / 退出程序」+「记住我的选择」勾选），旧版 `closeToTray` 布尔设置自动迁移。配置存于 `<userData>/settings.json` 的 `exitAction`。
+
+## 内置 Skills 分发（v2.2）
+
+`assets/skills/<kebab-name>/SKILL.md` 随包分发，启动时同步进 `~/.dsh/skills/`（dsh 内核默认扫描根，零配置）：带 `.eac-skill.json` 标记的技能随版本覆盖更新；用户自建同名目录永不覆盖；不删除用户的任何内容。当前内置：`eac-desktop-tips`（客户端功能速查）。
 
 ## 从源码构建
 

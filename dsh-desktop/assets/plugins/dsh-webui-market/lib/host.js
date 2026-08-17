@@ -21,6 +21,9 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawn } from 'node:child_process'
+// V4：pnpm 重写 node_modules 前后快照/回填第三方包的本地构建产物
+// （meow-memory 等人工补齐的 lib/ 不再被每次安装/更新清掉）。
+import { snapshotArtifacts, restoreArtifacts } from './artifact-keep.mjs'
 
 export const name = 'dsh-market-plugin'
 
@@ -100,6 +103,14 @@ function parseSite(html) {
 
 function dshHome() {
   return process.env.DSH_HOME || (homedir() + '/.dsh')
+}
+
+// Desktop shell runs its web UI on a dedicated profile (web-desktop) so
+// installs never collide with the native CLI's 'web' profile; it exports the
+// name through DSH_DESKTOP_PROFILE. Standalone (CLI) installs keep 'web'.
+function desktopProfile() {
+  const p = process.env.DSH_DESKTOP_PROFILE
+  return p && /^[A-Za-z0-9_-]+$/.test(p) ? p : 'web'
 }
 
 /**
@@ -249,6 +260,18 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
     beforeDeps: readProfileDeps(profile),
   }
   const cwd = inv.cwd ?? profileDir(profile)
+  // V4：pnpm（plugin add/remove）会按锁文件重新解包整棵 node_modules，
+  // 人工补齐的构建产物（meow-memory 的 lib/ 等）会随之消失。先快照
+  // 第三方包，结束后回填（内置包由客户端启动同步重建，无需缓存）。
+  try {
+    const home0 = dshHome().replace(/[\\/]+$/, '')
+    snapshotArtifacts(profileDir(profile), home0 + '/plugin-artifact-cache/' + profile, {
+      managedNames: readBuiltinPlugins(profile),
+      log: (m) => appendOutput(op, '[keep] ' + m),
+    })
+  } catch (err) {
+    appendOutput(op, '\n[keep] 快照失败（不影响安装）: ' + String((err && err.message) || err))
+  }
   const child = spawn(inv.file, [...inv.args, 'plugin', '--profile', profile, kind === 'uninstall' ? 'remove' : 'add', target], {
     cwd,
     // CI=true: pnpm v10 blocks forever on a silent interactive prompt without
@@ -267,6 +290,16 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
   child.on('close', async (code) => {
     if (op.status !== 'running') return
     const ok = code === 0
+    // V4：pnpm 已退出 —— 回填被重新解包清掉的第三方构建产物（先回填再
+    // 热挂载，热挂载读到的才是补齐后的树）。
+    try {
+      const home0 = dshHome().replace(/[\\/]+$/, '')
+      restoreArtifacts(profileDir(op.profile), home0 + '/plugin-artifact-cache/' + op.profile, {
+        log: (m) => appendOutput(op, '[keep] ' + m),
+      })
+    } catch (err) {
+      appendOutput(op, '\n[keep] 回填失败: ' + String((err && err.message) || err))
+    }
     if (!ok && /EPERM|EBUSY|resource busy|being used by another process/i.test(String(op.output || ''))) {
       // Windows 文件锁：运行中的 web 进程加载了原生模块（如 sqlite-vec 的
       // vec0.dll），pnpm 无法重写其目录。排队到下次服务启动前执行（那时无锁）。
@@ -474,6 +507,95 @@ async function whitelistSource(target, plugins) {
     reason: '该插件不在精选目录（awesome-dsh-plugin.com curated registry）中。为安全起见仅允许安装目录收录的源；'
       + '如确需安装，请勾选"跳过试装验证"（风险自负）。',
   }
+}
+
+function repoNameOf(url) {
+  const t = String(url || '').replace(/\/+$/, '')
+  const i = t.lastIndexOf('/')
+  return i >= 0 ? t.slice(i + 1) : t
+}
+
+function repoOfValue(v) {
+  const s = String(v || '').replace(/\/+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf(':'))
+  return s.slice(i + 1).replace(/\.git$/, '').replace(/#.*$/, '')
+}
+
+/**
+ * Normalize a repository URL / homepage to `owner/repo` (lowercase, no
+ * scheme/git-suffix) when it points at GitHub, else null. Mirrors how the
+ * catalog builds a plugin's GitHub repo identity from its URL.
+ */
+function normalizeRepoUrl(u) {
+  const s = String(u || '').trim()
+  if (!s) return null
+  const m = /github\.com[\/:]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?=[\/#?]|$)/.exec(s)
+  if (!m) return null
+  // Strip any /tree/<ref>/... path suffix (monorepo links) — only owner/repo matters.
+  return m[1].toLowerCase()
+}
+
+/**
+ * Read every installed plugin's real upstream repo (owner/repo) from its own
+ * package.json (`repository.url`/`homepage`). The catalog identifies plugins
+ * by repo URL while the profile records dependency keys (npm names) and
+ * specs (github:/registry) — those rarely line up for scoped packages
+ * (@scope/name), registry installs, or monorepo subpackages, which is why an
+ * naı̈ve name match reports "only two installed". Returns { pkgName: repokey }.
+ */
+function readInstalledProvenance(profile) {
+  const out = {}
+  try {
+    const manifest = JSON.parse(readFileSync(profileDir(profile) + '/package.json', 'utf8'))
+    const names = []
+    if (manifest.dependencies) names.push(...Object.keys(manifest.dependencies))
+    if (manifest.dsh && manifest.dsh.profile && Array.isArray(manifest.dsh.profile.bundles)) {
+      names.push(...manifest.dsh.profile.bundles)
+    }
+    const seen = new Set()
+    for (const name of names) {
+      if (!name || seen.has(name)) continue
+      seen.add(name)
+      try {
+        const pkg = JSON.parse(readFileSync(join(profileDir(profile), 'node_modules', ...name.split('/'), 'package.json'), 'utf8'))
+        const repoUrl = typeof pkg.repository === 'string'
+          ? pkg.repository
+          : (pkg.repository && pkg.repository.url) || ''
+        out[name] = normalizeRepoUrl(repoUrl) || normalizeRepoUrl(pkg.homepage) || null
+      } catch { out[name] = null }
+    }
+  } catch {}
+  return out
+}
+
+/**
+ * Canonical installed-state matcher: does the catalog plugin map to an
+ * installed package? Returns the package name (dependency key or bundle entry)
+ * or null. Matching is by owner/repo provenance first (the reliable signal,
+ * since catalogs key on repo URL), then falls back to basename heuristics so
+ * profiles written before provenance existed still resolve.
+ */
+function matchInstalledPackage(plugin, installedState) {
+  if (!installedState) return null
+  const prov = installedState.provenance || {}
+  const target = normalizeRepoUrl(String(plugin.url || ''))
+  const repo = repoNameOf(String(plugin.url || ''))
+  const keys = []
+  if (installedState.dependencies) keys.push(...Object.keys(installedState.dependencies))
+  if (Array.isArray(installedState.bundles)) keys.push(...installedState.bundles)
+  for (const pkg of keys) {
+    if (target && prov[pkg] === target) return pkg
+    if (!repo) continue
+    const b = String(pkg || '')
+    if (b === repo || b.endsWith('/' + repo) || b === 'github:' + repo) return pkg
+  }
+  // Fallback on dependency values (github:owner/repo specs) for older states.
+  if (installedState.dependencies) {
+    for (const [key, spec] of Object.entries(installedState.dependencies)) {
+      if (repo && repoOfValue(spec) === repo) return key
+    }
+  }
+  return null
 }
 
 /** The site's own JSON API — the canonical target data (stars, added, owner, bilingual desc). */
@@ -730,6 +852,41 @@ function readProfileDeps(profile) {
   } catch { return {} }
 }
 
+/**
+ * Packages the desktop shell syncs into the profile on every boot (written by
+ * the EAC main process as <profile>/.dsh-builtin-plugins.json). Installing a
+ * catalog copy over one of these breaks the composition (duplicate loader
+ * entry / module double-instance), so the market must refuse and the UI shows
+ * a "built-in" badge instead of an install button.
+ * @returns {string[]} builtin package names (may be empty).
+ */
+function readBuiltinPlugins(profile) {
+  try {
+    const marker = JSON.parse(readFileSync(join(profileDir(profile), '.dsh-builtin-plugins.json'), 'utf8'))
+    return Array.isArray(marker.names) ? marker.names.filter((n) => typeof n === 'string') : []
+  } catch { return [] }
+}
+
+/** Basename of a package name or install spec ('dsh-tool-vision', 'github:owner/dsh-pet' → 'dsh-pet'). */
+function specBasename(v) {
+  const s = String(v || '').replace(/\/+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf(':'))
+  return s.slice(i + 1).replace(/\.git$/, '').replace(/#.*$/, '')
+}
+
+/**
+ * Does an install target collide with a builtin package? Matches the spec's
+ * basename against builtin package basenames (scoped names included), so
+ * `github:owner/dsh-tool-vision`, `dsh-tool-vision`, and registry versions of
+ * a builtin all collide.
+ */
+function builtinCollision(target, builtin) {
+  const base = specBasename(target)
+  if (!base) return null
+  const hit = builtin.find((name) => specBasename(name) === base)
+  return hit || null
+}
+
 // ── update detection (mirrors dsh-market's checkUpdates) ─────────────────────
 
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */
@@ -807,7 +964,7 @@ async function checkUpdates(profile) {
 const UPDATES_TTL_MS = 10 * 60 * 1000
 let updatesCache = {}
 
-export { classifyPlugin, runProbe, whitelistSource, loadCatalog, parseSimplePatch, checkUpdates, parseSite, registryToCatalog } // test hooks; cordis only reads name/inject/apply
+export { classifyPlugin, runProbe, whitelistSource, loadCatalog, parseSimplePatch, checkUpdates, parseSite, registryToCatalog, normalizeRepoUrl, readInstalledProvenance, matchInstalledPackage } // test hooks; cordis only reads name/inject/apply
 
 export function apply(ctx) {
   const webServer = ctx.get('webServer')
@@ -818,7 +975,9 @@ export function apply(ctx) {
   // Allow install ops to hot-mount into this composition; wipe stale hot-mount
   // inputs so a crash can never collide with the bundle layer on next boot.
   hotCtx = ctx
-  cleanHotDir('web')
+  // EAC 修复：热挂载缓存目录跟随桌面专属 profile（DSH_DESKTOP_PROFILE），
+  // 与本文件其余安装/读写路径的解析保持一致；独立安装仍为 web。
+  cleanHotDir(desktopProfile())
   webServer.register({
     kind: 'exact',
     path: '/api/dsh-market',
@@ -852,20 +1011,28 @@ export function apply(ctx) {
           })
         }
         if (method === 'installed') {
-          const profile = validProfile(body.profile) ? body.profile : 'web'
+          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
           const p = profileDir(profile) + '/package.json'
-          if (!existsSync(p)) return sendJson(res, 200, { ok: true, profile, bundles: [], dependencies: {} })
+          const builtin = readBuiltinPlugins(profile)
+          if (!existsSync(p)) return sendJson(res, 200, { ok: true, profile, bundles: [], dependencies: {}, provenance: {}, builtin })
           const json = JSON.parse(readFileSync(p, 'utf8'))
           return sendJson(res, 200, {
             ok: true,
             profile,
             bundles: Array.isArray(json.dsh && json.dsh.profile && json.dsh.profile.bundles) ? json.dsh.profile.bundles : [],
             dependencies: json.dependencies || {},
+            // owner/repo provenance per installed package, read from each
+            // package.json — lets the UI match catalog repo URLs against
+            // scoped/registry/monorepo installs whose package name differs.
+            provenance: readInstalledProvenance(profile),
+            // desktop-shell-synced packages: the UI badges them "built-in"
+            // and hides the install/uninstall buttons.
+            builtin,
           })
         }
         if (method === 'updates') {
           // Read-only update detection for installed plugins (no write op).
-          const profile = validProfile(body.profile) ? body.profile : 'web'
+          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
           const updates = await checkUpdates(profile)
           return sendJson(res, 200, { ok: true, profile, updates })
         }
@@ -874,7 +1041,7 @@ export function apply(ctx) {
           if (!sameOrigin(req)) {
             return sendJson(res, 403, { ok: false, error: 'untrusted origin' })
           }
-          const profile = validProfile(body.profile) ? body.profile : 'web'
+          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
           const name = String(body.name || '').trim()
           if (!name) return sendJson(res, 400, { ok: false, output: '缺少插件名' })
           const deps = readProfileDeps(profile)
@@ -914,13 +1081,27 @@ export function apply(ctx) {
           if (!sameOrigin(req)) {
             return sendJson(res, 403, { ok: false, error: 'untrusted origin' })
           }
-          const profile = validProfile(body.profile) ? body.profile : 'web'
+          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
           const target = String(method === 'install' ? (body.source || '') : (body.pkg || '')).trim()
           if (!target) return sendJson(res, 400, { ok: false, output: '缺少参数' })
           if (activeOp && activeOp.status === 'running') {
             return sendJson(res, 200, { ok: false, busy: true, output: '已有任务进行中：' + activeOp.label })
           }
-          if (method === 'install' && profile === 'web' && !body.skipCheck) {
+          if (method === 'install') {
+            // Builtin guard: the desktop shell re-syncs these packages on
+            // every boot; a market install over one would be reverted and can
+            // crash the loader (duplicate entry id). Refuse up front.
+            const builtinHit = builtinCollision(target, readBuiltinPlugins(profile))
+            if (builtinHit) {
+              return sendJson(res, 200, {
+                ok: false,
+                builtin: true,
+                output: '该插件已内置于客户端（' + builtinHit + '），无需也无法从市场重复安装；'
+                  + '客户端每次启动都会同步内置版本，直接使用即可。',
+              })
+            }
+          }
+          if (method === 'install' && !body.skipCheck) {
             // Source whitelist: curated catalog only (degrade open when the
             // catalog is unavailable; skipCheck bypasses).
             const catalog = await loadCatalog()

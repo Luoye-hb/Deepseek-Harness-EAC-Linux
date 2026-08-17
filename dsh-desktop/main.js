@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
+const { pathToFileURL } = require('node:url');
 
 const updater = require('./updater');
 const clientUpdater = require('./client-updater');
@@ -28,17 +29,21 @@ const balance = require('./balance');
 const { dshHomePath } = require('./dsh-home');
 const { loadSettings, saveSettings } = require('./settings');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
+const { createGuard } = require('./plugin-guard');
 const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
 const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
 const {
   runKoffiPreflight,
+  runKoffiPreflightAsync,
   enablePickerBrowseOverlay,
   clearAutoPickerBrowseOverlay,
 } = require('./koffi-preflight');
-const { configLinesFor, healSoulMdPatchRow, removeBundledRowDuplicates } = require('./patch-row-heal');
+const { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
 const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
+const { patchSessionManage } = require('./scripts/patch-session-manage');
+const { togglePluginInPatch } = require('./scripts/plugin-manager-patch');
 const zlib = require('node:zlib');
 
 // ---------------------------------------------------------------------------
@@ -97,6 +102,11 @@ let serverProc = null;
 let webUrl = null;
 let quitting = false;
 let updateBusy = false;
+// V4 多窗口（会话浮窗，摘自上游 dsh_desktop）：同一会话只保留一个浮窗，
+// 上限 8 个防资源滥用；主窗关闭/应用退出时统一回收。
+const FLOAT_MAX = 8;
+const floatWindows = new Set();
+const floatBySession = new Map();
 let notifyOnTurnEnd = true;
 let sessionWatcher = null;
 let userDataDir = '';
@@ -109,6 +119,10 @@ let clientUpdateBusy = false;
 let balanceCache = null;
 let balanceTimer = null;
 let restartingServer = false;
+// V4 退出清理：before-quit 只允许进入一次异步清理（防止重复触发）。
+let shutdownInProgress = false;
+// V4 退出清理：当前正在执行的插件市场排队任务子进程（退出时强杀）。
+let marketOpChild = null;
 // 渲染进程崩溃/挂起自恢复状态机（renderer-recovery.js，上游 Issue #9 修复）。
 let recovery = null;
 // koffi 预检失败时注入的目录选择器降级 overlay 路径（koffi-preflight.js）。
@@ -116,6 +130,82 @@ let pickerBrowseOverlay = null;
 // 集成测试钩子：DSH_DESKTOP_TEST_FORCE_UNSAFE=1 时把第一次探测到的端口强制
 // 视为受限端口（6000），端到端验证「重启换端口」交接路径。
 let testForceUnsafeOnce = process.env.DSH_DESKTOP_TEST_FORCE_UNSAFE === '1';
+
+// ---------------------------------------------------------------------------
+// 桌面专属 profile（与原生 CLI 彻底共存）：
+//
+// 历史冲突根因有二 ——
+//   1. 桌面端把配套插件行/包直接写进原生 `web` profile，pnpm 安装、patch
+//      行互踩，原生 CLI 跟着崩；
+//   2. dsh-app-boot 会把 <home>/profiles/node_modules 的共享 junction 指向
+//      「当前运行的 dsh 实例」自己的闭包 —— 原生 npx dsh 一跑，桌面端模块
+//      解析被换血（版本错位 / npx 缓存清理后悬空）。
+// 桌面端从此默认运行在独立 profile `web-desktop`（DSH_HOME 不变：会话、
+// API Key、settings.yaml 依旧共享）；junction 归属由 plugin-guard 周期守卫。
+// 旧共享模式仍可用（settings.shareWebProfile = true），仅供特殊需要。
+// ---------------------------------------------------------------------------
+const DESKTOP_PROFILE = 'web-desktop';
+// 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app）。
+const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
+
+function desktopProfile() {
+  try {
+    const s = updater.loadSettings(updCtx());
+    return s.shareWebProfile === true ? 'web' : DESKTOP_PROFILE;
+  } catch {
+    return DESKTOP_PROFILE;
+  }
+}
+
+function desktopProfileDir() {
+  const home = dshHome || path.join(os.homedir(), '.dsh');
+  return path.join(home, 'profiles', desktopProfile());
+}
+
+// 未知 profile 不会自动初始化（dsh 直接报错退出），桌面端自己按官方模板
+// 创建：package.json（bundles）+ pnpm-workspace.yaml + 空 patch 层。
+function ensureDesktopProfileInit() {
+  try {
+    const dir = desktopProfileDir();
+    if (desktopProfile() === 'web') return; // 共享模式走官方模板
+    fs.mkdirSync(dir, { recursive: true });
+    const manifest = path.join(dir, 'package.json');
+    if (!fs.existsSync(manifest)) {
+      fs.writeFileSync(manifest, JSON.stringify({
+        name: 'dsh-profile-' + desktopProfile(),
+        private: true,
+        dependencies: {},
+        dsh: { profile: { bundles: [...DESKTOP_PROFILE_BUNDLES] } },
+      }, null, 2) + '\n');
+      log('boot', '已初始化桌面专属 profile: ' + dir);
+    }
+    if (!fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
+      fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n');
+    }
+    if (!fs.existsSync(path.join(dir, 'cordis.patch.yml'))) {
+      fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), '[]\n');
+    }
+  } catch (err) {
+    log('boot', '初始化桌面 profile 失败: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 插件保护中心（plugin-guard.js）：快照 / 回滚 / 静态体检 / 自动修复 /
+// 守护启动 / 事故报告。实例延迟创建（依赖 dshHome 与 settings 就绪）。
+// ---------------------------------------------------------------------------
+let guardInstance = null;
+function ensureGuard() {
+  if (!guardInstance) {
+    guardInstance = createGuard({
+      getHome: () => dshHome || path.join(os.homedir(), '.dsh'),
+      getProfile: () => desktopProfile(),
+      dshBin: () => dshBin(),
+      log,
+    });
+  }
+  return guardInstance;
+}
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -202,6 +292,41 @@ function killTree(proc) {
   }
 }
 
+// V4 修复「退出后残留一对进程」：退出路径专用的有界同步回收。
+// 旧实现在 before-quit 里调用 killTree —— 强杀补刀挂在 1500ms 的
+// setTimeout 上，而 Electron 在 before-quit 后数百毫秒内就退出，定时器
+// 随主进程湮灭；无 /F 的 taskkill 对控制台进程（node.exe 没有顶层窗口，
+// 无处投递 WM_CLOSE）基本无效。结果是 dsh web 的 node.exe 连同它的
+// conhost.exe 每次退出都原样残留（用户实测三次，三次成对）。
+// 这里：优雅 taskkill → 等待 graceMs → 仍存活则 taskkill /T /F → 再等
+// hardMs，全程有界，绝不无限阻塞退出。
+async function killTreeAndWait(proc, { graceMs = 1200, hardMs = 4000 } = {}) {
+  if (!proc || !proc.pid || proc.exitCode !== null) return;
+  const pid = proc.pid;
+  try {
+    if (IS_WIN) {
+      spawn('taskkill', ['/pid', String(pid), '/T'], { windowsHide: true, stdio: 'ignore' });
+      await waitForProcExit(proc, graceMs);
+      if (proc.exitCode !== null) return;
+      try {
+        const alive = require('node:child_process').execSync(
+          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
+        if (!alive.includes('"' + pid + '"')) return;
+      } catch { return; }
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      await waitForProcExit(proc, hardMs);
+    } else {
+      try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch {} }
+      await waitForProcExit(proc, graceMs);
+      if (proc.exitCode !== null) return;
+      try { process.kill(-proc.pid, 'SIGKILL'); } catch { try { proc.kill('SIGKILL'); } catch {} }
+      await waitForProcExit(proc, hardMs);
+    }
+  } catch (err) {
+    log('killTree', String(err));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 退出/重启仪式（统一收口）。此前这段序列（quitting → 标记 cleanExit →
 // 终结 dsh 子进程 → 重启/退出）在 agent 更新、恢复页面、客户端更新等
@@ -223,13 +348,16 @@ function restartApp({ force = false } = {}) {
 
 // 客户端（封装）更新专用：终结服务与后台任务后交给更新脚本，由它负责
 // 安装并拉起新版本，随后本进程退出（不 app.relaunch，避免新旧实例竞争）。
-function restartWithClientUpdate(ctx, pendingUpdate) {
+async function restartWithClientUpdate(ctx, pendingUpdate) {
   quitting = true;
   forceQuit = true;
   markCleanExit();
-  killTree(serverProc);
   updater.abort();
   if (sessionWatcher) sessionWatcher.stop();
+  // V4：先等 dsh web 进程树真正退出再交给更新脚本接管（旧实现 killTree
+  // 的强杀补刀在主进程退出后不会执行，node.exe+conhost.exe 成对残留）。
+  await killTreeAndWait(serverProc);
+  serverProc = null;
   clientUpdater.applyUpdate(ctx, pendingUpdate);
   setTimeout(() => app.exit(0), 400);
 }
@@ -336,6 +464,10 @@ function childEnv() {
     delete env[k];
   }
   if (dshHome) env.DSH_HOME = dshHome;
+  // 桌面端标记 + 实际 profile：配套插件的 host 半边（插件市场 / Skills 与
+  // MCP 等）据此把安装/读写落到桌面专属 profile，而不是原生的 web profile。
+  env.DSH_DESKTOP = '1';
+  env.DSH_DESKTOP_PROFILE = desktopProfile();
   env.NO_COLOR = '1';
   return env;
 }
@@ -347,14 +479,17 @@ function waitForProcExit(proc, timeoutMs) {
     if (!proc || !proc.pid) return resolve();
     const pid = proc.pid;
     const started = Date.now();
-    const check = () => {
-      if (IS_WIN) {
-        if (!pidAliveWin(pid)) return resolve();
-      } else {
-        try { process.kill(-pid, 0); } catch {
-          try { process.kill(pid, 0); } catch { return resolve(); }
-        }
+    const isAlive = () => {
+      if (proc.exitCode !== null) return false;
+      if (IS_WIN) return pidAliveWin(pid);
+      // 先探进程组（dsh web 以 setpgid 启动），组不在再退回主 PID：
+      // 组存活说明子进程尚在收尾，避免过早放行。
+      try { process.kill(-pid, 0); return true; } catch {
+        try { process.kill(pid, 0); return true; } catch { return false; }
       }
+    };
+    const check = () => {
+      if (!isAlive()) return resolve();
       if (Date.now() - started >= timeoutMs) {
         log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
         return resolve();
@@ -368,6 +503,81 @@ function waitForProcExit(proc, timeoutMs) {
 function showBox(opts) {
   if (mainWindow && !mainWindow.isDestroyed()) return dialog.showMessageBox(mainWindow, opts);
   return dialog.showMessageBox(opts);
+}
+
+// H1（共享给主窗/浮窗）：origin 精确比较（protocol+host+port），杜绝前缀/
+// 异域/userinfo 逃逸；file: 一律拦截（同 webContents 下 file 页面仍持有
+// preload 桥）。
+function isAllowedWebUrl(url) {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+    if (webUrl) {
+      const base = new URL(webUrl);
+      return target.origin === base.origin;
+    }
+    return target.hostname === '127.0.0.1' || target.hostname === 'localhost' || target.hostname === '::1';
+  } catch {
+    return false;
+  }
+}
+
+// V4（用户反馈）：浏览器风格的右键菜单。Electron 不展示 Chromium 的内置
+// 右键菜单，需在 webContents 的 context-menu 事件自建：
+//   · 可编辑区（输入框/编辑器）→ 撤销/重做/剪切/复制/粘贴/删除/全选
+//     （role 菜单自动路由到焦点渲染进程的编辑器，enabled 用 editFlags
+//     精确反映可操作性）；
+//   · 图片 → 复制图片 / 图片另存为…；
+//   · 选中文本 → 复制 / 全选；
+//   · 其余页面区域 → 后退/前进/重新加载（浏览器同款导航段）。
+// 页面自绘右键交互（DOM contextmenu 已处理并 preventDefault 时，
+// params 仍会派发）—— Web UI 目前未使用原生右键，无冲突。
+function attachEditContextMenu(wc) {
+  wc.on('context-menu', (_e, params) => {
+    const flags = params.editFlags || {};
+    const win = BrowserWindow.fromWebContents(wc);
+    if (!win || win.isDestroyed()) return;
+    let template = null;
+    if (params.isEditable) {
+      template = [
+        { label: '撤销', role: 'undo', accelerator: 'Ctrl+Z', enabled: flags.canUndo !== false },
+        { label: '重做', role: 'redo', accelerator: 'Ctrl+Y', enabled: flags.canRedo !== false },
+        { type: 'separator' },
+        { label: '剪切', role: 'cut', accelerator: 'Ctrl+X', enabled: flags.canCut !== false },
+        { label: '复制', role: 'copy', accelerator: 'Ctrl+C', enabled: flags.canCopy !== false },
+        { label: '粘贴', role: 'paste', accelerator: 'Ctrl+V', enabled: flags.canPaste !== false },
+        { label: '删除', role: 'delete', enabled: flags.canDelete !== false },
+        { type: 'separator' },
+        { label: '全选', role: 'selectAll', accelerator: 'Ctrl+A' },
+      ];
+    } else if (params.mediaType === 'image' && params.srcURL) {
+      template = [
+        { label: '复制图片', click: () => { try { wc.copyImageAt(params.x, params.y); } catch {} } },
+        { label: '图片另存为…', click: () => { try { wc.downloadURL(params.srcURL); } catch {} } },
+      ];
+      if (flags.canCopy) {
+        template.push({ type: 'separator' }, { label: '复制', role: 'copy', accelerator: 'Ctrl+C' });
+      }
+    } else if (flags.canCopy) {
+      template = [
+        { label: '后退', role: 'back', enabled: wc.navigationHistory.canGoBack?.() ?? wc.canGoBack() },
+        { label: '前进', role: 'forward', enabled: wc.navigationHistory.canGoForward?.() ?? wc.canGoForward() },
+        { label: '重新加载', role: 'reload', accelerator: 'Ctrl+R' },
+        { type: 'separator' },
+        { label: '复制', role: 'copy', accelerator: 'Ctrl+C' },
+        { label: '全选', role: 'selectAll', accelerator: 'Ctrl+A' },
+      ];
+    } else {
+      template = [
+        { label: '后退', role: 'back', enabled: wc.navigationHistory.canGoBack?.() ?? wc.canGoBack() },
+        { label: '前进', role: 'forward', enabled: wc.navigationHistory.canGoForward?.() ?? wc.canGoForward() },
+        { label: '重新加载', role: 'reload', accelerator: 'Ctrl+R' },
+      ];
+    }
+    if (template && template.length) {
+      Menu.buildFromTemplate(template).popup({ window: win, x: params.x, y: params.y });
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -409,7 +619,10 @@ async function startServer(unsafePortRetries = 4, overlays = []) {
     const patchArgs = overlays
       .filter((p) => typeof p === 'string' && p && fs.existsSync(p))
       .flatMap((p) => ['--patch', p]);
-    const proc = spawn(nodeBin, ['--use-system-ca', bin, 'web', '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
+    // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
+    // 硬编码别名，不接受父级 --profile）；app 入口由 profile bundles 决定，
+    // --host/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
+    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
       cwd: userDataDir,
       env: childEnv(),
       detached: !IS_WIN,
@@ -417,7 +630,10 @@ async function startServer(unsafePortRetries = 4, overlays = []) {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     serverProc = proc;
-    watchServerProc(proc, out, { expectedPort: webPort, unsafePortRetries, overlays }).then(resolve, reject);
+    // V4：profile 首次引导（node_modules 缺失）时 dsh 要先跑 pnpm 装齐依赖，
+    // 就绪等待放宽（见 watchServerProc 的 bootTimer）。
+    const firstBoot = !fs.existsSync(path.join(desktopProfileDir(), 'node_modules'));
+    watchServerProc(proc, out, { expectedPort: webPort, unsafePortRetries, overlays, firstBoot }).then(resolve, reject);
   });
 }
 
@@ -477,6 +693,28 @@ function watchServerProc(proc, out, opts = {}) {
     proc.stdout.on('data', onData);
     proc.stderr.on('data', (c) => out.write(c));
     proc.on('error', (err) => finish(reject, err));
+    // V4：HTTP 就绪探测与 stdout 就绪行并行竞争 —— 就绪行被管道缓冲吞掉
+    // 或格式变化时不再白白等满 bootTimer（「启动 60 秒超时」的主要假阳性
+    // 来源）。expectedPort 由 chooseStableWebPort 挑选、已避开 Chromium
+    // 受限端口，探测命中的 URL 与请求端口一致；受限端口重启交接（handedOff）
+    // 期间 settled 由递归重启决定，探测自然退出。
+    if (opts.expectedPort && restrictedPortOf(`http://127.0.0.1:${opts.expectedPort}`) === 0) {
+      const probeUrl = `http://127.0.0.1:${opts.expectedPort}`;
+      (async () => {
+        while (!settled) {
+          const ok = await new Promise((res) => {
+            const req = http.get(probeUrl + '/', { timeout: 2500 }, (r) => {
+              r.resume();
+              res(!!r.statusCode && r.statusCode < 500);
+            });
+            req.on('error', () => res(false));
+            req.on('timeout', () => { req.destroy(); res(false); });
+          }).catch(() => false);
+          if (ok) { finish(resolve, probeUrl); return; }
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      })();
+    }
     proc.on('exit', (code, signal) => {
       out.end();
       log('dsh', `进程退出 code=${code} signal=${signal}`);
@@ -501,8 +739,15 @@ function watchServerProc(proc, out, opts = {}) {
         });
       }
     });
-    // Safety net in case the URL line never appears.
-    bootTimer = setTimeout(() => finish(reject, new Error('等待 dsh web 启动超时（60 秒）')), 60000);
+    // Safety net in case neither the URL line nor the HTTP probe lands in time.
+    // V4：profile 首次引导（node_modules 尚不存在）需要 pnpm 从网络装齐
+    // dsh-base + dsh-web-app，慢网络下 60 秒不够 —— 首启放宽到 180 秒，
+    // 稳态启动维持 60 秒。
+    const bootTimeoutMs = opts.firstBoot ? 180000 : 60000;
+    bootTimer = setTimeout(
+      () => finish(reject, new Error(`等待 dsh web 启动超时（${Math.round(bootTimeoutMs / 1000)} 秒）`)),
+      bootTimeoutMs
+    );
     bootTimer.unref();
   });
 }
@@ -546,6 +791,21 @@ function startAndShow(overlays = []) {
     });
 }
 
+// 守护启动（plugin-guard.js）：快照 → 拉起 → 失败则体检/修复/回滚再试，
+// 仍失败落事故报告。调用方统一走这里，用户不再面对「装完插件起不来」。
+async function startAndShowGuarded(overlays = []) {
+  const g = ensureGuard();
+  // 回滚分支的重试也要能更新「最后良好」标记（restore 会留 pre-restore 快照，
+  // 成功拉起后它就是最新一份 = 当前良好状态）。
+  g.setRollbackLift(async () => {
+    const url = await startAndShow(overlays);
+    const snaps = g.listSnapshots();
+    if (snaps.length) g.markGood(snaps[0].id);
+    return url;
+  });
+  return g.guardedBoot(() => startAndShow(overlays), () => '日志文件：' + path.join(logsDir, 'dsh-web.log'));
+}
+
 // ---------------------------------------------------------------------------
 // koffi 预检与目录选择器降级（koffi-preflight.js）：koffi 3.1.3/3.1.4 的
 // win32-x64 预编译二进制在部分 Windows 机器上会在 load 时原生崩溃
@@ -575,6 +835,26 @@ function applyKoffiPreflight() {
     pickerBrowseOverlay = enablePickerBrowseOverlay({ file, log: preflightLogger });
   }
   return ok;
+}
+
+// V4：异步版（spawn 而非 spawnSync）—— 同步探针会把主进程事件循环卡住
+// 最长 20 秒（托盘/菜单/IPC 全无响应）。boot 链改走这里，语义不变。
+function applyKoffiPreflightAsync() {
+  const file = pickerBrowseOverlayPath();
+  return runKoffiPreflightAsync({
+    spawn,
+    nodeExe: nodeExe(),
+    script: path.join(__dirname, 'scripts', 'koffi-preflight.cjs'),
+    log: preflightLogger,
+  }).then((ok) => {
+    if (ok) {
+      clearAutoPickerBrowseOverlay({ file, log: preflightLogger });
+      pickerBrowseOverlay = null;
+    } else {
+      pickerBrowseOverlay = enablePickerBrowseOverlay({ file, log: preflightLogger });
+    }
+    return ok;
+  });
 }
 
 function handleBootFailure(err) {
@@ -697,22 +977,9 @@ function createWindow({ startHidden = false } = {}) {
     return { action: 'deny' };
   });
 
-  // Keep the window pinned to the local web UI; send external links out.
+  // Keep the app pinned to the local web UI; send external links out.
   // H1 修复：origin 精确比较（protocol+host+port），杜绝前缀/异域/userinfo 逃逸；
   // file: 一律拦截（同 webContents 下 file 页面仍持有 preload 桥）；will-redirect 同规则。
-  const isAllowedWebUrl = (url) => {
-    try {
-      const target = new URL(url);
-      if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
-      if (webUrl) {
-        const base = new URL(webUrl);
-        return target.origin === base.origin;
-      }
-      return target.hostname === '127.0.0.1' || target.hostname === 'localhost' || target.hostname === '::1';
-    } catch {
-      return false;
-    }
-  };
   const guardNavigation = (event, url) => {
     if (isAllowedWebUrl(url)) return;
     event.preventDefault();
@@ -727,6 +994,8 @@ function createWindow({ startHidden = false } = {}) {
       log('page', `[${level}] ${message} (${sourceId || 'unknown'}:${line})`);
     }
   });
+  // V4：浏览器风格右键菜单（编辑/图片/选区/导航四类场景）。
+  attachEditContextMenu(mainWindow.webContents);
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     log('page', `渲染进程异常退出: ${details.reason} (exitCode=${details.exitCode})`);
   });
@@ -753,12 +1022,23 @@ function createWindow({ startHidden = false } = {}) {
   mainWindow.on('enter-full-screen', sendMaxState);
   mainWindow.on('leave-full-screen', sendMaxState);
 
-  // 关闭 → 隐藏到托盘（可在 chrome 菜单关闭该行为）。
-  mainWindow.on('close', (event) => {
-    if (!forceQuit && IS_WIN && closeToTrayEnabled() && tray) {
-      event.preventDefault();
+  // 关闭 → 按退出行为设置处理：ask 弹窗询问 / minimize 隐藏到托盘 / quit 退出。
+  mainWindow.on('close', async (event) => {
+    if (forceQuit || !IS_WIN || !tray) return;
+    event.preventDefault();
+    const action = getExitAction();
+    let choice = action;
+    if (action === 'ask') {
+      choice = await askExitAction();
+      // 弹窗期间用户可能已通过菜单真正退出（quitting/forceQuit 置位）。
+      if (forceQuit || quitting) return;
+    }
+    if (choice === 'minimize') {
       mainWindow.hide();
       trayHintOnce();
+    } else {
+      forceQuit = true;
+      app.quit();
     }
   });
 
@@ -767,6 +1047,99 @@ function createWindow({ startHidden = false } = {}) {
   // 渲染进程崩溃/挂起的自恢复由 renderer-recovery.js 统一接管（保留上方
   // render-process-gone 的日志 handler，二者互补：一个记录、一个恢复）。
   wireWindowRecovery();
+}
+
+// ---------------------------------------------------------------------------
+// 会话浮窗（V4 多窗口，移植自上游 dsh_desktop）：把某个会话弹出到独立
+// 窗口实现分屏多任务。同一会话只保留一个浮窗，全局上限 FLOAT_MAX；浮窗
+// 与主窗使用独立 partition（localStorage 隔离，避免互相覆盖当前会话选中
+// 态）；preload 以 --dsh-float=<sessionId> 识别浮窗模式，注入更细的拖拽条。
+// ---------------------------------------------------------------------------
+
+function guardFloatWebContents(wc) {
+  wc.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const guardNavigation = (event, url) => {
+    if (isAllowedWebUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  };
+  wc.on('will-navigate', guardNavigation);
+  wc.on('will-redirect', guardNavigation);
+  wc.on('console-message', (details, level, message, line, sourceId) => {
+    const text = (details && details.message) || message || '';
+    const lvl = (details && details.level) || level;
+    const src = (details && details.sourceId) || sourceId || 'unknown';
+    const lineNo = (details && details.lineNumber) ?? line;
+    if (lvl === 'error' || lvl === 3 || lvl === 'warning' || lvl === 2 || /\[dsh-float-window\]/.test(text)) {
+      log('float-page', `[${lvl}] ${text} (${src}:${lineNo})`);
+    }
+  });
+}
+
+// 创建并登记一个会话浮窗。返回 BrowserWindow；失败返回 null。
+function createFloatWindow(sessionId, { title } = {}) {
+  if (!webUrl || floatWindows.size >= FLOAT_MAX) return null;
+  const win = new BrowserWindow({
+    width: 900,
+    height: 640,
+    minWidth: 480,
+    minHeight: 360,
+    show: false,
+    title: title || 'DSH 会话',
+    backgroundColor: '#0b1220',
+    icon: path.join(__dirname, 'assets', 'icon.png'),
+    // 与主窗一致的无边框；浮窗 preload 注入一条更细的纯拖拽条。
+    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+      // 独立分区：浮窗与主窗隔离 localStorage，避免互相覆盖 dsh.sessions.current。
+      // 会话数据在服务端（~/.dsh），localStorage 仅存 UI 选中态，无 cookie 认证。
+      partition: 'persist:dsh-float',
+      // 用 additionalArguments 而非 URL 参数，避免污染 Web UI 见到的地址；
+      // preload 从 process.argv 读取 --dsh-float=<sessionId>。
+      additionalArguments: ['--dsh-float=' + sessionId],
+    },
+  });
+  floatWindows.add(win);
+  floatBySession.set(sessionId, win);
+  win.loadURL(webUrl).catch((err) => log('float', '浮窗加载失败: ' + ((err && err.message) || err)));
+
+  // 窗口标题跟随会话（去掉通用前缀，保留会话相关标题）。
+  win.on('page-title-updated', (event) => {
+    event.preventDefault();
+    const raw = String(event.title || win.getTitle() || '');
+    const cleaned = raw.replace(/^(DSH|Deepseek Harness EAC)[·\-—\s:]*/i, '').trim();
+    win.setTitle(cleaned || 'DSH 会话');
+  });
+
+  win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
+  win.on('closed', () => {
+    floatWindows.delete(win);
+    for (const [sid, w] of floatBySession) {
+      if (w === win) { floatBySession.delete(sid); break; }
+    }
+  });
+  guardFloatWebContents(win.webContents);
+  attachEditContextMenu(win.webContents);
+  if (recovery) recovery.attach(win, 'float');
+  log('float', '已创建会话浮窗 sessionId=' + sessionId);
+  return win;
+}
+
+// 关闭全部浮窗（应用退出时调用）。
+function closeAllFloatWindows() {
+  for (const win of floatWindows) {
+    if (!win.isDestroyed()) win.destroy();
+  }
+  floatWindows.clear();
+  floatBySession.clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,6 +1392,45 @@ function setCloseToTray(v) {
   saveSettings(updCtx(), s);
 }
 
+// 退出行为三档：ask（每次询问）/ minimize（后台运行）/ quit（直接退出）。
+// 旧版本只有 closeToTray 布尔开关，这里做迁移：closeToTray === false → quit，
+// 显式 true → minimize（保持旧默认行为），未设置（新安装）→ ask。
+function getExitAction() {
+  const s = updater.loadSettings(updCtx());
+  if (s.exitAction === 'ask' || s.exitAction === 'minimize' || s.exitAction === 'quit') return s.exitAction;
+  if (s.closeToTray === false) return 'quit';
+  if (s.closeToTray === true) return 'minimize';
+  return 'ask';
+}
+
+function setExitAction(v) {
+  if (v !== 'ask' && v !== 'minimize' && v !== 'quit') return;
+  const s = updater.loadSettings(updCtx());
+  s.exitAction = v;
+  // 同步旧字段，避免降级回旧版本时行为回退。
+  s.closeToTray = v !== 'quit';
+  updater.saveSettings(updCtx(), s);
+}
+
+// 退出确认弹窗（exitAction === "ask"）。带「记住我的选择」勾选框。
+async function askExitAction() {
+  const { response, checkboxChecked } = await showBox({
+    type: 'question',
+    title: '退出 Deepseek Harness',
+    message: '要退出程序，还是在后台运行？',
+    detail: '后台运行时窗口会隐藏到系统托盘，任务完成后会发通知。',
+    buttons: ['最小化到后台', '退出程序'],
+    defaultId: 0,
+    cancelId: -1,
+    checkboxLabel: '记住我的选择，不再询问',
+    checkboxChecked: false,
+    noLink: true,
+  });
+  const choice = response === 1 ? 'quit' : 'minimize';
+  if (checkboxChecked) setExitAction(choice);
+  return choice;
+}
+
 function repoUrls() {
   const repos = clientUpdater.resolveRepos();
   return {
@@ -1041,6 +1453,37 @@ async function showAbout() {
   else if (response === 1) clipboard.writeText(urls.gitee);
 }
 
+// 原地重启 dsh web 服务（安装/卸载插件后生效，窗口重载到新端口）。
+// V4：抽出核心逻辑，⋯ 菜单「重启 Web 服务」与托盘菜单共用（用户建议：
+// 不关闭软件即可重启服务）。
+async function restartWebServiceCore() {
+  if (!serverProc || restartingServer) return { ok: false, error: 'not-running' };
+  log('service', '请求重启 dsh web 服务');
+  restartingServer = true;
+  try {
+    const oldProc = serverProc;
+    killTree(serverProc);
+    serverProc = null;
+    // 等旧进程真正退出（DLL 文件锁随之释放），再执行插件市场排队任务，
+    // 最后才拉起新服务 —— 排队安装正需要这个"无锁窗口"。
+    await waitForProcExit(oldProc, 20000);
+    await processPendingMarketOps();
+    // pnpm（排队安装/卸载）会重写 profile node_modules：可能删掉配套插件
+    // 副本、重新 hoist 核心包。服务拉起前重建 + 清理，顺序不能反。
+    syncCompanionPlugins();
+    healProfileModules();
+    await restoreKeptArtifacts(desktopProfile());
+    const url = await startAndShowGuarded();
+    log('service', 'dsh web 服务已重启: ' + url);
+    return { ok: true, url };
+  } catch (err) {
+    log('service', '重启失败: ' + ((err && err.message) || err));
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally {
+    restartingServer = false;
+  }
+}
+
 function registerChromeIpc() {
   ipcMain.handle('chrome:init', async (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return null;
@@ -1061,6 +1504,8 @@ function registerChromeIpc() {
       agentSource: dshVersionSource(),
       notifyOnTurnEnd,
       closeToTray: s.closeToTray !== false,
+      exitAction: getExitAction(),
+      shortcutPolicy: s.shortcutPolicy === 'never' ? 'never' : 'auto',
       iconDataUri,
       repoUrls: urls,
       staticPort: previewStaticPort,
@@ -1089,7 +1534,7 @@ function registerChromeIpc() {
     // 服务进程已退出时先重启服务（可能换新端口），再恢复加载。
     if (!serverProc || serverProc.exitCode !== null || serverProc.killed) {
       try {
-        await startAndShow();
+        await startAndShowGuarded();
       } catch (err) {
         return { ok: false, error: String((err && err.message) || err) };
       }
@@ -1122,9 +1567,9 @@ function registerChromeIpc() {
     return null;
   });
 
-  ipcMain.handle('chrome:menu', async (event, { action } = {}) => {
+  ipcMain.handle('chrome:menu', async (event, { action, value } = {}) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
-      return { notifyOnTurnEnd, closeToTray: closeToTrayEnabled() };
+      return { notifyOnTurnEnd, closeToTray: closeToTrayEnabled(), exitAction: getExitAction() };
     }
     switch (action) {
       case 'reload': mainWindow.reload(); break;
@@ -1142,39 +1587,146 @@ function registerChromeIpc() {
         break;
       }
       case 'toggle-close-to-tray': setCloseToTray(!closeToTrayEnabled()); break;
+      case 'set-exit-action': setExitAction(value); break;
+      case 'restart-service': {
+        // 不关闭应用重启 dsh web 服务（皮肤/插件切换后生效，等同市场安装
+        // 后的自动重启路径）。窗口由 startAndShow 重载到新端口。
+        const r = await restartWebServiceCore();
+        if (!r.ok && r.error !== 'not-running') {
+          showBox({
+            type: 'error',
+            title: '重启 Web 服务失败',
+            message: 'dsh web 服务重启未成功。',
+            detail: r.error,
+            buttons: ['确定'],
+          }).catch(() => {});
+        }
+        break;
+      }
+      case 'toggle-shortcut-policy': {
+        // V4（用户建议③）：桌面快捷方式自动维护开关。关掉后启动不再自动
+        // 创建/修复桌面快捷方式（开始菜单的仍维护 —— 系统通知的前置条件）。
+        const s = updater.loadSettings(updCtx());
+        s.shortcutPolicy = s.shortcutPolicy === 'never' ? 'auto' : 'never';
+        updater.saveSettings(updCtx(), s);
+        log('boot', '桌面快捷方式自动维护: ' + s.shortcutPolicy);
+        break;
+      }
       case 'about': showAbout(); break;
       case 'quit': forceQuit = true; app.quit(); break;
     }
-    return { notifyOnTurnEnd, closeToTray: closeToTrayEnabled() };
+    const menuState = updater.loadSettings(updCtx());
+    return {
+      notifyOnTurnEnd,
+      closeToTray: closeToTrayEnabled(),
+      exitAction: getExitAction(),
+      shortcutPolicy: menuState.shortcutPolicy === 'never' ? 'never' : 'auto',
+    };
   });
 
   // 插件市场：原地重启 dsh web 服务（安装/卸载插件后生效，窗口重载到新端口）。
+  // 核心逻辑 restartWebServiceCore 在模块作用域（⋯ 菜单与托盘共用）。
   ipcMain.handle('chrome:restart-service', async (event, payload = {}) => {
     if (payload?.intent !== 'restart-service') return { ok: false, error: 'missing-intent' };
     if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
-    if (!serverProc || restartingServer) return { ok: false, error: 'not-running' };
-    log('service', '请求重启 dsh web 服务');
-    restartingServer = true;
+    return restartWebServiceCore();
+  });
+
+  // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
+  // 设置页「插件保护」分区（dsh-plugin-shield 插件）从这里取数与触发动作。
+  ipcMain.handle('guard:action', async (event, { action, value } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const g = ensureGuard();
+    switch (action) {
+      case 'status': {
+        const st = (() => { try { return updater.loadSettings(updCtx()); } catch { return {}; } })();
+        return {
+          ok: true,
+          profile: desktopProfile(),
+          shareWebProfile: st.shareWebProfile === true,
+          snapshots: g.listSnapshots().slice(0, 20),
+          incidents: g.listIncidents().slice(0, 20),
+          lastGood: g.lastGoodSnapshot(),
+        };
+      }
+      case 'snapshot': {
+        const s = g.snapshot(String(value || 'manual'));
+        return { ok: !!s, snapshot: s };
+      }
+      case 'restore': {
+        if (serverProc && !restartingServer) {
+          // 服务运行中不能换配置文件（文件锁 + 进程内存态）：走标准重启窗口。
+          return { ok: false, error: 'service-running', hint: '请先重启 Web 服务（或让回滚在重启间隙执行）' };
+        }
+        return g.restore(value);
+      }
+      case 'check':
+        return { ok: true, report: g.healthCheck() };
+      case 'repair': {
+        const r = g.repair();
+        return { ok: true, applied: r.applied };
+      }
+      case 'incident':
+        return g.readIncident(value);
+      case 'resolve-incident':
+        return g.resolveIncident(value);
+      default:
+        return { ok: false, error: 'unknown action' };
+    }
+  });
+
+  // 插件管理（V4，设置页「插件 → 管理」标签，dsh-plugin-manager 插件消费）：
+  //   list —— 收集配套/用户/核心插件：id、包名、描述、启用状态
+  //   set  —— 写入/移除 profile cordis.patch.yml 的用户层 disabled 条目
+  //           （纯文本手术；完全退出并重启应用后生效）
+  ipcMain.handle('dsh:plugin-list', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return [];
+    return pluginManagerCollect();
+  });
+
+  ipcMain.handle('dsh:plugin-set-enabled', async (event, { id, enabled } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const row = pluginManagerCollect().find((r) => r.id === id);
+    if (!row) return { ok: false, error: '未知插件: ' + String(id) };
+    if (!row.toggleable) return { ok: false, error: '该插件不可关闭: ' + String(id) };
     try {
-      const oldProc = serverProc;
-      killTree(serverProc);
-      serverProc = null;
-      // 等旧进程真正退出（DLL 文件锁随之释放），再执行插件市场排队任务，
-      // 最后才拉起新服务 —— 排队安装正需要这个"无锁窗口"。
-      await waitForProcExit(oldProc, 20000);
-      await processPendingMarketOps();
-      // pnpm（排队安装/卸载）会重写 profile node_modules：可能删掉配套插件
-      // 副本、重新 hoist 核心包。服务拉起前重建 + 清理，顺序不能反。
-      syncCompanionPlugins();
-      healProfileModules();
-      const url = await startAndShow();
-      log('service', 'dsh web 服务已重启: ' + url);
-      return { ok: true, url };
+      const res = pluginManagerSetEnabled(id, !!enabled);
+      if (!res.ok) return res;
+      log('plugin-manager', '已' + (enabled ? '启用' : '关闭') + '插件 ' + id);
+      return { ok: true, restartRequired: true };
     } catch (err) {
-      log('service', '重启失败: ' + ((err && err.message) || err));
+      log('plugin-manager', '设置插件 ' + id + ' 失败: ' + ((err && err.message) || err));
       return { ok: false, error: String((err && err.message) || err) };
-    } finally {
-      restartingServer = false;
+    }
+  });
+
+  // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口（校验来源与
+  // 数量上限）；浮窗自己只允许关闭自身。
+  ipcMain.handle('chrome:float-window', (event, { action, sessionId } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    if (action !== 'open') return { ok: false, error: 'bad-action' };
+    if (!webUrl) return { ok: false, error: 'not-ready' };
+    if (typeof sessionId !== 'string' || !sessionId) return { ok: false, error: 'bad-session' };
+    // 同一会话只保留一个浮窗：拖出/按钮连续触发或重复请求时，
+    // 复用已有窗口而不是再开第二个。
+    const existing = floatBySession.get(sessionId);
+    if (existing && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore();
+      existing.show();
+      existing.focus();
+      return { ok: true, id: existing.id, reused: true };
+    }
+    if (existing) floatBySession.delete(sessionId);
+    if (floatWindows.size >= FLOAT_MAX) return { ok: false, error: 'too-many' };
+    const win = createFloatWindow(sessionId);
+    if (!win) return { ok: false, error: 'too-many' };
+    return { ok: true, id: win.id };
+  });
+
+  // 浮窗关闭：仅允许浮窗关闭自身（校验发送者属于某个浮窗）。
+  ipcMain.on('float:close', (event) => {
+    for (const win of floatWindows) {
+      if (!win.isDestroyed() && win.webContents === event.sender) { win.close(); break; }
     }
   });
 
@@ -1338,6 +1890,9 @@ function createTray() {
         },
       },
       { type: 'separator' },
+      // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
+      { label: '重启 Web 服务', click: () => { showMainWindow(); restartWebServiceCore(); } },
+      { type: 'separator' },
       { label: '退出', click: () => { forceQuit = true; app.quit(); } },
     ]);
     tray.setContextMenu(menu);
@@ -1364,12 +1919,24 @@ async function refreshBalance() {
   } catch (err) {
     result = { ok: false, error: String((err && err.message) || err), balances: [] };
   }
-  // 按当前默认模型选择价格档（settings.json 可覆盖 balancePrices.<model>）。
+  // 按当前默认模型选择价格档（settings.json 可覆盖 balancePrices.<model>，
+  // 兼容旧扁平覆盖与新的 { peak, offpeak } 双档覆盖）。
+  // 峰谷定价（2026-08-17 起）：按当前时段 pick 高峰/空闲档，两档随 pricing
+  // 一起推给页面，时段切换后 client 可本地换档无需等下一次轮询。
   const model = balance.readActiveModel(home) || 'deepseek-v4-pro';
   const table = result.prices || balance.DEFAULT_PRICES;
   const s = loadSettings(updCtx());
-  const override = s.balancePrices && s.balancePrices[model];
-  result.prices = { ...(table[model] || balance.FALLBACK_PRICES), ...(override || {}) };
+  const pricing = balance.computePricingState(s.pricing && s.pricing.peakWindows);
+  const base = table[model] || balance.FALLBACK_PRICES;
+  const ov = (s.balancePrices && s.balancePrices[model]) || {};
+  const ovDual = typeof ov.peak === 'object' && ov.peak !== null && typeof ov.offpeak === 'object' && ov.offpeak !== null;
+  const tier = (src) => ({
+    ...(balance.FALLBACK_PRICES[src] || balance.FALLBACK_PRICES),
+    ...(base[src] || base),
+    ...(ovDual ? ov[src] : ov),
+  });
+  result.prices = tier(pricing.period);
+  result.pricing = { ...pricing, prices: { peak: tier('peak'), offpeak: tier('offpeak') } };
   balanceCache = result;
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('dsh:balance', result);
@@ -1412,6 +1979,83 @@ const COMPANION_PLUGINS = [
   // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
   // schemastery（已加入 app 闭包，见 package.json）。
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
+  // Trae 风格对话回退：用户消息 hover 出「编辑并回退」，按上一完整回合
+  // 分叉新会话（sessions.fork）并以编辑后内容重发（inputActions）。
+  // 纯客户端实现，host 半边为 no-op。
+  { id: 'message-rewind', name: 'dsh-message-rewind', dir: 'dsh-message-rewind' },
+  // 桌面宠物（npm: dsh-pet 0.1.3）：28 个透明动画的悬浮宠物，即装即用。
+  // assets/ 15MB 播放资源随包分发；peer 依赖全部由 dsh 宿主提供。
+  // V4 关键修复：行必须带 config —— dsh-pet 的 apply 读 config.fullRoot，
+  // 无 config 块的行会让 loader 传 undefined 直接拖垮插件树（v3.1.0 全新
+  // 安装即「启动失败」的根因之一；老用户因市场装过的行带 config 才幸免）。
+  // 值沿用包内 cordis.patch.yml 的出厂默认。
+  { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet', config: { size: 260, position: 'bottom-right' } },
+  // 第二插件市场 Zat-DSH Engine（GitHub releases 分发，v0.5.0 vendor 自
+  // 源码 tag）：GitHub dsh-plugin topic 检索 + 中文简介 + 国内镜像兜底。
+  // 运行时依赖 zod ^4 由 profiles 闭包（junction 指向 app node_modules，
+  // 内含 zod 4.4.3）解析，无需 vendor。
+  { id: 'zat-market', name: 'zat-dsh-engine', dir: 'zat-dsh-engine' },
+  // 设置页「Skills 与 MCP」分区：Skills 目录浏览（来源徽标/打开目录）+
+  // MCP 服务增删改（读写 profile patch 中的 dsh-mcp-client 行）+ 从
+  // Claude Code / Codex 一键导入 MCP 配置。
+  { id: 'dock-settings', name: 'dsh-dock-settings', dir: 'dsh-dock-settings' },
+  // 外观自定义：字体家族/字号/文字与代码颜色的设置页分区，实时预览，
+  // localStorage 持久化（纯客户端，无宿主半边）。
+  { id: 'font-custom', name: 'dsh-font-custom', dir: 'dsh-font-custom' },
+  // 自动压缩：监听 contextPressure 投影，接近上下文上限（默认 80%）时
+  // 自动向当前会话发送 /compact（dsh 原生命令，压缩事务由内核执行）。
+  { id: 'auto-compact', name: 'dsh-auto-compact', dir: 'dsh-auto-compact' },
+  // 插件保护中心 UI：快照列表/一键回滚/健康检查/事故报告，经桌面壳
+  // IPC（guard:action）驱动 plugin-guard.js 引擎。
+  { id: 'plugin-shield', name: 'dsh-plugin-shield', dir: 'dsh-plugin-shield' },
+  // AI 变更审核（V4，用户建议⑤）：监控官方 fileChanges 投影，手动/自动向
+  // 当前对话发送审核请求，让模型复查自己刚做的改动（正确性/安全性/一致
+  // 性），结论配合「文件」页一键还原。纯客户端实现，host 半边 no-op。
+  { id: 'change-review', name: 'dsh-change-review', dir: 'dsh-change-review' },
+  // —— V4 自上游 dsh_desktop（myYangyunfan）移植的配套插件 ——
+  // 会话浮窗（多窗口分屏）：会话头部「弹出到独立窗口」按钮；窗口由壳层
+  // IPC chrome:float-window / preload 的 __DSH_FLOAT__ 承载。
+  { id: 'float-window', name: '@deepseek-ai/dsh-float-window' },
+  // 对话节点导航条（vlln/dsh-navbar，MIT）：对话区右缘节点串快速跳转
+  // user 消息（悬停预览/点击跳转/滚轮切换）。
+  { id: 'dsh-navbar', name: '@vlln/dsh-navbar', dir: 'dsh-navbar' },
+  // 对话删除与归档管理：会话行菜单「删除对话」+ 设置内归档管理面板。
+  // 前置依赖 scripts/patch-session-manage.js 的官方包运行时补丁
+  // （applySessionManageFix，随启动幂等应用、覆盖 agent overlay）。
+  { id: 'dsh-session-manager', name: 'dsh-session-manager' },
+  // 对话界面微调：隐藏大量工具调用/结果/思考输出（保留每轮最终总结）。
+  { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
+  // 自定义注入提示词：整体替换/追加官方 persona，应用到 standard 预设。
+  { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
+  // 第三方 OpenAI 兼容模型的 reasoning_effort 控件（字段名可自定义）。
+  { id: 'third-party-thinking', name: '@deepseek-ai/dsh-third-party-thinking' },
+  // 侧边临时会话：浮窗追问、不写主会话、多种回答引擎（Ctrl+Shift+S）。
+  { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
+  // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
+  // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
+  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  // 微信 ClawBot / OpenClaw 桥（openclaw-dsh-bridge v0.7.0，MIT）：设置页
+  // 「ClawBot」栏（扫码绑定微信官方 ClawBot 小程序）+ OpenAI 兼容端点
+  // （/openclaw-bridge/v1/chat/completions）。前置依赖 dsh-host-apiproxy 的
+  // 设置命名空间白名单补丁（patchApiproxyBridgeNamespace，随启动幂等应用）。
+  { id: 'openclaw-bridge', name: '@deepseek-ai/dsh-openclaw-bridge', dir: 'dsh-openclaw-bridge' },
+  // 崩溃急救/撤销回退（dsh-undo-savepoint，lire1131，MIT）：配置文件 + 插件
+  // 代码树快照、undo/redo、一键安全模式、密钥脱敏 vault。与插件保护中心
+  // （配置面快照）和「文件」还原（会话内改动）互补，覆盖「配置改坏、dsh
+  // 起不来」的急救场景。GitHub 分发锁定拷贝（npm 未发布）。
+  { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
+  // 大肥鱼桌宠（dsh-dafeiyu，QCYTSN；代码 MIT、角色素材按 ASSET_LICENSE.md
+  // 随包分发保留署名）：真实会话状态驱动的原生置顶桌宠（空闲/思考/工作/
+  // 等待/完成/错误 六态 + 项目状态卡）。默认禁用 —— 在「设置 → 插件 →
+  // 管理」里启用（含 49MB PyInstaller helper，按需开启）。
+  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu', disabled: true },
+  // 峰谷价格卫士（dsh-offpeak，christophersmith2737-commits，MIT）：DeepSeek
+  // 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）在发送前
+  // 拦截提醒，可一键继续或定时到闲时价自动执行（浏览器不在线也会到点
+  // 执行）。与余额小部件互补（事前拦截 vs 事后显示）；程序化提交
+  // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
+  // 可在「设置 → 插件 → 管理」关闭。
+  { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
 ];
 
 // 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
@@ -1426,8 +2070,60 @@ function readJsonFile(file) {
 // 拷贝一个插件包目录到 profile node_modules（按包名 scope 落位，幂等）。
 // 除运行必需文件外，LICENSE/NOTICE/README 等许可与出处文件以及 preview/
 // 目录（皮肤预览图）一并随包分发。
+// V4：先比对「源 vs 目标」的内容戳记（版本+文件数+字节数），一致则跳过 ——
+// 旧逻辑每次启动全量重拷（dsh-pet 15MB、dsh-dafeiyu ~58MB 资产，拖慢启动）。
+// 戳记文件放在包目录内（.eac-copy-stamp.json），pnpm 重写 node_modules 时
+// 随目录消失，天然触发重建。
+const COPY_STAMP = '.eac-copy-stamp.json';
+
+// 与 copyPluginPackage 的拷贝清单保持一致（多算/漏算都会导致每次都重拷，
+// 只会浪费不会出错）。
+function pluginCopyEntries(src) {
+  const out = [];
+  const copyFile = (rel) => {
+    const sf = path.join(src, rel);
+    if (!fs.existsSync(sf) || fs.statSync(sf).isDirectory()) return;
+    out.push(rel);
+  };
+  const copyDir = (rel) => {
+    const sd = path.join(src, rel);
+    if (!fs.existsSync(sd) || !fs.statSync(sd).isDirectory()) return;
+    for (const entry of fs.readdirSync(sd, { withFileTypes: true })) {
+      const sub = rel + '/' + entry.name;
+      if (entry.isDirectory()) copyDir(sub);
+      else copyFile(sub);
+    }
+  };
+  for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
+  for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
+  for (const d of ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client']) copyDir(d);
+  return out;
+}
+
+function pluginStampOf(src) {
+  try {
+    const pkg = readJsonFile(path.join(src, 'package.json')) || {};
+    let files = 0;
+    let bytes = 0;
+    for (const rel of pluginCopyEntries(src)) {
+      files += 1;
+      try { bytes += fs.statSync(path.join(src, rel)).size; } catch {}
+    }
+    return JSON.stringify({ v: String(pkg.version || ''), f: files, b: bytes });
+  } catch {
+    return null;
+  }
+}
+
 function copyPluginPackage(profileDirP, src, name) {
   const destRoot = path.join(profileDirP, 'node_modules', ...name.split('/'));
+  const stampFile = path.join(destRoot, COPY_STAMP);
+  const want = pluginStampOf(src);
+  try {
+    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want) {
+      return; // 内容未变：跳过全量重拷
+    }
+  } catch { /* 比对失败按需重拷 */ }
   fs.mkdirSync(path.dirname(destRoot), { recursive: true });
   const copyFile = (rel) => {
     const sf = path.join(src, rel);
@@ -1459,6 +2155,20 @@ function copyPluginPackage(profileDirP, src, name) {
   copyDir('node_modules');
   // dsh-webui-market 的离线目录快照（官网不可达时的兜底数据）。
   copyDir('data');
+  // dsh-pet / dsh-dafeiyu 等带运行时静态资源的插件（宠物动画 webp/png 帧、
+  // PyInstaller helper 等）。
+  copyDir('assets');
+  copyDir('runtime');
+  // dsh-dafeiyu 的入口在 src/（lib/ 只有 client 半边）；dsh-offpeak 的
+  // client 半边在 client/（包 exports 映射）。
+  copyDir('src');
+  copyDir('client');
+  if (want) {
+    try {
+      fs.mkdirSync(destRoot, { recursive: true });
+      fs.writeFileSync(stampFile, want);
+    } catch { /* 戳记写失败不影响功能 */ }
+  }
 }
 
 // 随插件/皮肤包一起拷贝到 profile 的许可与出处文件（存在才拷贝）。
@@ -1473,7 +2183,7 @@ const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'RE
 function healProfileModules() {
   try {
     const home = dshHomePath();
-    const removed = healProfileModuleShadowing(home);
+    const removed = healProfileModuleShadowing(home, desktopProfile());
     if (removed.length) log('boot', '已清理 profile node_modules 中遮蔽安装闭包的包拷贝: ' + removed.join(', '));
   } catch (err) {
     log('boot', '清理 profile 模块遮蔽失败: ' + err.message);
@@ -1554,18 +2264,91 @@ function finishMarketMarker(marker, job, attempts, ok, tail) {
   log('market-pending', '排队任务失败（下次启动重试）: ' + (job.label || job.target));
 }
 
-// 必须在"没有任何 dsh web 进程持锁"时调用；调用方负责先等待旧进程退出。
-function processPendingMarketOps() {
-  return new Promise((resolve) => {
-    const items = pendingMarketMarkers();
-    if (items.length === 0) return resolve();
-    const nodeBin = nodeExe();
-    const bin = dshBin();
-    if (!fs.existsSync(nodeBin) || !fs.existsSync(bin)) {
-      log('market-pending', '找不到 node/dsh CLI，跳过排队任务');
-      return resolve();
+// ---------------------------------------------------------------------------
+// 第三方插件构建产物保留（V4）：pnpm 重写 profile node_modules 后，把快照
+// 里「磁盘上消失」的文件补回去。实现与市场 host 半边共用一份（ESM）：
+// assets/plugins/dsh-webui-market/lib/artifact-keep.mjs。
+// ---------------------------------------------------------------------------
+const ARTIFACT_KEEP_MODULE = path.join(__dirname, 'assets', 'plugins', 'dsh-webui-market', 'lib', 'artifact-keep.mjs');
+let artifactKeepMod = null;
+
+async function artifactKeep() {
+  if (artifactKeepMod) return artifactKeepMod;
+  try {
+    artifactKeepMod = await import(pathToFileURL(ARTIFACT_KEEP_MODULE).href);
+  } catch (err) {
+    log('artifact-keep', '模块加载失败: ' + err.message);
+    artifactKeepMod = {};
+  }
+  return artifactKeepMod;
+}
+
+function profileDirFor(profile) {
+  const home = dshHome || path.join(os.homedir(), '.dsh');
+  return path.join(home, 'profiles', profile);
+}
+
+function artifactCacheDirFor(profile) {
+  const home = dshHome || path.join(os.homedir(), '.dsh');
+  return path.join(home, 'plugin-artifact-cache', profile);
+}
+
+// 由桌面壳重建的包（配套插件 + 皮肤）不进快照：丢了也会被 syncCompanion
+// Plugins / 皮肤同步立刻补回，缓存它们只浪费空间。
+function managedPackageNames() {
+  const names = COMPANION_PLUGINS.map((p) => p.name);
+  try {
+    for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const pkg = readJsonFile(path.join(SKINS_DIR, entry.name, 'package.json'));
+      if (pkg && typeof pkg.name === 'string') names.push(pkg.name);
     }
-    log('market-pending', `发现 ${items.length} 个排队任务，开始执行（Web 服务启动前，无文件锁）`);
+  } catch {}
+  return names;
+}
+
+// 启动兜底回填：上次 pnpm 运行后若应用异常退出没来得及回填（或回填被
+// 中断），这里补上。只补缺失文件，安全幂等。
+async function restoreKeptArtifacts(profile) {
+  const ak = await artifactKeep();
+  if (typeof ak.restoreArtifacts !== 'function') return;
+  try {
+    ak.restoreArtifacts(profileDirFor(profile), artifactCacheDirFor(profile), {
+      log: (m) => log('artifact-keep', m),
+    });
+  } catch (err) {
+    log('artifact-keep', '回填失败: ' + err.message);
+  }
+}
+
+// 必须在"没有任何 dsh web 进程持锁"时调用；调用方负责先等待旧进程退出。
+async function processPendingMarketOps() {
+  const items = pendingMarketMarkers();
+  if (items.length === 0) return;
+  const nodeBin = nodeExe();
+  const bin = dshBin();
+  if (!fs.existsSync(nodeBin) || !fs.existsSync(bin)) {
+    log('market-pending', '找不到 node/dsh CLI，跳过排队任务');
+    return;
+  }
+  log('market-pending', `发现 ${items.length} 个排队任务，开始执行（Web 服务启动前，无文件锁）`);
+  // V4：pnpm 即将重写 node_modules —— 先快照第三方包（含人工补齐的
+  // lib/ 等构建产物），任务结束后回填被清掉的部分（meow-memory 修复）。
+  const profiles = [...new Set(items.map((it) => it.job.profile))];
+  const ak = await artifactKeep();
+  if (typeof ak.snapshotArtifacts === 'function') {
+    for (const profile of profiles) {
+      try {
+        ak.snapshotArtifacts(profileDirFor(profile), artifactCacheDirFor(profile), {
+          managedNames: managedPackageNames(),
+          log: (m) => log('artifact-keep', m),
+        });
+      } catch (err) {
+        log('artifact-keep', `snapshot ${profile} 失败: ` + err.message);
+      }
+    }
+  }
+  await new Promise((resolve) => {
     let idx = 0;
     const next = () => {
       if (idx >= items.length) {
@@ -1577,6 +2360,9 @@ function processPendingMarketOps() {
       const { marker, job } = items[idx++];
       const attempts = Number(job.attempts || 0) + 1;
       const action = job.kind === 'uninstall' ? 'remove' : 'add';
+      // 安装前快照（保护中心）：排队任务改的是 profile 配置面，出问题可
+      // 一键/自动回滚到这里。
+      ensureGuard().snapshot('market:' + job.target);
       log('market-pending', `执行(${attempts}/${MARKER_MAX_ATTEMPTS}): dsh plugin --profile ${job.profile} ${action} ${job.target}`);
       const child = spawn(nodeBin, [bin, 'plugin', '--profile', job.profile, action, job.target], {
         cwd: userDataDir,
@@ -1585,6 +2371,7 @@ function processPendingMarketOps() {
         env: { ...childEnv(), CI: 'true' },
         detached: !IS_WIN, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
       });
+      marketOpChild = child;
       let tail = '';
       const onData = (c) => {
         const text = c.toString();
@@ -1603,23 +2390,288 @@ function processPendingMarketOps() {
       }, 5 * 60 * 1000);
       child.on('error', (err) => {
         clearTimeout(timer);
+        if (marketOpChild === child) marketOpChild = null;
         finishMarketMarker(marker, job, attempts, false, String(err.message));
         next();
       });
       child.on('close', (code) => {
         clearTimeout(timer);
+        if (marketOpChild === child) marketOpChild = null;
         finishMarketMarker(marker, job, attempts, code === 0, tail);
         next();
       });
     };
     next();
   });
+  // pnpm 重写完成：回填被清掉的第三方构建产物（lib/ 等）。
+  if (typeof ak.restoreArtifacts === 'function') {
+    for (const profile of profiles) {
+      try {
+        ak.restoreArtifacts(profileDirFor(profile), artifactCacheDirFor(profile), {
+          log: (m) => log('artifact-keep', m),
+        });
+      } catch (err) {
+        log('artifact-keep', `restore ${profile} 失败: ` + err.message);
+      }
+    }
+  }
+}
+
+// 内置 skills 分发目录：assets/skills/<kebab-name>/SKILL.md。~/.dsh/skills
+// 本就是 dsh-skill-filesystem 的默认扫描根（rank 400），这里只需把内置
+// 技能同步过去 —— 内核零配置。同步规则：带 .eac-skill.json 标记的目录由
+// EAC 管理（版本变化时覆盖更新）；用户自建同名目录（无标记）永不覆盖。
+const BUNDLED_SKILLS_DIR = path.join(__dirname, 'assets', 'skills');
+
+function syncBundledSkills() {
+  try {
+    const src = BUNDLED_SKILLS_DIR;
+    if (!fs.existsSync(src)) return;
+    const destRoot = path.join(dshHome || path.join(os.homedir(), '.dsh'), 'skills');
+    fs.mkdirSync(destRoot, { recursive: true });
+    const installed = [];
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const skillSrc = path.join(src, entry.name);
+      if (!fs.existsSync(path.join(skillSrc, 'SKILL.md'))) continue;
+      const skillDst = path.join(destRoot, entry.name);
+      const markerSrc = readJsonFile(path.join(skillSrc, '.eac-skill.json')) || { version: 1, managed: true };
+      const markerDst = readJsonFile(path.join(skillDst, '.eac-skill.json'));
+      if (markerDst && markerDst.version === markerSrc.version) continue;
+      if (!markerDst && fs.existsSync(skillDst)) continue; // 用户自建同名技能：不动
+      fs.cpSync(skillSrc, skillDst, { recursive: true });
+      installed.push(entry.name);
+    }
+    if (installed.length) log('boot', '已同步内置 skills 到 ' + destRoot + ': ' + installed.join(', '));
+  } catch (err) {
+    log('boot', '同步内置 skills 失败: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// V4 运行时补丁（移植自上游 dsh_desktop，幂等）：覆盖三处运行副本 ——
+// profile 共享 junction 根、内置 app 副本（__dirname/node_modules）、用户
+// 更新过的 agent overlay（<userData>/agent/node_modules）。agent 更新会换掉
+// overlay 整树，补丁随 syncCompanionPlugins 每次启动重放。
+// ---------------------------------------------------------------------------
+
+function runtimePatchRoots() {
+  const home = dshHome || path.join(os.homedir(), '.dsh');
+  return [
+    path.join(home, 'profiles', 'node_modules'),
+    path.join(__dirname, 'node_modules'),
+    path.join(userDataDir, 'agent', 'node_modules'),
+  ];
+}
+
+// 对话删除 / 归档管理（dsh-session-manager 插件的前置依赖）：
+// dsh-workspace + dsh-host-apiproxy + dsh-session + dsh-client-connection +
+// dsh-client-ui-workspace 的外科手术式扩展（详见 scripts/patch-session-manage.js
+// 头注释）。锚点不匹配（官方包结构变化）时自动跳过，绝不损坏文件。
+function applySessionManageFix() {
+  for (const root of runtimePatchRoots()) {
+    if (!root || !fs.existsSync(root)) continue;
+    try {
+      const n = patchSessionManage(root, (m) => log('boot', m));
+      if (n > 0) log('boot', '对话删除补丁: 已应用到 ' + root);
+    } catch (err) {
+      log('boot', '对话删除补丁失败(' + root + '): ' + err.message);
+    }
+  }
+}
+
+// openclaw-bridge 的设置命名空间白名单：dsh-host-apiproxy 的
+// settings.describe/mutate 只暴露 WEB_SETTINGS_NAMESPACES 列出的命名空间，
+// 补一行 "openclaw-bridge" 让设置页 ClawBot 栏可读写（同上游 install.ps1）。
+function patchApiproxyBridgeNamespace() {
+  for (const root of runtimePatchRoots()) {
+    if (!root || !fs.existsSync(root)) continue;
+    const apiproxy = path.join(root, '@deepseek-ai', 'dsh-host-apiproxy', 'lib', 'index.js');
+    if (!fs.existsSync(apiproxy)) continue;
+    try {
+      let src = fs.readFileSync(apiproxy, 'utf8');
+      if (src.includes('"openclaw-bridge"')) continue;
+      const marker = 'const WEB_SETTINGS_NAMESPACES = [';
+      if (!src.includes(marker)) {
+        log('boot', 'apiproxy 白名单锚点未找到，跳过（' + apiproxy + '）');
+        continue;
+      }
+      src = src.replace(marker, marker + '\n\t"openclaw-bridge",\n\t');
+      fs.writeFileSync(apiproxy, src);
+      log('boot', '已补丁 apiproxy 设置命名空间白名单: ' + apiproxy);
+    } catch (err) {
+      log('boot', 'apiproxy 白名单补丁失败(' + apiproxy + '): ' + err.message);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 插件启停管理（V4，移植自上游）：设置页「插件 → 管理」标签的数据与写盘。
+// dsh:plugin-list / dsh:plugin-set-enabled 两个 IPC 驱动；写盘用纯文本手术
+// （scripts/plugin-manager-patch.js），保留文件其它内容与注释。
+// ---------------------------------------------------------------------------
+
+// 惰性加载 js-yaml（内置 dsh 的传递依赖）；缺失时管理页降级为空列表。
+let dshYamlDialect = null;
+let dshYamlTried = false;
+function loadDshYamlDialect() {
+  if (dshYamlTried) return dshYamlDialect;
+  dshYamlTried = true;
+  try {
+    const yaml = require('js-yaml');
+    // 与 dsh 相同的 entry-list 方言：`!!js` 表达式是合法标量。
+    const jsType = new yaml.Type('tag:yaml.org,2002:js', {
+      kind: 'scalar',
+      resolve: (data) => typeof data === 'string',
+      construct: (data) => ({ __jsExpr: data }),
+    });
+    dshYamlDialect = { load: (content) => yaml.load(content, { schema: yaml.JSON_SCHEMA.extend(jsType) }) };
+  } catch {
+    dshYamlDialect = null;
+  }
+  return dshYamlDialect;
+}
+
+function pluginManagerReadPatch() {
+  const file = path.join(desktopProfileDir(), 'cordis.patch.yml');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch {}
+  const yaml = loadDshYamlDialect();
+  if (!yaml) return { file, text, entries: [] };
+  try {
+    const parsed = yaml.load(text);
+    return { file, text, entries: Array.isArray(parsed) ? parsed : [] };
+  } catch {
+    return { file, text, entries: [] };
+  }
+}
+
+function pluginManagerPackageDescription(name) {
+  if (!name) return '';
+  const candidates = [
+    path.join(desktopProfileDir(), 'node_modules', ...name.split('/')),
+    path.join(__dirname, 'assets', 'plugins', name.includes('/') ? name.slice(name.indexOf('/') + 1) : name),
+  ];
+  for (const dir of candidates) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      if (pkg && typeof pkg.description === 'string' && pkg.description) return pkg.description;
+    } catch {}
+  }
+  return '';
+}
+
+function pluginManagerCollect() {
+  const { entries } = pluginManagerReadPatch();
+  const companionById = new Map(COMPANION_PLUGINS.map((p) => [p.id, p.name]));
+  const insertById = new Map();
+  const userById = new Map();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    if (Array.isArray(entry.insert)) {
+      for (const it of entry.insert) {
+        if (it && typeof it.id === 'string') insertById.set(it.id, it.name || '');
+      }
+    } else if (typeof entry.id === 'string') {
+      userById.set(entry.id, {
+        name: entry.name || '',
+        disabled: entry.disabled === true,
+        hasConfig: entry.config !== undefined && entry.config !== null,
+      });
+    }
+  }
+  let bundles = [];
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(desktopProfileDir(), 'package.json'), 'utf8'));
+    bundles = (m && m.dsh && m.dsh.profile && Array.isArray(m.dsh.profile.bundles)) ? m.dsh.profile.bundles : [];
+  } catch {}
+  const companionNames = new Set(COMPANION_PLUGINS.map((p) => p.name));
+
+  const seen = new Set();
+  const rows = [];
+  const addRow = (id, name, group) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    const user = userById.get(id);
+    const userDisabled = !!(user && user.disabled);
+    const hasConfig = !!(user && user.hasConfig);
+    const toggleable = group !== 'core' && !(hasConfig && !userDisabled);
+    rows.push({
+      id,
+      name: name || id,
+      description: pluginManagerPackageDescription(name || id),
+      enabled: !userDisabled,
+      toggleable,
+      group,
+    });
+  };
+  for (const p of COMPANION_PLUGINS) addRow(p.id, p.name, 'companion');
+  for (const [id, name] of insertById) if (!companionById.has(id)) addRow(id, name, 'other');
+  for (const [id, u] of userById) if (!companionById.has(id)) addRow(id, u.name, 'other');
+  for (const name of bundles) {
+    if (companionNames.has(name)) continue;
+    const id = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
+    if (!seen.has(id)) addRow(id, name, 'core');
+  }
+  const order = { companion: 0, other: 1, core: 2 };
+  return rows.sort((a, b) => order[a.group] - order[b.group] || a.id.localeCompare(b.id));
+}
+
+function pluginManagerResolveName(id) {
+  const c = COMPANION_PLUGINS.find((p) => p.id === id);
+  if (c) return c.name;
+  const { entries } = pluginManagerReadPatch();
+  for (const entry of entries) {
+    if (entry && Array.isArray(entry.insert)) {
+      const it = entry.insert.find((x) => x && x.id === id);
+      if (it && it.name) return it.name;
+    }
+  }
+  return '';
+}
+
+// 写入/移除用户层 disabled 条目（纯文本手术见 scripts/plugin-manager-patch.js）：
+// 与上游的差异 —— 「启用」保留顶层裸条目 {id, name} 而不是整条移除，这样
+// 默认禁用的配套插件（dsh-dafeiyu）被用户启用后不会被下次 sync 重新插回
+// disabled 行（sync 的「已有行不重写」规则自然接管）。
+function pluginManagerSetEnabled(id, enabled) {
+  const file = path.join(desktopProfileDir(), 'cordis.patch.yml');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch {}
+  if (!text.trim()) text = '# dsh web profile patch（由 Deepseek Harness EAC 维护）\n';
+
+  const name = pluginManagerResolveName(id);
+  if (!enabled && !name) return { ok: false, error: '无法解析插件包名: ' + id };
+
+  let patched;
+  try {
+    patched = togglePluginInPatch(text, id, !!enabled, name);
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+  if (patched !== text) {
+    try {
+      const tmp = file + '.tmp';
+      fs.writeFileSync(tmp, patched, 'utf8');
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  }
+  return { ok: true };
 }
 
 function syncCompanionPlugins() {
   try {
     const home = dshHomePath();
-    const profileDirP = path.join(home, 'profiles', 'web');
+    // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
+    ensureDesktopProfileInit();
+    // V4 运行时补丁（幂等，随启动 / 服务重启 / agent 更新后重放）：
+    //  · 对话删除/归档 —— dsh-session-manager 插件的全链路前置依赖；
+    //  · ClawBot 设置命名空间 —— openclaw-bridge 的设置页读写依赖。
+    applySessionManageFix();
+    patchApiproxyBridgeNamespace();
+    const profileDirP = desktopProfileDir();
     // 内置社区 agent preset（anchored-standard：首请求锚定 Minimal 工具对，
     // 首次工具调用/回复后开放完整 Standard 目录）：安装到用户 preset 根。
     // preset 不进插件树，坏 preset 不会拖垮启动；已存在则跳过（用户手装
@@ -1638,11 +2690,21 @@ function syncCompanionPlugins() {
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending = [];
     for (const p of COMPANION_PLUGINS) {
-      // 非 @deepseek-ai 作用域的配套包用显式 dir 指定 assets/plugins 下的目录名。
-      const src = path.join(__dirname, 'assets', 'plugins', p.dir || p.name.slice('@deepseek-ai/'.length));
-      if (!fs.existsSync(path.join(src, 'package.json'))) continue;
+      // 非 @deepseek-ai 作用域的配套包用显式 dir 指定 assets/plugins 下的目录名；
+      // 回退解析按「最后一个路径段」取（@scope/name → name；无 scope → 原名）。
+      // V4 修复：旧回退是 name.slice('@deepseek-ai/'.length) —— 对无 scope 的
+      // 长包名会截出错误目录（dsh-session-manager → 'manager'），该插件被
+      // 静默跳过（行与包都不落盘）。
+      const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() : p.name);
+      const src = path.join(__dirname, 'assets', 'plugins', dirName);
+      if (!fs.existsSync(path.join(src, 'package.json'))) {
+        log('boot', `配套插件源目录无效，跳过: ${p.id} → ${src}`);
+        continue;
+      }
       copyPluginPackage(profileDirP, src, p.name);
-      pending.push({ id: p.id, name: p.name, disabled: false, config: p.config });
+      // p.disabled: true 的配套插件默认以禁用行注册（如 dsh-dafeiyu 桌宠），
+      // 用户可在「设置 → 插件 → 管理」里启用；已有行不重写，用户选择优先。
+      pending.push({ id: p.id, name: p.name, disabled: p.disabled === true, config: p.config });
     }
     // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
     for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
@@ -1655,6 +2717,20 @@ function syncCompanionPlugins() {
       if (!/^ui-skin-[\w-]+$/.test(rowId)) continue;
       copyPluginPackage(profileDirP, src, pkg.name);
       pending.push({ id: rowId, name: pkg.name, disabled: true });
+    }
+    // 内置插件清单标记：插件市场据此把目录里的同名插件标为「已内置」并
+    // 拒绝重复安装 —— 内置包每次启动都被重新同步，市场覆盖安装会产生
+    // duplicate loader entry / 模块双实例，必须从源头拦截。
+    try {
+      const builtinNames = pending.map((p) => p.name);
+      const marker = path.join(profileDirP, '.dsh-builtin-plugins.json');
+      const prev = readJsonFile(marker);
+      const next = { names: builtinNames, updatedAt: new Date().toISOString() };
+      if (!prev || JSON.stringify(prev.names) !== JSON.stringify(next.names)) {
+        fs.writeFileSync(marker, JSON.stringify(next, null, 2) + '\n');
+      }
+    } catch (err) {
+      log('boot', '写入内置插件清单失败: ' + err.message);
     }
     // 注册到 profile 的 patch 层（幂等：已有行不重写，用户选择的皮肤/disabled 状态保留）。
     const patchFile = path.join(profileDirP, 'cordis.patch.yml');
@@ -1669,15 +2745,29 @@ function syncCompanionPlugins() {
       changed = true;
       log('boot', '已修复 profile patch 中缺 config.path 的 soul-md 行');
     }
+    // V4：修复 v3.1.0 及以前写出的「无 config 的 dsh-pet 行」（loader 传
+    // undefined → dsh-pet 读 config.fullRoot 崩 → 插件树整体加载失败）。
+    const healedPet = healRowConfig(patch, 'dsh-pet', { size: 260, position: 'bottom-right' });
+    if (healedPet.healed.length) {
+      patch = healedPet.patch;
+      changed = true;
+      log('boot', '已修复 profile patch 中缺 config 的 dsh-pet 行（v3 存量坏行）');
+    }
     // 市场安装（dsh plugin add）会把插件登记进 package.json 的
     // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
     // 也有一行（syncCompanionPlugins 写的），整个插件树会以
     // “duplicate loader entry id” 崩溃。清掉 overlay 重复行（包内行保留）。
     let bundled = [];
     try { bundled = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
+    // 同一 entry id 被两处声明（bundle 的包内 patch + overlay 的配套行）会以
+    // “duplicate loader entry id” 拖垮整个插件树。旧逻辑只按「包名 ∈ bundles」
+    // 匹配，git/fork/link 安装的插件包名与配套行包名不符时永远删不掉（issue
+    // #16）。这里再解析每个 bundle 包实际声明的 entry id 集合：overlay 中 id
+    // 已被任一 bundle 声明（无论包名如何）即视为重复。
+    const declaredBundleIds = collectBundleEntryIds(bundled, path.join(profileDirP, 'node_modules'));
     const rowIds = {};
     for (const p of COMPANION_PLUGINS) rowIds[p.id] = p.name;
-    const deduped = removeBundledRowDuplicates(patch, rowIds, bundled);
+    const deduped = removeBundledRowDuplicates(patch, rowIds, bundled, declaredBundleIds);
     if (deduped.removed.length) {
       patch = deduped.patch;
       changed = true;
@@ -1686,8 +2776,10 @@ function syncCompanionPlugins() {
     for (const p of pending) {
       if (new RegExp('id:\\s*' + p.id + '\\b').test(patch)) continue;
       // 已在 bundle 列表里的插件由其包内 patch 挂载，overlay 不能再写行
-      // （会 duplicate loader entry id，拖垮整个插件树）。
-      if (bundled.includes(p.name)) continue;
+      // （会 duplicate loader entry id，拖垮整个插件树）。issue #16：
+      // 补充按 entry id 判断 —— git/fork 插件包名不同但 id 相同同样要跳过，
+      // 否则每次启动把崩溃行写回，用户删掉也没用。
+      if (bundled.includes(p.name) || declaredBundleIds.has(p.id)) continue;
       let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
       if (p.config) block += configLinesFor(p.config);
       if (p.disabled) block += `      disabled: true\n`;
@@ -1700,6 +2792,8 @@ function syncCompanionPlugins() {
       fs.writeFileSync(patchFile, patch);
       log('boot', '已同步配套插件/皮肤到 web profile: ' + pending.map((p) => p.id).join(', '));
     }
+    // 迁移带来的皮肤选择（migrateFromSharedWebProfile 记录）在此落位。
+    applyLegacySkinChoice();
   } catch (err) {
     log('boot', '同步配套插件失败: ' + err.message);
   }
@@ -1729,15 +2823,59 @@ function shortcutIconPath() {
   }
 }
 
+// V4 修复「更换快捷方式图标后重启又多出一个快捷方式」：
+//   旧逻辑只认「桌面\Deepseek Harness EAC.lnk」这个精确文件名。用户换
+//   图标时通常删掉旧 .lnk 自建一个新的（名字几乎必然不同），下次启动
+//   existsSync 判定缺失 → 再造一个标准名快捷方式 → 桌面上出现两个。
+//   且图标版本分支会无条件 replace，把用户自定义图标静默还原成默认。
+// 新逻辑：
+//   1. 按「.lnk 的 target 是否指向本应用 exe」识别既有快捷方式（任意
+//      文件名都算）—— 只要桌面上存在一个指向我们的 .lnk 就不再新建；
+//   2. 图标刷新只在 .lnk 的 icon 仍指向我们自管的 icon.ico（即用户没有
+//      自定义图标）时进行，用户自定义图标绝不覆盖；
+//   3. settings.shortcutPolicy = 'never' 时完全不碰桌面快捷方式（⋯ 菜
+//      单可切换），开始菜单快捷方式仍维护（系统通知的前置条件）。
+function listLnkFiles(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.lnk'))
+      .map((e) => path.join(dir, e.name));
+  } catch { return []; }
+}
+
+function readLnkSafe(p) {
+  try { return shell.readShortcutLink(p); } catch { return null; }
+}
+
+function lnkTargetsApp(lnkPath, target) {
+  const link = readLnkSafe(lnkPath);
+  if (!link || !link.target) return false;
+  return path.resolve(String(link.target)).toLowerCase() === path.resolve(target).toLowerCase();
+}
+
+function lnkUsesManagedIcon(lnkPath, ico) {
+  if (!ico) return false;
+  const link = readLnkSafe(lnkPath);
+  if (!link) return false;
+  // 无自定义图标（icon 为空，用 target 自带）视为可接管。
+  if (!link.icon) return true;
+  return path.resolve(String(link.icon)).toLowerCase() === path.resolve(ico).toLowerCase();
+}
+
 function maintainShortcuts() {
   if (!app.isPackaged || !IS_WIN) return;
+  // E2E / 自动化：跳过快捷方式维护（临时 exe 不得改写真实开始菜单/桌面
+  // 快捷方式的指向）。与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同一约定。
+  if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
   try {
     const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
     const settings = loadSettings(updCtx());
+    const policy = settings.shortcutPolicy === 'never' ? 'never' : 'auto';
     const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const APP_TITLE = 'Deepseek Harness EAC';
+    const desktopDir = app.getPath('desktop');
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
-    const desktop = path.join(app.getPath('desktop'), APP_TITLE + '.lnk');
+    const desktop = path.join(desktopDir, APP_TITLE + '.lnk');
     const ico = shortcutIconPath();
     const opts = {
       target,
@@ -1749,28 +2887,42 @@ function maintainShortcuts() {
     // 清理旧名称（DSH Desktop）快捷方式：改名后它们指向的 exe 已不存在。
     for (const legacy of [
       path.join(linksDir, 'DSH Desktop.lnk'),
-      path.join(app.getPath('desktop'), 'DSH Desktop.lnk'),
+      path.join(desktopDir, 'DSH Desktop.lnk'),
     ]) {
       try { if (fs.existsSync(legacy)) { fs.rmSync(legacy); changed = true; } }
       catch (err) { log('shortcut', '清理旧快捷方式失败 ' + legacy + ': ' + err.message); }
     }
-    // exe 被移动过，或图标设计更新过：替换现有快捷方式（修复“指向的文件消失”）。
-    if ((settings.shortcutTarget && settings.shortcutTarget !== target) || settings.shortcutIcon !== SHORTCUT_ICON_VERSION) {
-      for (const p of [startMenu, desktop]) {
-        if (fs.existsSync(p)) {
-          try { shell.writeShortcutLink(p, 'replace', opts); changed = true; }
-          catch (err) { log('shortcut', '替换快捷方式失败 ' + p + ': ' + err.message); }
-        }
+    // exe 被移动过或图标设计更新：只刷新「确认属于本应用」的快捷方式。
+    // 归属判定：target 指向当前 exe，或指向上次记录的 exe 位置（搬家后
+    // 的旧快捷方式）；指向其它程序的 .lnk 绝不动。
+    const targetMoved = settings.shortcutTarget && settings.shortcutTarget !== target;
+    const iconOutdated = settings.shortcutIcon !== SHORTCUT_ICON_VERSION;
+    if (targetMoved || iconOutdated) {
+      const isOurs = (p) => fs.existsSync(p)
+        && (lnkTargetsApp(p, target) || (targetMoved && lnkTargetsApp(p, settings.shortcutTarget)));
+      const candidates = [startMenu].concat(policy === 'never' ? [] : listLnkFiles(desktopDir));
+      for (const p of candidates) {
+        if (!isOurs(p)) continue;
+        // 仅图标过时且用户自定义了图标：尊重用户选择，跳过；target 移动
+        // 时即使图标被自定义也要修指向（否则快捷方式失效）。
+        if (!targetMoved && !lnkUsesManagedIcon(p, ico)) continue;
+        try { shell.writeShortcutLink(p, 'replace', opts); changed = true; } catch {}
       }
     }
-    // 缺失则创建：便携版补桌面快捷方式；开始菜单快捷方式是系统通知的前置条件。
-    if (!fs.existsSync(startMenu)) {
-      try { shell.writeShortcutLink(startMenu, 'create', opts); changed = true; }
-      catch (err) { log('shortcut', '创建开始菜单快捷方式失败: ' + err.message); }
+    // 开始菜单快捷方式：系统通知（Toast）的前置条件，按 target 匹配维护。
+    const startMenuOk = fs.existsSync(startMenu) && lnkTargetsApp(startMenu, target);
+    if (!startMenuOk) {
+      try { shell.writeShortcutLink(startMenu, 'create', opts); changed = true; } catch {}
     }
-    if (!fs.existsSync(desktop)) {
-      try { shell.writeShortcutLink(desktop, 'create', opts); changed = true; }
-      catch (err) { log('shortcut', '创建桌面快捷方式失败: ' + err.message); }
+    // 桌面快捷方式：policy=never 不创建；已有任意名称指向本应用的 .lnk
+    // （用户自定义/改名/换图标后的产物）即视为存在，绝不重复新建。
+    if (policy !== 'never' && !fs.existsSync(desktop)) {
+      const hasOursOnDesktop = listLnkFiles(desktopDir).some((p) => lnkTargetsApp(p, target));
+      if (!hasOursOnDesktop) {
+        try { shell.writeShortcutLink(desktop, 'create', opts); changed = true; } catch {}
+      } else {
+        log('boot', '检测到用户自定义的桌面快捷方式（指向本应用），不再重复创建');
+      }
     }
     if (changed) {
       settings.shortcutTarget = target;
@@ -1785,6 +2937,8 @@ function maintainShortcuts() {
 
 function warnTempRun() {
   if (!app.isPackaged || !IS_WIN || !process.env.PORTABLE_EXECUTABLE_DIR) return;
+  // E2E（scripts/e2e-v4.js）从临时目录跑便携版：告警弹窗会卡住无头验证。
+  if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
   const dir = process.env.PORTABLE_EXECUTABLE_DIR.toLowerCase();
   const tmp = os.tmpdir().toLowerCase();
   if (dir === tmp || dir.startsWith(tmp + path.sep)) {
@@ -1796,6 +2950,206 @@ function warnTempRun() {
       buttons: ['知道了'],
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// 一次性迁移：桌面端从共享 web profile 切到专属 web-desktop profile。
+//
+// 只做三件事，全部幂等：
+//   1. 记住用户在旧 profile 里启用的皮肤（迁移后在专属 profile 里复活）；
+//   2. 清掉旧 web profile 里桌面端写入的配套插件行 + 拷贝的配套包 + 内置
+//      清单标记 —— 原生 CLI 从此加载干净的 web profile（冲突面消除）；
+//   3. 标记 settings.desktopProfileMigrated，永不重复执行。
+// 用户用市场装进旧 profile 的插件（package.json bundles）是原生端资产，
+// 一律不动；桌面端如需继续使用，重新从市场安装即可（有保护中心兜底）。
+function migrateFromSharedWebProfile() {
+  try {
+    const s = updater.loadSettings(updCtx());
+    if (s.desktopProfileMigrated) return;
+    s.desktopProfileMigrated = new Date().toISOString();
+    updater.saveSettings(updCtx(), s); // 先落标记：即使下面失败也不反复折腾
+    if (s.shareWebProfile === true) return; // 用户显式选择共享模式
+
+    const home = dshHome || path.join(os.homedir(), '.dsh');
+    const oldDir = path.join(home, 'profiles', 'web');
+    const marker = path.join(oldDir, '.dsh-builtin-plugins.json');
+    if (!fs.existsSync(marker)) return; // 旧版本从没在共享 profile 跑过桌面端
+    const builtinNames = readJsonFile(marker)?.names || [];
+
+    // 1) 提取用户启用的皮肤行 id。
+    let enabledSkin = null;
+    const patchFile = path.join(oldDir, 'cordis.patch.yml');
+    let oldPatch = '';
+    try { oldPatch = fs.readFileSync(patchFile, 'utf8'); } catch { oldPatch = ''; }
+    {
+      const lines = oldPatch.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const m = /^- id: (ui-skin-[\w-]+)\s*$/.exec(lines[i]);
+        if (!m) continue;
+        let disabled = false;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (/^- /.test(lines[j])) break;
+          if (/^\s+disabled:\s*true/.test(lines[j])) disabled = true;
+        }
+        if (!disabled) enabledSkin = m[1];
+      }
+    }
+
+    // 2) 清理旧 profile 的桌面端痕迹。
+    const rowIdSet = new Set();
+    for (const p of COMPANION_PLUGINS) rowIdSet.add(p.id);
+    for (const id of extractPatchRowIds(oldPatch)) {
+      if (/^ui-skin-[\w-]+$/.test(id)) rowIdSet.add(id);
+    }
+    const cleaned = removePatchRowsById(oldPatch, rowIdSet);
+    if (cleaned.removed.length) fs.writeFileSync(patchFile, cleaned.patch);
+    for (const name of builtinNames) {
+      try { fs.rmSync(path.join(oldDir, 'node_modules', ...String(name).split('/')), { recursive: true, force: true, maxRetries: 2 }); } catch {}
+    }
+    try { fs.rmSync(marker, { force: true }); } catch {}
+    log('boot', '已迁移到桌面专属 profile（' + DESKTOP_PROFILE + '）：旧 web profile 清理了 ' + cleaned.removed.length + ' 条桌面配套行 / ' + builtinNames.length + ' 个配套包');
+
+    // 3) 在专属 profile 里复活用户选择的皮肤（等 syncCompanionPlugins 写完
+    //    全部皮肤行之后执行，见 applyLegacySkinChoice）。
+    if (enabledSkin) {
+      const s2 = updater.loadSettings(updCtx());
+      s2.legacySkinChoice = enabledSkin;
+      updater.saveSettings(updCtx(), s2);
+      log('boot', '将迁移用户皮肤选择: ' + enabledSkin);
+    }
+  } catch (err) {
+    log('boot', '共享 profile 迁移失败（不影响启动）: ' + err.message);
+  }
+}
+
+function extractPatchRowIds(patch) {
+  const ids = [];
+  const re = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
+  let m;
+  while ((m = re.exec(String(patch || ''))) !== null) ids.push(m[1]);
+  return ids;
+}
+
+// 按 id 集合删除 patch 里的 insert 行块（与 removeBundledRowDuplicates 同
+// 语法约定：id 紧跟 `- insert:` 之后）。
+function removePatchRowsById(patch, ids) {
+  const removed = [];
+  if (typeof patch !== 'string' || patch === '' || !ids || ids.size === 0) return { patch, removed };
+  const lines = patch.split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^-\s*insert:/.test(line)) {
+      const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
+      if (mid && ids.has(mid[1])) {
+        removed.push(mid[1]);
+        let j = i + 1;
+        while (j < lines.length && !/^-\s*insert:/.test(lines[j]) && /^#/.test(lines[j]) === false && /^\s+\S/.test(lines[j])) j++;
+        i = j - 1;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  let text = out.join('\n').replace(/\n{3,}/g, '\n\n');
+  if (!text.endsWith('\n')) text += '\n';
+  return { patch: text, removed };
+}
+
+// syncCompanionPlugins 之后调用一次：把迁移带来的皮肤选择落到新 profile。
+function applyLegacySkinChoice() {
+  try {
+    const s = updater.loadSettings(updCtx());
+    const skin = s.legacySkinChoice;
+    if (!skin || !/^ui-skin-[\w-]+$/.test(skin)) return;
+    const patchFile = path.join(desktopProfileDir(), 'cordis.patch.yml');
+    if (!fs.existsSync(patchFile)) return;
+    const text = fs.readFileSync(patchFile, 'utf8');
+    const re = new RegExp('(- id: ' + skin + '\\b[^\\n]*\\n(?:      [^\\n]*\\n)*?)      disabled: true\\n');
+    const next = text.replace(re, '$1');
+    if (next !== text) {
+      fs.writeFileSync(patchFile, next);
+      log('boot', '已在专属 profile 启用迁移的皮肤: ' + skin);
+    }
+    delete s.legacySkinChoice;
+    updater.saveSettings(updCtx(), s);
+  } catch (err) {
+    log('boot', '应用迁移皮肤选择失败: ' + err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// junction 归属巡检：原生 dsh（npx / 全局安装）启动时会把 <home>/profiles/
+// node_modules 的共享 junction 重新指向它自己的闭包 —— 桌面端正在运行的
+// 服务随后解析到错误版本（「设置命名空间不可用」的一大根因），npx 缓存
+// 被清理后更是直接悬空。这里周期性检查：发现异动且外部 dsh 进程已退出，
+// 就把指向修复回客户端闭包（原生 CLI 重启时会再次指回它自己，互不纠缠：
+// 各自启动时各自纠正，运行中互不打扰）。
+// ---------------------------------------------------------------------------
+function startJunctionWatchdog() {
+  if (!IS_WIN) return;
+  let notified = false;
+  const tick = async () => {
+    if (quitting || restartingServer) return;
+    try {
+      const g = ensureGuard();
+      const findings = g.junctionFindings();
+      if (findings.length === 0) return;
+      const ext = await detectExternalDsh();
+      if (ext.running) {
+        log('guard', '共享模块被外部 dsh 接管（PID ' + ext.pids.join(', ') + '），待其退出后自动修复');
+        return;
+      }
+      const res = g.repairJunctions();
+      if (res.repaired.length && !notified) {
+        notified = true;
+        try {
+          const n = new Notification({
+            title: '已自动修复共享模块指向',
+            body: '检测到原生 dsh 改写了共享模块目录，桌面端已恢复指向自身版本。原生 CLI 如有异常，重启它即可。',
+            icon: path.join(__dirname, 'assets', 'icon.png'),
+          });
+          n.on('click', () => showMainWindow());
+          n.show();
+        } catch {}
+      }
+    } catch { /* 巡检失败静默 */ }
+  };
+  setInterval(() => { tick().catch(() => {}); }, 5 * 60 * 1000).unref();
+}
+
+// 检测本机是否有其它 dsh 进程在跑（原生 CLI / 另一份安装）。Windows 下用
+// CIM 查 node 进程命令行；超时或失败按「无外部进程」处理（宁可漏报）。
+function detectExternalDsh() {
+  return new Promise((resolve) => {
+    if (!IS_WIN) return resolve({ running: false, pids: [] });
+    const own = new Set([process.pid]);
+    if (serverProc && serverProc.pid) own.add(serverProc.pid);
+    let out = '';
+    try {
+      out = require('node:child_process').execSync(
+        'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \'Name=\'\'node.exe\'\'\' | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"',
+        { encoding: 'utf8', windowsHide: true, timeout: 12000 });
+    } catch {
+      return resolve({ running: false, pids: [] });
+    }
+    try {
+      const arr = out.trim() === '' ? [] : JSON.parse(out);
+      const list = Array.isArray(arr) ? arr : [arr];
+      const pids = [];
+      for (const it of list) {
+        const pid = Number(it && it.ProcessId);
+        const cmd = String((it && it.CommandLine) || '');
+        if (!Number.isFinite(pid) || own.has(pid)) continue;
+        if (!/dsh|deepseek-ai/i.test(cmd)) continue;
+        if (!/(\s|\/|\\)(web|plugin|run|tui)(\s|$)|bin\.(js|ts)/i.test(cmd)) continue;
+        pids.push(pid);
+      }
+      resolve({ running: pids.length > 0, pids });
+    } catch {
+      resolve({ running: false, pids: [] });
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1853,8 +3207,11 @@ async function runClientUpdateFlow(manual) {
   if (!manual && settings.skipClientVersion === release.version) return;
   // M7 修复：用户选过"稍后"的同版本不再每 12h 重复弹窗/重复下载。
   if (!manual && settings.pendingClientVersion === release.version) return;
+  // E2E 自动化钩子（与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同惯例）：自动接受
+  // 「立即更新」，让 scripts/e2e-v4.js 能无人值守跑完整更新链路。默认关闭。
+  const autoAcceptUpdate = process.env.DSH_DESKTOP_TEST_AUTO_UPDATE === '1';
   const notes = release.body ? '\n\n更新说明：\n' + release.body.slice(0, 800) : '';
-  const { response } = await showBox({
+  const { response } = autoAcceptUpdate ? { response: 0 } : await showBox({
     type: 'info',
     title: '发现新版本客户端',
     message: `Deepseek Harness EAC 封装发布了新版本：v${release.version}`,
@@ -1896,7 +3253,7 @@ async function runClientUpdateFlow(manual) {
     settings.skipClientVersion = null;
     settings.pendingClientVersion = null;
     saveSettings(ctx, settings);
-    const { response: r2 } = await showBox({
+    const { response: r2 } = autoAcceptUpdate ? { response: 0 } : await showBox({
       type: 'info',
       title: '下载完成',
       message: `已准备好 Deepseek Harness EAC 封装 v${release.version}（${Math.round(size / 1048576)} MB）。`,
@@ -1905,7 +3262,7 @@ async function runClientUpdateFlow(manual) {
       defaultId: 0,
       cancelId: 1,
     });
-    if (r2 === 0) restartWithClientUpdate(ctx, settings.pendingClientUpdate);
+    if (r2 === 0) await restartWithClientUpdate(ctx, settings.pendingClientUpdate);
   } catch (err) {
     log('client-update', '更新失败: ' + err.message);
     await showBox({
@@ -1945,9 +3302,9 @@ function offerPendingClientUpdate() {
     buttons: ['立即重启', '稍后'],
     defaultId: 0,
     cancelId: 1,
-  }).then(({ response }) => {
+  }).then(async ({ response }) => {
     if (response !== 0) return;
-    restartWithClientUpdate(ctx, pending);
+    await restartWithClientUpdate(ctx, pending);
   });
 }
 
@@ -2091,25 +3448,41 @@ function boot() {
   // 渲染进程崩溃/挂起自恢复状态机：必须在 createWindow 之前装配。
   initRendererRecovery();
   startHeartbeatLoop();
+  // 一次性迁移：从共享 web profile 切到桌面专属 profile（与原生 CLI 共存）。
+  migrateFromSharedWebProfile();
   syncCompanionPlugins();
+  syncBundledSkills();
   healProfileModules();
   createWindow();
-  // koffi FFI 预检（koffi-preflight.js）：失败则注入目录选择器降级 overlay，
-  // 由 startAndShow 以 --patch 交给 dsh web。必须在 startAndShow 之前执行。
-  // 仅 Windows：探针加载 kernel32.dll，Linux 上必然失败，不应误注入降级 overlay。
-  if (IS_WIN) applyKoffiPreflight();
-  // 插件市场排队任务（服务运行中撞文件锁转待重启的安装/卸载）：趁服务
-  // 尚未启动、无文件锁时先完成，再拉起 Web 服务。
-  processPendingMarketOps()
+  // koffi FFI 预检（koffi-preflight.js，V4 改异步：同步 spawnSync 会把主
+  // 进程事件循环卡住最长 20 秒）：失败则注入目录选择器降级 overlay，
+  // 由 startAndShow 以 --patch 交给 dsh web。必须在 startAndShow 之前完成。
+  // 仅 Windows：探针加载 kernel32.dll，Linux 上必然失败，不应误注入降级
+  // overlay，直接放行后续链。
+  // junction 归属守卫：原生 dsh 会把共享模块指到它自己的闭包，这里先纠偏
+  // 一次，并启动周期巡检（原生进程退出后自动恢复指向）。
+  (IS_WIN ? applyKoffiPreflightAsync() : Promise.resolve())
     .then(() => {
+      ensureGuard().repairJunctions();
+      startJunctionWatchdog();
+    })
+    // 插件市场排队任务（服务运行中撞文件锁转待重启的安装/卸载）：趁服务
+    // 尚未启动、无文件锁时先完成，再拉起 Web 服务。
+    .then(() => processPendingMarketOps())
+    .then(async () => {
       // 排队的 pnpm 操作可能刚重写 profile node_modules（删掉配套插件副本、
       // hoist 核心包形成双实例）—— 服务启动前重建副本并清理遮蔽，
       // 保证加载的始终是内置分发版本。
       syncCompanionPlugins();
+      syncBundledSkills();
       healProfileModules();
+      // V4 兜底：上次 pnpm 后异常退出没回填的第三方构建产物（meow-memory
+      // 的 lib/ 等）在这里补上（processPendingMarketOps 正常路径已含回填，
+      // 这里覆盖崩溃/强杀场景；无缓存时为空操作）。
+      await restoreKeptArtifacts(desktopProfile());
     })
     .then(() => verifyBundledModules())
-    .then(() => startAndShow())
+    .then(() => startAndShowGuarded())
     .then(() => {
       // Session-completion notifications: watch dsh session logs under the
       // effective DSH_HOME (same config the CLI uses).
@@ -2157,16 +3530,40 @@ if (!gotLock) {
       mainWindow.focus();
     }
   });
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    // V4：退出必须等 dsh web 进程树真正死透再退（见 killTreeAndWait 注释）。
+    // 首次事件里阻止默认退出，完成异步清理后 app.exit(0)；后续重复事件
+    // （window-all-closed 触发的 app.quit 等）直接放行。
+    if (shutdownInProgress) return;
+    shutdownInProgress = true;
+    event.preventDefault();
     quitting = true;
     forceQuit = true;
+    const t0 = Date.now();
     log('boot', '正在退出，停止 dsh web 进程树…');
     markCleanExit();
-    killTree(serverProc);
-    updater.abort();
-    if (sessionWatcher) sessionWatcher.stop();
-    if (balanceTimer) clearInterval(balanceTimer);
-    if (tray) { try { tray.destroy(); } catch {} tray = null; }
+    (async () => {
+      try {
+        closeAllFloatWindows();
+        // 正在跑的插件市场排队任务：直接强杀（它只是 pnpm 的转发器，
+        // 标记文件的 attempts 机制会在下次启动重试）。
+        if (marketOpChild && marketOpChild.pid && marketOpChild.exitCode === null) {
+          try {
+            spawn('taskkill', ['/pid', String(marketOpChild.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+          } catch {}
+        }
+        await killTreeAndWait(serverProc);
+        updater.abort();
+        if (sessionWatcher) sessionWatcher.stop();
+      } catch (err) {
+        log('boot', '退出清理异常: ' + err.message);
+      } finally {
+        if (balanceTimer) clearInterval(balanceTimer);
+        if (tray) { try { tray.destroy(); } catch {} tray = null; }
+        log('boot', `退出清理完成（耗时 ${Date.now() - t0}ms）`);
+        app.exit(0);
+      }
+    })();
   });
   // macOS 惯例：关闭所有窗口不退出应用（dsh web 服务与会话继续运行，
   // 点 Dock 图标经 activate 重建窗口）；Windows 有托盘时同样常驻。

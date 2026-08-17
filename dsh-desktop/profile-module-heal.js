@@ -11,21 +11,24 @@
 // `dsh plugin add`-installed plugin — those copies shadow the junctions and
 // load as second module instances. Symbol identity then breaks across the
 // tree (scoped registration, prompt-section registries, ...), which surfaced
-// as `prompt section "deployment:persona" is already registered` and broken
-// model-list / mode switching.
+// as `prompt section "deployment:persona" is already registered`, the
+// settings page's 「设置命名空间不可用」 rows, and broken model-list /
+// mode switching.
 //
-// healProfileModuleShadowing removes real-directory copies in the web
-// profile's node_modules that shadow a fallback link, so resolution falls
-// back to the junctions — one instance, shared with the host app. Local
-// packages with no fallback counterpart (out-of-tree plugins themselves) and
-// link-typed entries are left untouched. Returns the removed package names.
+// healProfileModuleShadowing removes real-directory AND pnpm-link copies in
+// the profile's node_modules that shadow a fallback link, so resolution
+// falls back to the junctions — one instance, shared with the host app.
+// Local packages with no fallback counterpart (out-of-tree plugins
+// themselves) and deliberately linked dev installs (link: targets OUTSIDE
+// the profile's own .pnpm store) are left untouched. Returns the removed
+// package names.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-function healProfileModuleShadowing(home, log = () => {}) {
+function healProfileModuleShadowing(home, profile = 'web', log = () => {}) {
   const fallbackDir = path.join(home, 'profiles', 'node_modules');
-  const profileModulesDir = path.join(home, 'profiles', 'web', 'node_modules');
+  const profileModulesDir = path.join(home, 'profiles', profile, 'node_modules');
 
   // Collect every package name the fallback exposes (scoped + unscoped).
   const names = [];
@@ -64,13 +67,34 @@ function healProfileModuleShadowing(home, log = () => {}) {
     const shadow = path.join(profileModulesDir, rel);
     let stat;
     try { stat = fs.lstatSync(shadow); } catch { continue; }
-    // Only real directories shadow the fallback; links resolve elsewhere by design.
-    if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
-    fs.rmSync(shadow, { recursive: true, force: true });
-    removed.push(full);
-    log('removed shadowing copy: ' + full);
+    if (stat.isDirectory() && !stat.isSymbolicLink()) {
+      // Real directory copy (pnpm nodeLinker: hoisted) shadows the fallback.
+      fs.rmSync(shadow, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
+      removed.push(full);
+      log('removed shadowing copy: ' + full);
+      continue;
+    }
+    if (stat.isSymbolicLink()) {
+      // pnpm-managed link whose store lives INSIDE this profile's own .pnpm
+      // also shadows the fallback with a second instance. Deliberate link:
+      // dev installs point elsewhere — those stay (report only).
+      // Windows junctions need unlink (rmSync force-only throws EISDIR).
+      const target = safeReadlink(shadow);
+      if (!target) continue;
+      const norm = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+      const storeRoot = norm(path.join(profileModulesDir, '.pnpm'));
+      if (norm(path.resolve(path.dirname(shadow), target)).startsWith(storeRoot)) {
+        try { fs.unlinkSync(shadow); } catch { fs.rmSync(shadow, { force: true, recursive: true, maxRetries: 3, retryDelay: 150 }); }
+        removed.push(full);
+        log('removed shadowing pnpm link: ' + full);
+      }
+    }
   }
   return removed;
+}
+
+function safeReadlink(p) {
+  try { return fs.readlinkSync(p); } catch { return null; }
 }
 
 module.exports = { healProfileModuleShadowing };

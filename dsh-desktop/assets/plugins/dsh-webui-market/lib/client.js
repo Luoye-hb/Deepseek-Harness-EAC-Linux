@@ -32,18 +32,34 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
     return s.slice(i + 1).replace(/\.git$/, '').replace(/#.*$/, '')
   }
 
+  // Normalize a GitHub URL to `owner/repo` (lowercase) or null.
+  function ownerRepoOf(url) {
+    const s = String(url || '').replace(/\/+$/, '')
+    const m = /github\.com[\/:]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?(?=[\/#?]|$)/.exec(s)
+    return m ? m[1].toLowerCase() : null
+  }
+
   // Installed state is keyed per profile (each plugin's install command may
-  // target a different profile). installedPkgName matches one profile's
-  // dependency keys/values against the plugin's GitHub repo basename.
+  // target a different profile). Match is repo-identity first (the host now
+  // reports each installed package's owner/repo provenance, so scoped npm
+  // names / monorepo subpackages whose key ≠ repo basename still resolve —
+  // issue #17), then basename heuristics as fallback.
   function installedPkgName(plugin, installed) {
     if (!installed) return null
     const repo = repoNameOf(plugin.url)
+    const ownerRepo = ownerRepoOf(plugin.url)
+    const prov = installed.provenance || {}
     const deps = installed.dependencies || {}
+    const scan = (key) => {
+      if (ownerRepo && prov[key] === ownerRepo) return true
+      if (key === repo || key.endsWith('/' + repo) || key === 'github:' + repo) return true
+      return repoOfValue(deps[key]) === repo
+    }
     for (const key of Object.keys(deps)) {
-      if (key === repo || key.endsWith('/' + repo) || key === 'github:' + repo) return key
-      if (repoOfValue(deps[key]) === repo) return key
+      if (scan(key)) return key
     }
     for (const b of installed.bundles || []) {
+      if (ownerRepo && prov[b] === ownerRepo) return b
       if (b === repo || b.endsWith('/' + repo) || b === 'github:' + repo) return b
     }
     return null
@@ -54,6 +70,30 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
   function isInstalled(plugin, installedMap) {
     const state = installedMap && installedMap[plugin.profile || 'web']
     return installedPkgName(plugin, state) !== null
+  }
+
+  // Builtin (desktop-shell-synced) packages, reported per profile by the host
+  // (state.builtin). Matching mirrors installedPkgName's repo-identity logic;
+  // they render as "built-in" with install/uninstall hidden — a market install
+  // over them would be reverted by the next sync and can crash the loader.
+  function builtinPkgName(plugin, installedState) {
+    if (!installedState || !Array.isArray(installedState.builtin)) return null
+    const repo = repoNameOf(plugin.url)
+    const ownerRepo = ownerRepoOf(plugin.url)
+    const repoTail = ownerRepo ? ownerRepo.split('/')[1] : null
+    const srcBase = plugin.source ? repoOfValue(plugin.source) : null
+    for (const name of installedState.builtin) {
+      const base = name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name
+      if (repoTail && base === repoTail) return name
+      if (repo && (base === repo || name === repo)) return name
+      if (srcBase && base === srcBase) return name
+    }
+    return null
+  }
+
+  function isBuiltin(plugin, installedMap) {
+    const state = installedMap && installedMap[plugin.profile || 'web']
+    return builtinPkgName(plugin, state) !== null
   }
 
   let LOCALE = 'en'
@@ -85,6 +125,8 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       restartNow: '立即重启并完成', restarting: '重启中，正在完成安装…',
       site: '插件目录来源',
       sortDefault: '默认', sortHot: '最热', sortNew: '最新',
+      builtin: '已内置', builtinHint: '该插件已随客户端内置分发，每次启动自动同步，无需安装', stBuiltin: '内置插件',
+      marketBanner: '两个插件市场并存：本页为精选目录（awesome-dsh-plugin.com）；另一个「Zat 可视化市场」（GitHub dsh-plugin 检索 + 中文简介）已内置，见 设置 → 插件 中的 Zat 标签页。',
     },
     en: {
       search: 'Search plugins…', all: 'All', instFilter: 'Installed', detail: 'Details', collapse: 'Collapse',
@@ -108,6 +150,8 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       restartNow: 'Restart now & finish', restarting: 'Restarting, finishing install…',
       site: 'Plugin directory source',
       sortDefault: 'Default', sortHot: 'Top', sortNew: 'New',
+      builtin: 'Built-in', builtinHint: 'Shipped with the client and re-synced on every launch — no install needed', stBuiltin: 'Built-in plugin',
+      marketBanner: 'Two plugin markets coexist: this page is the curated catalog (awesome-dsh-plugin.com); the bundled "Zat" market (GitHub dsh-plugin search + bilingual intros) has its own tab under Settings → Plugins.',
     },
   }
   const t = (k) => { const m = STR[LOCALE]; return (m && m[k] !== undefined) ? m[k] : (STR.zh[k] !== undefined ? STR.zh[k] : k) }
@@ -140,8 +184,9 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
 .mkts-sort button.on{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3);font-weight:600}
 .mkts-sec{padding-block:14px 8px;font-size:15px;font-weight:600;color:var(--dsw-alias-label-primary);display:flex;align-items:baseline;gap:8px}
 .mkts-sec small{font-size:11px;color:var(--dsw-alias-label-tertiary);font-weight:400}
-.mkts-item{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;margin-bottom:6px;background:var(--dsw-alias-bg-layer-3);transition:border-color .16s;align-items:flex-start}
-.mkts-item:hover{border-color:var(--dsw-alias-label-dimmed)}
+.mkts-item{display:flex;gap:10px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;margin-bottom:8px;background:var(--dsw-alias-bg-layer-3);transition:border-color .16s,box-shadow .16s,transform .16s;align-items:flex-start}
+.mkts-item:hover{border-color:var(--dsw-alias-label-dimmed);box-shadow:0 4px 18px rgba(0,0,0,.18)}
+.mkts-avatar{flex:none;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-size:15px;font-weight:700;color:var(--dsw-alias-bg-layer-3);background:linear-gradient(135deg,var(--dsw-static-deepseek-500,#4f6bde),color-mix(in srgb,var(--dsw-static-deepseek-500,#4f6bde) 55%,#8a63d2));user-select:none}
 .mkts-no{flex:none;font-family:ui-monospace,monospace;font-size:11px;color:var(--dsw-alias-label-tertiary);padding-top:3px;min-width:40px}
 .mkts-main{flex:1;min-width:0}
 .mkts-main h3{margin:0;font-size:14px;font-weight:600;line-height:1.4}
@@ -151,7 +196,9 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
 .mkts-stars{font-family:ui-monospace,monospace;font-size:11px;color:var(--dsw-alias-label-tertiary);margin-left:6px}
 .mkts-gh{margin-left:8px;font-size:11px;color:var(--dsw-static-deepseek-500);text-decoration:none}
 .mkts-gh:hover{text-decoration:underline}
-.mkts-desc{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:12.5px;max-width:52em;overflow-wrap:break-word}
+.mkts-desc{margin:2px 0 0;color:var(--dsw-alias-label-secondary);font-size:12.5px;max-width:52em;overflow-wrap:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.mkts-item .mkts-detail{display:block;-webkit-line-clamp:unset;overflow:visible}
+.mkts-marketbanner{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary);border:1px dashed color-mix(in srgb,var(--dsw-static-deepseek-500) 45%,transparent);border-radius:10px;padding:7px 12px;margin-bottom:10px;background:color-mix(in srgb,var(--dsw-static-deepseek-500) 7%,transparent)}
 .mkts-actions{flex:none;display:flex;flex-direction:column;gap:4px;align-items:flex-end}
 .mkts-cmdbtn{appearance:none;background:none;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;font:inherit;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);padding:3px 12px;cursor:pointer;white-space:nowrap}
 .mkts-cmdbtn:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed)}
@@ -162,6 +209,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
 .mkts-cmdbtn:disabled{opacity:.4;cursor:default}
 .mkts-state{font-size:11px;padding:1px 8px;border-radius:999px;line-height:17px;font-weight:500;white-space:nowrap}
 .mkts-state-on{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);color:var(--dsw-alias-state-success-primary)}
+.mkts-state-builtin{background:color-mix(in srgb, var(--dsw-static-deepseek-500) 16%, transparent);color:var(--dsw-static-deepseek-500);cursor:help}
 .mkts-state-off{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary)}
 .mkts-log{background:#1e1e1e;color:#d4d4d4;border-radius:8px;padding:8px 10px;margin-top:6px;white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:240px;overflow:auto}
 .mkts-err{color:var(--dsw-alias-label-error);background:color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);border-radius:8px;padding:6px 10px;margin-bottom:10px}
@@ -289,7 +337,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       api(op.kind === 'uninstall' ? 'uninstall' : (op.kind === 'update' ? 'update' : 'install'), params).then((r) => {
         if (!r || !r.ok) {
           setOp({
-            ...op, phase: 'done', status: r && r.busy ? 'busy' : (r && r.refused ? 'refused' : 'failed'),
+            ...op, phase: 'done', status: r && r.builtin ? 'builtin' : (r && r.busy ? 'busy' : (r && r.refused ? 'refused' : 'failed')),
             output: String((r && (r.output || r.error)) || t('opFailed')), ok: false,
           })
           return
@@ -358,7 +406,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
 
     const statusText = (s) => ({
       done: t('stDone'), failed: t('stFailed'), killed: t('stKilled'),
-      timeout: t('stTimeout'), busy: t('stBusy'), refused: t('stRefused'),
+      timeout: t('stTimeout'), busy: t('stBusy'), refused: t('stRefused'), builtin: t('stBuiltin'),
     })[s] || t('opFailed')
 
     const opTitle = (op) => (op.kind === 'install' ? t('install') : op.kind === 'update' ? t('updateBtn') : t('uninstall')) + ' ' + op.label
@@ -466,13 +514,15 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       ),
       data.phase === 'loading' ? h('div', null, t('loading')) : null,
       data.phase === 'error' ? h('div', { className: 'mkts-err' }, data.error) : null,
+      data.phase === 'ready' ? h('div', { className: 'mkts-marketbanner' }, t('marketBanner')) : null,
       data.phase === 'ready' ? groups.map((g) => h('div', { key: g.id },
         g.label ? h('div', { className: 'mkts-sec' }, g.label, h('small', null, g.items.length)) : null,
         g.items.map((p, i) => {
           const inst = isInstalled(p, data.installed)
+          const bltin = isBuiltin(p, data.installed)
           const isOpen = open === p.url
           return h('div', { key: p.url, className: 'mkts-item' },
-            h('span', { className: 'mkts-no' }, '№ ' + String(i + 1).padStart(2, '0')),
+            h('span', { className: 'mkts-avatar', 'aria-hidden': 'true' }, String(p.name || '?').trim().charAt(0).toUpperCase() || '?'),
             h('div', { className: 'mkts-main' },
               h('h3', null,
                 h('a', { href: p.url, target: '_blank', rel: 'noopener noreferrer' }, p.name),
@@ -488,34 +538,37 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
               ) : null,
             ),
             h('div', { className: 'mkts-actions' },
-              h('span', { className: 'mkts-state ' + (inst ? 'mkts-state-on' : 'mkts-state-off') }, inst ? t('instFilter') : (LOCALE === 'zh' ? '未安装' : 'Not installed')),
+              bltin
+                ? h('span', { className: 'mkts-state mkts-state-builtin', title: t('builtinHint') }, t('builtin'))
+                : h('span', { className: 'mkts-state ' + (inst ? 'mkts-state-on' : 'mkts-state-off') }, inst ? t('instFilter') : (LOCALE === 'zh' ? '未安装' : 'Not installed')),
               h('button', { className: 'mkts-cmdbtn', onClick: () => setOpen(isOpen ? null : p.url) }, isOpen ? t('collapse') : t('detail')),
-              inst
-                ? h(React.Fragment, null,
-                    (() => {
-                      const pkgName = installedPkgName(p, data.installed && data.installed[p.profile || 'web'])
-                      const up = pkgName && data.updates && data.updates[p.profile || 'web'] && data.updates[p.profile || 'web'][pkgName]
-                      const opActive = !!(op && op.phase !== 'done')
-                      if (!up) {
-                        // No update status yet (still loading or check failed) —
-                        // render a neutral disabled chip so the card always
-                        // communicates its update state.
-                        return h('button', { className: 'mkts-cmdbtn', disabled: true, title: t('updateFail') }, t('upToDate'))
-                      }
-                      if (up.kind === 'linked') {
-                        return h('span', { className: 'mkts-state mkts-state-off' }, t('updLocal'))
-                      }
-                      if (up.updateAvailable) {
-                        return h('button', {
-                          className: 'mkts-cmdbtn',
-                          disabled: opActive,
-                          onClick: () => runOp('update', pkgName, p.name, p.profile),
-                        }, t('updateBtn') + (up.latest ? ' (' + String(up.latest).slice(0, 8) + ')' : ''))
-                      }
-                      return h('span', { className: 'mkts-state mkts-state-on' }, t('upToDate'))
-                    })(),
-                    h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-danger', onClick: () => runOp('uninstall', installedPkgName(p, data.installed && data.installed[p.profile || 'web']) || p.name, p.name, p.profile) }, t('uninstall')))
-                : (p.source ? h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-primary', onClick: () => runOp('install', p.source, p.name, p.profile) }, t('install')) : null),
+              bltin ? null
+                : inst
+                  ? h(React.Fragment, null,
+                      (() => {
+                        const pkgName = installedPkgName(p, data.installed && data.installed[p.profile || 'web'])
+                        const up = pkgName && data.updates && data.updates[p.profile || 'web'] && data.updates[p.profile || 'web'][pkgName]
+                        const opActive = !!(op && op.phase !== 'done')
+                        if (!up) {
+                          // No update status yet (still loading or check failed) —
+                          // render a neutral disabled chip so the card always
+                          // communicates its update state.
+                          return h('button', { className: 'mkts-cmdbtn', disabled: true, title: t('updateFail') }, t('upToDate'))
+                        }
+                        if (up.kind === 'linked') {
+                          return h('span', { className: 'mkts-state mkts-state-off' }, t('updLocal'))
+                        }
+                        if (up.updateAvailable) {
+                          return h('button', {
+                            className: 'mkts-cmdbtn',
+                            disabled: opActive,
+                            onClick: () => runOp('update', pkgName, p.name, p.profile),
+                          }, t('updateBtn') + (up.latest ? ' (' + String(up.latest).slice(0, 8) + ')' : ''))
+                        }
+                        return h('span', { className: 'mkts-state mkts-state-on' }, t('upToDate'))
+                      })(),
+                      h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-danger', onClick: () => runOp('uninstall', installedPkgName(p, data.installed && data.installed[p.profile || 'web']) || p.name, p.name, p.profile) }, t('uninstall')))
+                  : (p.source ? h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-primary', onClick: () => runOp('install', p.source, p.name, p.profile) }, t('install')) : null),
             ),
           )
         }),

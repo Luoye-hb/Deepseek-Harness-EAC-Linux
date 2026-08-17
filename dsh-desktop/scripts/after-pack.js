@@ -35,6 +35,7 @@ async function afterPack(context) {
   if (fs.existsSync(pluginsSrc)) {
     fs.rmSync(pluginsDest, { recursive: true, force: true });
     fs.cpSync(pluginsSrc, pluginsDest, { recursive: true });
+    if (electronPlatformName !== 'win32') trimPlatformForeignPlugins(pluginsDest, electronPlatformName);
     console.log('afterPack: bundled plugins copied verbatim');
     auditBundledPluginRuntime(pluginsDest, electronPlatformName);
   }
@@ -180,8 +181,24 @@ function auditNodePty(appOutDir, electronPlatformName, nodeBinOverride) {
   }
 }
 
-function auditBundledPluginRuntime(pluginsRoot, platform) {
-  const tdai = path.join(pluginsRoot, 'dsh-tdai-memory', 'node_modules');
+// dsh-dafeiyu（V4 桌宠）随包携带 win32-x64 的 PyInstaller helper（约 50MB），
+// 且只在 process.platform === 'win32' 时被 helper-process.js 引用；Linux/mac
+// 上桌面端走 python3 + runtime/helper.py。整树 verbatim 拷贝后按平台剔除，
+// 每个 Linux/mac 包省 50MB 死重。删除只针对列明的目录，未来插件新增其它
+// 平台负载需在这里补条目。
+function trimPlatformForeignPlugins(pluginsRoot, platform) {
+  const kill = [
+    platform !== 'win32' && path.join(pluginsRoot, 'dsh-dafeiyu', 'runtime', 'bin', 'win32-x64'),
+  ].filter(Boolean);
+  for (const dir of kill) {
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`afterPack: trimmed platform-foreign payload ${path.relative(pluginsRoot, dir)} (${platform})`);
+    }
+  }
+}
+
+function auditBundledPluginRuntime(pluginsRoot, platform) {  const tdai = path.join(pluginsRoot, 'dsh-tdai-memory', 'node_modules');
   const required = [
     path.join(tdai, '@tencentdb-agent-memory', 'tcvdb-text', 'dist', 'index.js'),
     path.join(tdai, '@ai-sdk', 'gateway', 'dist', 'index.mjs'),
