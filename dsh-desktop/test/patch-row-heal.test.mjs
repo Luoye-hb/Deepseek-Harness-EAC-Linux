@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds } = require(join(root, 'patch-row-heal.js'));
+const { configLinesFor, healSoulMdPatchRow, healRowConfig, healRowDisabled, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds } = require(join(root, 'patch-row-heal.js'));
 
 // v2.0.0 实际写进用户 profile 的坏行：只有 id + name，没有 config。
 const BROKEN_PATCH = [
@@ -165,4 +165,29 @@ test('healRowConfig 幂等且不碰相邻行', () => {
   const twice = healRowConfig(once.patch, 'dsh-pet', { size: 260, position: 'bottom-right' });
   assert.equal(twice.patch, once.patch, '二次 heal 不应再改动');
   assert.ok(once.patch.includes("id: navbar"));
+});
+
+// v4.0.2 迁移：存量启用中的 tool-vision 行一次性禁用（插件不再默认启动）。
+test('healRowDisabled 给无 disabled 键的 tool-vision 行加 disabled: true', () => {
+  const active = "- insert:\n    - id: tool-vision\n      name: 'dsh-tool-vision'\n";
+  const { patch, healed } = healRowDisabled(active, 'tool-vision');
+  assert.ok(healed.includes('tool-vision'));
+  assert.match(patch, /id: tool-vision\n\s+name: 'dsh-tool-vision'\n\s+disabled: true\n/);
+});
+
+test('healRowDisabled 不碰已带 disabled 键的行（用户显式选择优先）', () => {
+  const enabled = "- insert:\n    - id: tool-vision\n      name: 'dsh-tool-vision'\n      disabled: false\n";
+  const disabled = "- insert:\n    - id: tool-vision\n      name: 'dsh-tool-vision'\n      disabled: true\n";
+  assert.equal(healRowDisabled(enabled, 'tool-vision').patch, enabled, '用户显式启用的行不动');
+  assert.equal(healRowDisabled(disabled, 'tool-vision').patch, disabled, '已禁用的行不动（幂等）');
+  // 带 config 块的行同样视为已有内容，不盲目插入（config 后仍可手工加 disabled）
+  const withCfg = "- insert:\n    - id: tool-vision\n      name: 'dsh-tool-vision'\n      config:\n        model: \"gpt-4o-mini\"\n";
+  assert.equal(healRowDisabled(withCfg, 'tool-vision').patch, withCfg, '带 config 的行不动（避免插在 config 前）');
+});
+
+test('healRowDisabled 只影响目标 id，其他行原样', () => {
+  const two = "- insert:\n    - id: tool-vision\n      name: 'dsh-tool-vision'\n- insert:\n    - id: soul-md\n      name: 'dsh-soul-md'\n";
+  const { patch, healed } = healRowDisabled(two, 'tool-vision');
+  assert.deepEqual(healed, ['tool-vision']);
+  assert.match(patch, /- id: soul-md\n\s+name: 'dsh-soul-md'\n(?!.*disabled)/s === null ? /$^/ : /- id: soul-md/);
 });

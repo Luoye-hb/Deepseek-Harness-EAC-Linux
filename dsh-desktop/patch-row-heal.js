@@ -174,4 +174,27 @@ function removeBundledRowDuplicates(patch, rowIds, bundleNames, bundleEntryIds) 
   return { patch: text, removed };
 }
 
-module.exports = { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds };
+/**
+ * v4.0.2 迁移：把存量「启用中」的 tool-vision 行改为 disabled。v4.0.1 及
+ * 上游 v4.0.0 的插件 llm/stream 监听器是 async 函数，每轮请求必抛
+ * "yield* (intermediate value) is not async iterable"；虽然 4.0.2 修了插件
+ * 本体，但按用户需求该插件不再默认启动。COMPANION_PLUGINS 的
+ * disabled:true 只影响新写的行（已有行不重写是既定幂等原则），存量启用
+ * 行在这里一次性禁用。
+ * 幂等边界：只改「不带任何 disabled: 键」的行 —— 用户后来显式启用的行
+ * （disabled: false）或已禁用的行（disabled: true）都不碰，用户选择永远
+ * 优先。同 healRowConfig 的手法：id+name 行后负向先行断言。
+ */
+function healRowDisabled(patch, id) {
+  const healed = [];
+  if (typeof patch !== 'string' || patch === '' || !id) return { patch, healed };
+  const rowRe = new RegExp(
+    `(^[\t ]*- id: ${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[^\\n]*\\n[\\t ]*name: ['"]?[^'"\\n]+['"]?\\n)(?![\\t ]*(config:|disabled:))`,
+    'gm'
+  );
+  const out = patch.replace(rowRe, (m) => m + '      disabled: true\n');
+  if (out !== patch) healed.push(id);
+  return { patch: out, healed };
+}
+
+module.exports = { configLinesFor, healSoulMdPatchRow, healRowConfig, healRowDisabled, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds };

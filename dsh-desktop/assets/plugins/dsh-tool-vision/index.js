@@ -368,26 +368,34 @@ async function callVision(config, imageUrl, question, detail, signal) {
  * later still sees the original images.
  */
 function attachRequestGuard(ctx, getConfig, exportDir) {
-  ctx.on("llm/stream", async (options, next) => {
-    try {
-      const config = getConfig();
-      if (config.requestGuard && typeof options?.model === "string"
-        && !config.multimodalModels.includes(options.model)
-        && hasImageBlock(options.messages)) {
-        const messages = await bridgeMessages(options.messages, ctx, exportDir);
-        if (messages.some((message, index) => message !== options.messages[index])) {
-          ctx.logger.info(
-            `[tool-vision] request guard downgraded image blocks for model "${options.model}"`,
-          );
-          return next({ ...options, messages });
+  // The llm/stream waterfall awaits an async iterable from each listener. An
+  // async listener returns a Promise (not a generator), so every turn died
+  // with `yield* (intermediate value) is not async iterable`. Keep the
+  // listener synchronous and return an immediately-invoked async generator;
+  // delegation to the rest of the waterfall is `yield* next(...)`.
+  ctx.on("llm/stream", (options, next) => {
+    return (async function* () {
+      try {
+        const config = getConfig();
+        if (config.requestGuard && typeof options?.model === "string"
+          && !config.multimodalModels.includes(options.model)
+          && hasImageBlock(options.messages)) {
+          const messages = await bridgeMessages(options.messages, ctx, exportDir);
+          if (messages.some((message, index) => message !== options.messages[index])) {
+            ctx.logger.info(
+              `[tool-vision] request guard downgraded image blocks for model "${options.model}"`,
+            );
+            yield* next({ ...options, messages });
+            return;
+          }
         }
+      } catch (error) {
+        // The guard must never break the call: fall through with the original
+        // options (the adapter's own error, if any, is the status quo ante).
+        ctx.logger.warn(`[tool-vision] request guard failed: ${String(error)}`);
       }
-    } catch (error) {
-      // The guard must never break the call: fall through with the original
-      // options (the adapter's own error, if any, is the status quo ante).
-      ctx.logger.warn(`[tool-vision] request guard failed: ${String(error)}`);
-    }
-    return next();
+      yield* next();
+    })();
   });
 }
 

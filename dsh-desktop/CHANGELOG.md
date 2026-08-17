@@ -8,7 +8,23 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 3.0.0（升级链路根治 + 崩溃自恢复/看门狗 + 右侧边栏 + 上游预设全家桶）→
 3.1.0（插件保护中心 + 原生 CLI 共存根治 + 字体自定义 + 自动压缩 + 人设卡库）→
 4.0.0（本版：四大用户反馈问题根治 + SHA-256 更新校验 + 微信 ClawBot 桥 + 多窗口
-+ 会话删除 + AI 变更审核 + 崩溃急救 undo + 大肥鱼桌宠 + 插件启停管理）。
++ 会话删除 + AI 变更审核 + 崩溃急救 undo + 大肥鱼桌宠 + 插件启停管理）→
+4.0.2（tool-vision llm/stream 契约修复 + 该插件默认不启动）。
+
+## [4.0.2] — 2026-08-17（Linux 线）
+
+### 修复：所有对话报 `yield* (intermediate value) is not async iterable`
+- 根因：dsh-tool-vision 的 `attachRequestGuard` 把 `llm/stream` 监听器写成
+  async 函数 —— async 函数必返 Promise，而 cordis 瀑布流期望每个监听器返回
+  async iterable（下游 `yield* next()` 拿到 Promise 即抛错），v4 起每轮模型
+  请求必失败。
+- 修复：监听器保持同步、返回立即调用的 async generator；两处 `return next(...)`
+  改为 `yield* next(...)`，try/catch 与判断逻辑原样保留。配套 4 个回归测试
+  （监听器契约 / 改写透传 / 白名单跳过 / 异常放行）。
+- 该插件同时改为**默认不启动**：COMPANION_PLUGINS 条目标 `disabled: true`
+  （与桌宠同机制，用户可在「设置 → 插件 → 管理」重新启用）；存量启用行由
+  `healRowDisabled` 一次性迁移禁用 —— 只改不带 disabled 键的原始行，用户
+  显式启用/禁用的行永不覆盖。
 
 ## [4.0.0] — 2026-08-16
 

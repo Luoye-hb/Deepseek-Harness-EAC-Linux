@@ -39,7 +39,7 @@ const {
   enablePickerBrowseOverlay,
   clearAutoPickerBrowseOverlay,
 } = require('./koffi-preflight');
-const { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
+const { configLinesFor, healSoulMdPatchRow, healRowConfig, healRowDisabled, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
 const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
 const { patchSessionManage } = require('./scripts/patch-session-manage');
@@ -1967,7 +1967,11 @@ const COMPANION_PLUGINS = [
   // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
   // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
-  { id: 'tool-vision', name: 'dsh-tool-vision', dir: 'dsh-tool-vision' },
+  // 默认禁用：其 llm/stream 监听器是 async 函数（index.js attachRequestGuard），
+  // 返回 Promise 破坏 cordis waterfall 契约 —— checkpoint-policy 的 yield* next()
+  // 拿到 Promise 即抛 "yield* (intermediate value) is not async iterable"，
+  // 每轮模型请求必失败。修复上游插件前不要恢复默认启用。
+  { id: 'tool-vision', name: 'dsh-tool-vision', dir: 'dsh-tool-vision', disabled: true },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
   // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
   // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
@@ -2752,6 +2756,15 @@ function syncCompanionPlugins() {
       patch = healedPet.patch;
       changed = true;
       log('boot', '已修复 profile patch 中缺 config 的 dsh-pet 行（v3 存量坏行）');
+    }
+    // v4.0.2 迁移：存量启用中的 tool-vision 行一次性禁用（v4.0.1 插件
+    // 每轮请求必炸 llm/stream；4.0.2 已修本体但按需求不再默认启动）。
+    // 只改不带 disabled 键的原始行，用户显式启用/禁用的行不碰。
+    const healedVisionOff = healRowDisabled(patch, 'tool-vision');
+    if (healedVisionOff.healed.length) {
+      patch = healedVisionOff.patch;
+      changed = true;
+      log('boot', '已禁用 profile patch 中的 tool-vision 行（v4.0.2 默认不启动，可在插件管理中重新启用）');
     }
     // 市场安装（dsh plugin add）会把插件登记进 package.json 的
     // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
