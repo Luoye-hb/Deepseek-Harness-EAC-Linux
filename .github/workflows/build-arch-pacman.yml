@@ -258,11 +258,24 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: dsh-desktop-*
           merge-multiple: true
           path: release-artifacts
+
+      # V4 客户端更新的 SHA-256 内容校验读取 Release 附带的 SHA256SUMS.txt；
+      # 归档产物汇齐后统一生成（脚本已支持 pacman/deb/rpm/AppImage 格式）。
+      - name: Generate SHA256SUMS.txt for release assets
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run make-release-hashes
+        run: node scripts/make-release-hashes.js ../release-artifacts
+        working-directory: dsh-desktop
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
