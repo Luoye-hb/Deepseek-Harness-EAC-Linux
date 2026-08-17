@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 // cordis.patch.yml row heal for dsh-soul-md.
 //
 // v2.0.0 shipped the bundled dsh-soul-md plugin whose config schema declared
@@ -48,6 +51,71 @@ function healSoulMdPatchRow(patch, config = { path: 'soul.md' }) {
 }
 
 /**
+ * V4 修复：给已存在但缺 config 块的行补 config。dsh-pet 的 apply 读
+ * config.fullRoot（无守卫），无 config 的行会让 loader 传 undefined 直接
+ * 拖垮整棵插件树（v3.1.0 全新安装即「启动失败」的根因；老用户因市场装
+ * 过的行自带 config 才幸免）。与 healSoulMdPatchRow 同一手法：id+name 行
+ * 后跟负向先行断言，已带 config 的行不动（幂等，用户改过的值优先）。
+ */
+function healRowConfig(patch, id, config) {
+  const healed = [];
+  if (typeof patch !== 'string' || patch === '' || !id || !config) return { patch, healed };
+  const rowRe = new RegExp(
+    `(^[\t ]*- id: ${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[^\\n]*\\n[\\t ]*name: ['"]?[^'"\\n]+['"]?\\n)(?![\\t ]*config:)`,
+    'gm'
+  );
+  const out = patch.replace(rowRe, (m) => m + configLinesFor(config));
+  if (out !== patch) healed.push(id);
+  return { patch: out, healed };
+}
+
+/**
+ * Collect the loader entry ids a bundle package declares through its own
+ * cordis.patch.yml (or the `dsh.bundle.patch` file its package.json points
+ * at). These are the ids the bundle itself mounts when loaded — an overlay
+ * row carrying any of them is a duplicate regardless of that row's package
+ * name. Returns a Set<string>; a missing/unparseable package contributes
+ * nothing.
+ */
+function bundlePatchEntryIds(bundleDir) {
+  const ids = new Set();
+  if (!bundleDir) return ids;
+  try {
+    const pkgPath = path.join(bundleDir, 'package.json');
+    if (!fs.existsSync(pkgPath)) return ids;
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const b = pkg && pkg.dsh && pkg.dsh.bundle;
+    let patchRel = 'cordis.patch.yml';
+    if (typeof b === 'string') patchRel = b;
+    else if (b && typeof b.patch === 'string') patchRel = b.patch;
+    const patch = fs.readFileSync(path.join(bundleDir, patchRel), 'utf8');
+    const idRe = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
+    let m;
+    while ((m = idRe.exec(patch)) !== null) ids.add(m[1]);
+  } catch { /* 包/补丁缺失或损坏 → 不贡献任何 id */ }
+  return ids;
+}
+
+/**
+ * Union of the declared entry ids across every profile bundle package. The
+ * sync pass uses this to (a) drop overlay rows that duplicate a bundle's own
+ * mount and (b) refuse to write those rows back — covering git/fork installs
+ * whose package name differs from the built-in companion's.
+ * @param {string[]} bundleNames - profile `dsh.profile.bundles` list.
+ * @param {string} profileNodeModules - `<profile>/node_modules`.
+ */
+function collectBundleEntryIds(bundleNames, profileNodeModules) {
+  const ids = new Set();
+  for (const name of bundleNames || []) {
+    const dir = name
+      ? path.join(profileNodeModules, ...String(name).split('/'))
+      : '';
+    for (const id of bundlePatchEntryIds(dir)) ids.add(id);
+  }
+  return ids;
+}
+
+/**
  * Remove insert-blocks for rows the profile already mounts through its
  * package.json bundle list (`dsh.profile.bundles`, written by `dsh plugin
  * add` — i.e. anything the user installed from the plugin market).
@@ -58,24 +126,38 @@ function healSoulMdPatchRow(patch, config = { path: 'soul.md' }) {
  * `duplicate loader entry id: <id>` (dsh web exits 1 → "启动失败" crash
  * loop). Dropping the overlay copy is safe: the bundle still mounts it.
  *
- * `rowIds` maps row id → package name; only rows whose package name appears
- * in the bundle list are removed. Returns { patch, removed }.
+ * Two duplicate signals are honoured:
+ *  - name-based (legacy): a `rowIds` row whose package name appears in the
+ *    bundle list — matches npm/market installs where names line up;
+ *  - id-based: the row's entry id is declared by ANY bundle patch
+ *    (`bundleEntryIds`) — matches git/fork/link installs whose package name
+ *    differs from the overlay row's (issue #16).
+ *
+ * Returns { patch, removed }.
  */
-function removeBundledRowDuplicates(patch, rowIds, bundleNames) {
+function removeBundledRowDuplicates(patch, rowIds, bundleNames, bundleEntryIds) {
   const removed = [];
-  if (typeof patch !== 'string' || patch === '' || !bundleNames.length) return { patch, removed };
-  const targets = Object.entries(rowIds)
-    .filter(([, pkg]) => bundleNames.includes(pkg))
-    .map(([id]) => id);
-  if (!targets.length) return { patch, removed };
+  if (typeof patch !== 'string' || patch === ''
+    || (!bundleNames || !bundleNames.length) && (!bundleEntryIds || !bundleEntryIds.size)) {
+    return { patch, removed };
+  }
+  const declaredIds = bundleEntryIds && bundleEntryIds.size ? bundleEntryIds : new Set();
+  const nameTargets = new Set(Object.entries(rowIds || {})
+    .filter(([, pkg]) => (bundleNames || []).includes(pkg))
+    .map(([id]) => id));
+  const isDup = (id) => (id !== null && declaredIds.has(id)) || (id !== null && nameTargets.has(id));
   const lines = patch.split(/\r?\n/);
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (/^-\s*insert:/.test(line)) {
-      const m = /\bid:\s*([\w-]+)/.exec(lines[i + 1] || '');
-      if (m && targets.includes(m[1])) {
-        removed.push(m[1]);
+      // Parse id + name from the block body (id must be the immediate next
+      // line to stay unambiguous).
+      let id = null;
+      const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
+      if (mid) id = mid[1];
+      if (isDup(id)) {
+        removed.push(id);
         // Skip the block body: indented non-comment lines up to the next
         // top-level key / block / comment / blank line.
         let j = i + 1;
@@ -92,4 +174,4 @@ function removeBundledRowDuplicates(patch, rowIds, bundleNames) {
   return { patch: text, removed };
 }
 
-module.exports = { configLinesFor, healSoulMdPatchRow, removeBundledRowDuplicates };
+module.exports = { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds };

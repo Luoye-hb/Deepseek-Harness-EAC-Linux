@@ -9,7 +9,7 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v3.0.2-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.0.1-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
@@ -28,13 +28,18 @@
 | 能力 | 原版 dsh（官方 deepseek-harness） | Deepseek Harness EAC |
 | --- | --- | --- |
 | 运行方式 | 需先安装 Node.js，`npx @deepseek-ai/dsh web` + 浏览器访问 | **免装 Node**：内置独立 Node 运行时与 npm CLI，双击即用 |
+| 与 CLI 共存 | —（本体） | **桌面专属 profile（web-desktop）**：插件树/pnpm/patch 层与原生 CLI 完全隔离，会话与 API Key 依旧共享；共享 junction 归属自动守卫修复，互不打扰 |
+| 插件安全 | 手动 npm，装坏自负 | **内置插件保护中心**：安装/启动前自动快照、启动失败自动体检修复、必要时回滚到最后良好快照，事故报告全程留痕（融合三大社区保护插件并内置升华） |
 | 界面皮肤 | 仅官方默认外观 | **内置 10 款 Web UI 皮肤**（XP / QQ98 / 初音未来 / 我的世界 / 同花顺 / 鲸歌…），设置页一键互斥切换，默认不启用保持原生 |
+| 字体外观 | 无 | 设置页「外观 · 字体与颜色」：**字体家族/字号/文字与代码颜色**实时自定义，与皮肤同体系 |
 | 窗口体验 | 浏览器标签页 | **原生无边框窗口**（自绘玻璃栏）+ **系统托盘常驻**，关闭不打断任务 |
 | 便携性 | 无 | Windows 提供**便携版**；Linux 提供 pacman / deb / rpm 安装包与通用 AppImage |
 | 余额查看 | 手动上官网查 | 对话底部内联「**本轮 ¥X · 余额 ¥Y**」实时小部件，点击跳转充值 |
 | 文件管理 | 手动翻目录 | **会话文件更改追踪**（行级 diff）+ **一键还原**，全部/逐文件 |
 | 会话内终端 | 无 | **终端标签页**：会话项目目录内持久 PowerShell，SSE 流式，断线重连 |
-| 配置上手 | 手编 YAML | **设置页可视化**：视觉模型一键选择、`soul.md` 人设可视化编辑、**从 Codex / Claude Code 一键迁移 skills + MCP + 记忆** |
+| 长对话 | 手动 /compact | **默认自动压缩**：接近上下文上限（默认 80%，可调）自动执行官方 /compact |
+| 人设 | 手编 soul.md | 设置页「人设卡」：**6 张内置预设一键应用 + 我的卡片库** + 实时编辑热重载 |
+| 配置上手 | 手编 YAML | **设置页可视化**：视觉模型一键选择、MCP 增删改 + **从 Claude Code / Codex 一键导入**、**从 Codex / Claude Code 一键迁移 skills + MCP + 记忆** |
 | 插件安装 | 手动 npm | 设置页内置**插件市场**，搜索/一键安装/卸载 dsh 插件 |
 | 更新 | 手动 `npm update` | **双重自动更新**：官方 agent 更新（npm overlay，失败可回退）+ 客户端本体自更新，均经用户同意 |
 | 任务通知 | 无 | agent 任务完成弹出**系统通知**，点击回到窗口 |
@@ -60,14 +65,14 @@
 
 ### Linux（x64）
 
-Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v3.0.2-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v3.0.2-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
+Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v4.0.1-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.0.1-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
 
 | 发行版 | 包 | 安装 |
 | --- | --- | --- |
-| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-3.0.2-x64.pacman` |
-| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-3.0.2-amd64.deb` |
-| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-3.0.2.x86_64.rpm` |
-| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v3.0.2-linux/Deepseek-Harness-EAC-3.0.2-x86_64.AppImage) | `chmod +x` 后直接运行 |
+| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-4.0.1-x64.pacman` |
+| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-4.0.1-amd64.deb` |
+| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-3.0.2.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-3.0.2.x86_64.rpm` |
+| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1-x86_64.AppImage) | `chmod +x` 后直接运行 |
 
 > - 卸载：`pacman -Rns dsh-desktop` / `apt remove dsh-desktop` / `dnf remove dsh-desktop`
 > - 与 Windows 版一致：内置 Node.js 与 npm CLI，目标机器无需预装 Node.js；数据目录沿用 `~/.dsh`（`DSH_HOME`）
@@ -96,7 +101,7 @@ Arch Linux 版本以 pacman 本地包形式提供。下载或自行构建
 `Deepseek-Harness-EAC-<版本>-x64.pacman` 后安装：
 
 ```bash
-sudo pacman -U ./Deepseek-Harness-EAC-3.0.2-x64.pacman
+sudo pacman -U ./Deepseek-Harness-EAC-4.0.1-x64.pacman
 ```
 
 安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行：
@@ -123,7 +128,7 @@ pacman 会自动处理 Electron 所需的 GTK、NSS、通知、密钥环等系�
 下载 `Deepseek-Harness-EAC-<版本>-amd64.deb` 后安装：
 
 ```bash
-sudo apt install ./Deepseek-Harness-EAC-3.0.2-amd64.deb
+sudo apt install ./Deepseek-Harness-EAC-4.0.1-amd64.deb
 ```
 
 安装完成后可从桌面应用菜单启动 **Deepseek Harness EAC**，也可在终端运行
@@ -152,8 +157,8 @@ sudo dnf remove dsh-desktop
 下载 `Deepseek-Harness-EAC-<版本>-x86_64.AppImage` 后：
 
 ```bash
-chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
-./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
+chmod +x ./Deepseek-Harness-EAC-4.0.1-x86_64.AppImage
+./Deepseek-Harness-EAC-4.0.1-x86_64.AppImage
 ```
 
 > Ubuntu 24.04 等默认只有 FUSE3 的发行版，若 AppImage 提示缺少 FUSE2，
@@ -206,6 +211,24 @@ chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
 
 ### 效率工具（配套插件体系）
 
+- **插件保护中心（v3.1 新增，内置 plugin-guard 引擎）**：融合社区三大保护插件
+  （[lxzy-7/dsh-plugin-guard](https://github.com/lxzy-7/dsh-plugin-guard) 快照回滚、
+  [LX2000WASD/dsh-web-plugin-manager](https://github.com/LX2000WASD/dsh-web-plugin-manager) 安装守卫、
+  [chenw2759-wq/dsh-plugin-healthcheck](https://github.com/chenw2759-wq/dsh-plugin-healthcheck) 静态体检）
+  并内置到桌面壳：每次安装与启动前自动快照 profile 配置（保留 10 份）；启动失败自动
+  体检（模块遮蔽 / patch 行 / junction 归属 / 高危静态扫描）→ 修复 → 重试 → 回滚到
+  最后良好快照 → 事故报告；设置页「插件保护」可手动快照 / 回滚 / 体检 / 修复。
+- **与原生 CLI 完全共存（v3.1 根治）**：桌面端运行在专属 `web-desktop` profile
+  （会话/API Key 仍共享 DSH_HOME），插件树互不干扰；共享模块 junction 的归属自动
+  巡检修复，原生 `npx dsh` 与桌面端交替使用不再互相破坏。
+- **外观自定义（v3.1 新增，dsh-font-custom）**：设置页「外观 · 字体与颜色」——
+  界面/代码字体、字号、文字与代码颜色实时自定义，localStorage 持久化。
+- **自动压缩（v3.1 新增，dsh-auto-compact，默认开启）**：对话接近上下文上限
+  （默认 80%，可调）时自动执行官方 `/compact`，空闲触发、失败静默重试。
+- **人设卡完整管理（v3.1 升级）**：设置页「人设卡」——6 张内置预设一键应用、
+  我的卡片库（保存/应用/删除）、当前卡片实时编辑热重载。
+- **MCP 一键导入（v3.1 升级，dsh-dock-settings）**：MCP 管理页新增「从 Claude /
+  Codex 导入」，勾选合并 `~/.claude.json` 与 `~/.codex/config.toml` 的 MCP 服务器。
 - **DeepSeek 余额小部件**：对话底部统计栏显示「本轮 ¥X · 余额 ¥Y」，点击跳转充值，15 分钟自动刷新
 - **文件更改追踪 + 一键还原**：「文件」标签页查看本会话全部文件改动（新建/修改/删除 + 行级 diff）并逐文件/全部还原；数据只读复用会话日志，稳定不受升级影响
 - **会话内终端**：「终端」标签页在当前会话项目目录启动持久 PowerShell（SSE 流式、命令历史、断线重连），中文编码干净
@@ -217,7 +240,7 @@ chmod +x ./Deepseek-Harness-EAC-3.0.2-x86_64.AppImage
 - **移动端布局修复（v2 新增，dsh-web-mobile-fix）**：窄屏（≤400px）下设置面板、弹窗、侧栏、会话头布局修复，纯前端 CSS，不影响桌面布局
 - **快速配置（dsh-easy-setup）**：视觉模型提供商/模型一键选择、`soul.md` 人设可视化编辑、从 Codex / Claude Code 目录一键迁移 skills + MCP + 记忆
 - **双重自动更新**：官方 dsh agent 更新（npm overlay）+ 客户端封装自更新，均经用户同意，失败自动回退
-- **稳定性自愈**：`profile-module-heal` 自动修复 profile 模块遮蔽问题（如 `prompt section already registered`、模型列表/模式切换失效）；重启服务时等待旧进程完全退出（释放文件锁）再启动新服务，插件包（含自带 vendor 依赖）随安装包原样分发
+- **稳定性自愈**：`profile-module-heal` 自动修复 profile 模块遮蔽问题（真实目录与 pnpm 链接双形态，如 `prompt section already registered`、「设置命名空间不可用」、模型列表/模式切换失效）；`plugin-guard` 守护启动失败链路（体检 → 修复 → 回滚 → 事故报告）；重启服务时等待旧进程完全退出（释放文件锁）再启动新服务，插件包（含自带 vendor 依赖）随安装包原样分发
 
 ---
 
@@ -272,7 +295,7 @@ npm run dist:appimage  # 免安装 AppImage
 安装本地构建产物：
 
 ```bash
-sudo pacman -U ./dist/Deepseek-Harness-EAC-3.0.2-x64.pacman
+sudo pacman -U ./dist/Deepseek-Harness-EAC-4.0.1-x64.pacman
 ```
 
 运行测试：
@@ -327,7 +350,8 @@ dsh-desktop/                  # Electron 桌面端
 ├── client-updater.js         # 客户端本体自更新引擎
 ├── balance.js                # DeepSeek 余额查询
 ├── session-watcher.js        # 会话完成监听
-├── profile-module-heal.js    # profile 模块遮蔽自愈
+├── plugin-guard.js           # 插件保护中心引擎（快照/回滚/体检/修复/守护启动/事故报告）
+├── profile-module-heal.js    # profile 模块遮蔽自愈（真实目录 + pnpm 链接）
 ├── preload.js                # 沙箱预加载
 ├── assets/                   # 加载页、更新进度页、图标、皮肤、配套插件
 │   ├── skins/                # 10 款内置 Web UI 皮肤
@@ -344,6 +368,11 @@ dsh-desktop/                  # Electron 桌面端
 openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
 research/                     # 第三方微信/桥接协议调研资料
 ```
+
+## Contributors
+
+- [@zouyuxuan122](https://github.com/zouyuxuan122) — 项目发起者与维护者
+- [@Luoye-hb](https://github.com/Luoye-hb) — Linux 多发行版打包支持（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)）
 
 ## License
 

@@ -13,14 +13,105 @@ const path = require('node:path');
 
 const DEFAULT_BASE = 'https://api.deepseek.com';
 
-// 各模型价格（¥/百万 token，官方定价档；deepseek-v4-pro 尚无公开定价，
-// 暂按 reasoner 档估算，可在 settings.json 的 balancePrices 中覆盖）。
+// 官方峰谷定价（2026-08-17 生效）：高峰 9:00-12:00、14:00-18:00（UTC+8），
+// 其余为空闲时段，空闲价格为高峰的一半。各模型档位/时段价格（¥/百万 token，
+// deepseek-v4-pro 正式定价；其余保留估算档，可在 settings.json 的
+// balancePrices.<model>.{peak,offpeak} 中覆盖）。
 const DEFAULT_PRICES = {
-  'deepseek-chat': { cacheMiss: 2, cacheHit: 0.5, output: 8 },
-  'deepseek-reasoner': { cacheMiss: 4, cacheHit: 1, output: 16 },
-  'deepseek-v4-pro': { cacheMiss: 4, cacheHit: 1, output: 16 },
+  'deepseek-v4-flash': {
+    peak: { cacheMiss: 3, cacheHit: 0.1, output: 9 },
+    offpeak: { cacheMiss: 1.5, cacheHit: 0.05, output: 4.5 },
+  },
+  'deepseek-v4-pro': {
+    peak: { cacheMiss: 9, cacheHit: 0.3, output: 27 },
+    offpeak: { cacheMiss: 4.5, cacheHit: 0.15, output: 13.5 },
+  },
+  'deepseek-chat': { peak: { cacheMiss: 2, cacheHit: 0.5, output: 8 }, offpeak: { cacheMiss: 2, cacheHit: 0.5, output: 8 } },
+  'deepseek-reasoner': { peak: { cacheMiss: 4, cacheHit: 1, output: 16 }, offpeak: { cacheMiss: 4, cacheHit: 1, output: 16 } },
 };
-const FALLBACK_PRICES = { cacheMiss: 2, cacheHit: 0.5, output: 8 };
+const FALLBACK_PRICES = { peak: { cacheMiss: 2, cacheHit: 0.5, output: 8 }, offpeak: { cacheMiss: 2, cacheHit: 0.5, output: 8 } };
+
+// 默认高峰时段（UTC+8，官方公告 2026-08-17 生效）：9:00-12:00、14:00-18:00。
+// 可在 settings.json 的 pricing.peakWindows 覆盖（数组的数组，支持跨午夜段，
+// 如 [['23:00','08:00']]）。
+const DEFAULT_PEAK_WINDOWS = [['09:00', '12:00'], ['14:00', '18:00']];
+
+function parseHHMM(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mn = Number(m[2]);
+  if (h > 23 || mn > 59) return null;
+  return h * 60 + mn;
+}
+
+function fmtHHMM(minutes) {
+  const h = Math.floor(minutes / 60);
+  const mn = minutes % 60;
+  return String(h).padStart(2, '0') + ':' + String(mn).padStart(2, '0');
+}
+
+// 规范化高峰时段配置 → [[startMin, endMin], ...]（按开始时间升序）。
+// 配置非法时回退官方默认；每段 [start, end)，start > end 表示跨午夜。
+function normalizePeakWindows(raw) {
+  const valid =
+    Array.isArray(raw) &&
+    raw.length > 0 &&
+    raw.every(
+      (w) =>
+        Array.isArray(w) &&
+        w.length === 2 &&
+        parseHHMM(w[0]) !== null &&
+        parseHHMM(w[1]) !== null &&
+        parseHHMM(w[0]) !== parseHHMM(w[1])
+    );
+  const src = valid ? raw : DEFAULT_PEAK_WINDOWS;
+  return src
+    .map(([a, b]) => [parseHHMM(a), parseHHMM(b)])
+    .sort((a, b) => a[0] - b[0]);
+}
+
+function minutesOfDay(date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+function atMinutes(date, minutes, dayOffset = 0) {
+  const t = new Date(date);
+  t.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+  if (dayOffset) t.setDate(t.getDate() + dayOffset);
+  return t;
+}
+
+function inWindow(nowMin, [start, end]) {
+  return start < end ? nowMin >= start && nowMin < end : nowMin >= start || nowMin < end;
+}
+
+// 当前峰谷状态：{ period: 'peak'|'offpeak', windows, nextAt }（nextAt 为毫秒时间戳）。
+// 用于余额小部件的时段提示与计费档位切换。
+function computePricingState(peakWindows, now = new Date()) {
+  const windows = normalizePeakWindows(peakWindows);
+  const nowMin = minutesOfDay(now);
+  const peak = windows.some((w) => inWindow(nowMin, w));
+  let next;
+  if (peak) {
+    const [start, end] = windows.find((w) => inWindow(nowMin, w));
+    const dayOffset = start < end ? 0 : nowMin >= start ? 1 : 0;
+    next = atMinutes(now, end, dayOffset);
+  } else {
+    // 离 nowMin 最近的下一段起点（跨天则折入 +1440 的单值比较）。
+    let best = null;
+    for (const [start] of windows) {
+      const cand = start > nowMin ? start : start + 1440;
+      if (best === null || cand < best) best = cand;
+    }
+    next = atMinutes(now, best, 0);
+  }
+  return {
+    period: peak ? 'peak' : 'offpeak',
+    windows: windows.map(([s, e]) => [fmtHHMM(s), fmtHHMM(e)]),
+    nextAt: next.getTime(),
+  };
+}
 
 function readApiKey(dshHome) {
   const envKey = process.env.DEEPSEEK_API_KEY;
@@ -98,4 +189,12 @@ async function queryBalance(dshHome) {
   }
 }
 
-module.exports = { queryBalance, readActiveModel, DEFAULT_PRICES, FALLBACK_PRICES };
+module.exports = {
+  queryBalance,
+  readActiveModel,
+  DEFAULT_PRICES,
+  FALLBACK_PRICES,
+  DEFAULT_PEAK_WINDOWS,
+  normalizePeakWindows,
+  computePricingState,
+};

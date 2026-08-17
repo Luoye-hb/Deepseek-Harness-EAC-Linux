@@ -15,6 +15,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const BAR_ID = '__dsh_desktop_chrome__';
 const BAR_HEIGHT = 36;
+const FLOAT_BAR_ID = '__dsh_desktop_floatbar__';
+const FLOAT_BAR_HEIGHT = 24;
 
 // ---------------------------------------------------------------------------
 // Bridge (always exposed; the balance plugin reads it, the web UI keeps the
@@ -41,6 +43,16 @@ const dshDesktop = {
   refreshBalance: () => ipcRenderer.invoke('dsh:balance-refresh'),
   // 插件市场：请求主进程原地重启 dsh web 服务（安装/卸载插件后生效）。
   restartService: () => ipcRenderer.invoke('chrome:restart-service', { intent: 'restart-service' }),
+  // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口；浮窗关闭自身。
+  floatWindow: {
+    open: (sessionId) => ipcRenderer.invoke('chrome:float-window', { action: 'open', sessionId }),
+    close: () => ipcRenderer.send('float:close'),
+  },
+  // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
+  // 设置页「插件保护」分区（dsh-plugin-shield 插件）从这里驱动主进程引擎。
+  guard: {
+    action: (action, value) => ipcRenderer.invoke('guard:action', { action, value }),
+  },
   // 「文件」视图的还原请求：changes = [{path, op, oldText, newText}]（逆序）。
   revertFiles: (changes) => ipcRenderer.invoke('dsh:file-revert', { changes }),
   // 「全部文件」视图：用系统默认程序打开项目文件。
@@ -59,6 +71,29 @@ const dshDesktop = {
 };
 
 contextBridge.exposeInMainWorld('dshDesktop', dshDesktop);
+
+// ---------------------------------------------------------------------------
+// 浮窗模式检测（V4 多窗口，移植自上游 dsh_desktop）：process.argv 由
+// webPreferences.additionalArguments 注入。浮窗内暴露 window.__DSH_FLOAT__ =
+// { sessionId } 供 dsh-float-window 插件识别，并预置目标会话到持久化，
+// 让 Web UI 一启动就选中目标会话（比启动后 sessions.open() 可靠：会话服务
+// 在 boot 早期尚未就绪时 open() 会抛 unknown session）。
+// ---------------------------------------------------------------------------
+const FLOAT_ARG = process.argv.find((a) => a.startsWith('--dsh-float='));
+const FLOAT_MODE = FLOAT_ARG ? { sessionId: FLOAT_ARG.slice('--dsh-float='.length) } : null;
+if (FLOAT_MODE) {
+  contextBridge.exposeInMainWorld('__DSH_FLOAT__', FLOAT_MODE);
+  try {
+    const key = 'dsh.sessions.current';
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (parsed && typeof parsed === 'object') {
+      parsed.sessionId = String(FLOAT_MODE.sessionId);
+      delete parsed.subagentAddress;
+      localStorage.setItem(key, JSON.stringify(parsed));
+    }
+  } catch (_e) { /* 忽略持久化失败 */ }
+}
 
 // 页面异常 → 主进程日志（desktop.log），便于排查插件空白视图。
 window.addEventListener('error', (e) => {
@@ -123,6 +158,9 @@ const CHROME_CSS = `
 #${BAR_ID} .dch-item .dch-check{margin-left:auto;color:var(--dsw-alias-state-success-primary,#3ddc84);font-size:12px}
 #${BAR_ID} .dch-item[data-danger="1"]{color:var(--dsw-alias-state-error-primary,#ff7a85)}
 #${BAR_ID} .dch-sep{height:1px;background:var(--dsw-alias-border-l2,rgba(255,255,255,.08));margin:5px 6px}
+#${BAR_ID} .dch-exit-group{padding:2px 0}
+#${BAR_ID} .dch-exit-title{font-size:10.5px;color:var(--dsw-alias-label-tertiary,#8b9ac4);padding:2px 10px 3px}
+#${BAR_ID} .dch-exit-item{min-height:26px;font-size:12px;color:var(--dsw-alias-label-secondary,#b8c5ea)}
 #${BAR_ID} .dch-repos{padding:6px 10px 10px;margin:2px 0 4px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.08));
   border-radius:10px;background:var(--dsw-alias-bg-layer-3,rgba(255,255,255,.03))}
 #${BAR_ID} .dch-repos-title{font-size:11px;color:var(--dsw-alias-label-tertiary,#8b9ac4);margin-bottom:4px}
@@ -148,7 +186,13 @@ const GLYPHS = {
 let menuOpen = false;
 let menuEl = null;
 let maxBtn = null;
-let state = { appVersion: '', agentVersion: '', agentSource: '', notifyOnTurnEnd: true, closeToTray: true };
+let state = { appVersion: '', agentVersion: '', agentSource: '', notifyOnTurnEnd: true, closeToTray: true, exitAction: 'ask', shortcutPolicy: 'auto' };
+
+const EXIT_ACTIONS = [
+  { value: 'ask', label: '每次询问' },
+  { value: 'minimize', label: '后台运行（最小化到托盘）' },
+  { value: 'quit', label: '直接退出' },
+];
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
@@ -173,8 +217,13 @@ function renderMenu() {
       </div>
     </div>
     <button class="dch-item" data-act="toggle-notify"><span>会话完成通知</span>${state.notifyOnTurnEnd ? '<span class="dch-check">✓</span>' : ''}</button>
-    <button class="dch-item" data-act="toggle-close-to-tray"><span>关闭时最小化到托盘</span>${state.closeToTray ? '<span class="dch-check">✓</span>' : ''}</button>
+    <button class="dch-item" data-act="toggle-shortcut-policy"><span>桌面快捷方式自动维护</span>${state.shortcutPolicy !== 'never' ? '<span class="dch-check">✓</span>' : ''}</button>
+    <div class="dch-exit-group">
+      <div class="dch-exit-title">关闭窗口时</div>
+      ${EXIT_ACTIONS.map((opt) => `<button class="dch-item dch-exit-item" data-act="set-exit-action" data-value="${opt.value}"><span>${opt.label}</span>${state.exitAction === opt.value ? '<span class="dch-check">✓</span>' : ''}</button>`).join('')}
+    </div>
     <div class="dch-sep"></div>
+    <button class="dch-item" data-act="restart-service"><span>重启 Web 服务</span><span class="dch-kbd">不关闭应用</span></button>
     <button class="dch-item" data-act="reload"><span>重新加载</span><span class="dch-kbd">Ctrl+R</span></button>
     <button class="dch-item" data-act="devtools"><span>开发者工具</span><span class="dch-kbd">F12</span></button>
     <button class="dch-item" data-act="fullscreen"><span>全屏</span><span class="dch-kbd">F11</span></button>
@@ -187,8 +236,20 @@ function renderMenu() {
   menuEl.querySelectorAll('.dch-item').forEach((item) => {
     item.addEventListener('click', async () => {
       const act = item.dataset.act;
-      if (act === 'toggle-notify' || act === 'toggle-close-to-tray') {
+      if (act === 'toggle-notify') {
         const next = await dshDesktop.menu.action(act);
+        if (next) state = { ...state, ...next };
+        renderMenu();
+        return;
+      }
+      if (act === 'toggle-shortcut-policy') {
+        const next = await dshDesktop.menu.action(act);
+        if (next) state = { ...state, ...next };
+        renderMenu();
+        return;
+      }
+      if (act === 'set-exit-action') {
+        const next = await dshDesktop.menu.action(act, { value: item.dataset.value });
         if (next) state = { ...state, ...next };
         renderMenu();
         return;
@@ -240,7 +301,38 @@ function setMaximized(isMax) {
   maxBtn.setAttribute('aria-label', maxBtn.title);
 }
 
+// 浮窗的细拖拽条（纯拖拽 + 关闭按钮，跳过完整自绘标题栏）。
+function injectFloatBar() {
+  if (document.getElementById(FLOAT_BAR_ID)) return;
+  const style = document.createElement('style');
+  style.textContent = `
+  #${FLOAT_BAR_ID}{position:fixed;top:0;left:0;right:0;height:${FLOAT_BAR_HEIGHT}px;z-index:2147483000;
+    display:flex;align-items:center;justify-content:flex-end;gap:2px;padding:0 6px 0 10px;
+    -webkit-app-region:drag;user-select:none;box-sizing:border-box;
+    background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b1220) 70%,transparent);
+    border-bottom:1px solid color-mix(in srgb,var(--dsw-alias-border-l1,rgba(255,255,255,.09)) 50%,transparent)}
+  #${FLOAT_BAR_ID} button{width:26px;height:22px;display:grid;place-items:center;border:none;border-radius:7px;
+    background:transparent;color:var(--dsw-alias-label-secondary,#b8c5ea);cursor:pointer;padding:0;
+    -webkit-app-region:no-drag;outline:none;transition:background .12s,color .12s}
+  #${FLOAT_BAR_ID} button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.09));
+    color:var(--dsw-alias-label-primary,#eef2ff)}
+  #${FLOAT_BAR_ID} button.df-close:hover{background:#e81123;color:#fff}`;
+  document.head.appendChild(style);
+  const layout = document.createElement('style');
+  layout.textContent = `body{box-sizing:border-box!important;padding-top:${FLOAT_BAR_HEIGHT}px!important}`;
+  document.head.appendChild(layout);
+  // 向页面声明浮窗拖拽条高度：fixed 定位的侧边栏（dsh-better-sidebar）读取
+  // 该属性自动下移顶部标签条，body padding 只对普通流内容生效。
+  document.documentElement.setAttribute('data-dsh-title-bar-height', String(FLOAT_BAR_HEIGHT));
+  const bar = document.createElement('div');
+  bar.id = FLOAT_BAR_ID;
+  bar.innerHTML = `<button class="df-close" title="关闭" aria-label="关闭">${GLYPHS.close}</button>`;
+  document.body.appendChild(bar);
+  bar.querySelector('.df-close').addEventListener('click', () => dshDesktop.floatWindow.close());
+}
+
 function injectChrome() {
+  if (FLOAT_MODE) { injectFloatBar(); return; }
   if (document.getElementById(BAR_ID)) return;
   const style = document.createElement('style');
   style.textContent = CHROME_CSS;

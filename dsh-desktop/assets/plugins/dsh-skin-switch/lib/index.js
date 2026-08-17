@@ -19,7 +19,15 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
  * is required for the new row set to take effect.
  */
 
-const PROFILE_NAME = "web";
+// 桌面端 v4 起默认运行在专属 profile（web-desktop），main.js 通过
+// DSH_DESKTOP_PROFILE 环境变量把实际 profile 名传给 dsh web 子进程（与
+// dsh-dock-settings / dsh-webui-market 的 host 半边同一约定）。皮肤行必须
+// 读写服务实际使用的 profile，否则 apply 写进旧 web profile、重启后皮肤
+// 不变。独立 CLI 安装（无该变量或值非法）仍用原生 web profile。
+function profileName() {
+	const p = process.env.DSH_DESKTOP_PROFILE;
+	return p && /^[A-Za-z0-9_-]+$/.test(p) ? p : "web";
+}
 const SKIN_SCOPES = ["@linxin666", "@dsh-external"];
 
 // 与客户端(client.js)一致的 strict 描述符：插件由桌面端拷贝进 web
@@ -59,9 +67,9 @@ function homeDir() {
 	return process.env.DSH_HOME || join(homedir(), ".dsh");
 }
 
-/** The web profile directory: $DSH_HOME/profiles/web. */
+/** The profile directory the service actually runs on: $DSH_HOME/profiles/<profileName>. */
 function profileDir() {
-	return join(homeDir(), "profiles", PROFILE_NAME);
+	return join(homeDir(), "profiles", profileName());
 }
 
 function patchPath() {

@@ -33,6 +33,7 @@ files:
   - session-watcher.js
   - profile-module-heal.js
   - patch-row-heal.js
+  - plugin-guard.js
   - preset-sync.js
   - bundle-integrity.js
   - stable-port.js
@@ -41,8 +42,12 @@ files:
   - watchdog.js
   - preload.js
   - assets/**/*
-  # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）等必须在成品里存在。
+  # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
+  # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。
   - scripts/koffi-preflight.cjs
+  - scripts/patch-session-manage.js
+  - scripts/plugin-manager-patch.js
+  - scripts/make-release-hashes.js
   - package.json
   - "!**/*.md"
   # `!**/*.md` above would strip every .md from node_modules too, which removes
@@ -158,7 +163,10 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  createDesktopShortcut: always
+  # V4：always 会在每次升级（含自动更新拉起的静默安装）时无条件重建桌面
+  # 快捷方式，与用户自定义/改名/换图标的快捷方式并存成两个。改为 true
+  # （尊重安装向导勾选项）；运行时维护见 main.js maintainShortcuts。
+  createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: Deepseek Harness EAC
   uninstallDisplayName: Deepseek Harness EAC

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { configLinesFor, healSoulMdPatchRow, removeBundledRowDuplicates } = require(join(root, 'patch-row-heal.js'));
+const { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds } = require(join(root, 'patch-row-heal.js'));
 
 // v2.0.0 实际写进用户 profile 的坏行：只有 id + name，没有 config。
 const BROKEN_PATCH = [
@@ -99,4 +99,70 @@ test('removeBundledRowDuplicates: 非 uninstall 目标插件（tts 等）不受�
   const rowIds = { 'mobile-fix': 'dsh-web-mobile-fix' };
   const { removed } = removeBundledRowDuplicates(patch, rowIds, ['@dsh-external/dsh-plugin-tts']);
   assert.deepEqual(removed, [], 'rowIds 不含 tts，即使 bundle 里有也不动');
+});
+
+// issue #16：git/fork/link 安装的 bundle 包名与 overlay 行包名不一致，
+// 但 entry id 相同 —— 旧「按包名匹配」删不掉，必须按 id 去重。
+test('removeBundledRowDuplicates: 按 bundle 声明的 entry id 去重（跨包名，issue #16）', () => {
+  const patch = [
+    '- insert:',
+    '    - id: tool-vision',
+    "      name: 'dsh-tool-vision'",
+    '- insert:',
+    '    - id: tdai-memory',
+    "      name: 'dsh-tdai-memory'",
+    '',
+  ].join('\n');
+  const rowIds = { 'tool-vision': 'dsh-tool-vision', 'tdai-memory': 'dsh-tdai-memory' };
+  // bundle 是 git fork：包名 dsh-vision-local，但包内 patch 声明 id: tool-vision。
+  const bundleEntryIds = new Set(['tool-vision']);
+  const { patch: out, removed } = removeBundledRowDuplicates(patch, rowIds, ['dsh-vision-local'], bundleEntryIds);
+  assert.deepEqual(removed, ['tool-vision']);
+  assert.doesNotMatch(out, /tool-vision/);
+  assert.match(out, /- id: tdai-memory/, '无关行保留');
+});
+
+test('removeBundledRowDuplicates: bundleEntryIds 为空时退化为原有按包名行为', () => {
+  const patch = '- insert:\n    - id: mobile-fix\n      name: \'dsh-web-mobile-fix\'\n';
+  const rowIds = { 'mobile-fix': 'dsh-web-mobile-fix' };
+  const { patch: out, removed } = removeBundledRowDuplicates(patch, rowIds, ['dsh-web-mobile-fix'], new Set());
+  assert.deepEqual(removed, ['mobile-fix']);
+  assert.doesNotMatch(out, /mobile-fix/);
+});
+
+// 收集函数：从 bundle 包目录解析 patch 声明的 entry id（含 dsh.bundle.patch 指向）。
+test('bundlePatchEntryIds / collectBundleEntryIds: 解析包内 patch 的 entry id', () => {
+  const dir = join(root, 'tmp-test-patch-heal', 'node_modules');
+  const pkgDir = join(dir, 'dsh-vision-local');
+  const fs = require('node:fs');
+  fs.mkdirSync(pkgDir, { recursive: true });
+  try {
+    fs.writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({
+      name: 'dsh-vision-local',
+      dsh: { bundle: { patch: 'cordis.patch.yml' } },
+    }));
+    fs.writeFileSync(join(pkgDir, 'cordis.patch.yml'),
+      '- insert:\n    - id: tool-vision\n      name: \'dsh-vision-local\'\n');
+    const ids = collectBundleEntryIds(['dsh-vision-local'], dir);
+    assert.deepEqual([...ids], ['tool-vision']);
+    assert.equal(bundlePatchEntryIds(pkgDir).has('tool-vision'), true);
+  } finally {
+    fs.rmSync(join(root, 'tmp-test-patch-heal'), { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+// V4：dsh-pet 无 config 行的存量修复（v3.1.0 全新安装即崩的根因）。
+test('healRowConfig 给缺 config 的 dsh-pet 行补包默认 config', () => {
+  const bad = "- insert:\n    - id: dsh-pet\n      name: 'dsh-pet'\n";
+  const { patch, healed } = healRowConfig(bad, 'dsh-pet', { size: 260, position: 'bottom-right' });
+  assert.ok(healed.includes('dsh-pet'));
+  assert.match(patch, /id: dsh-pet\n\s+name: 'dsh-pet'\n\s+config:\n\s+size: 260\n\s+position: "bottom-right"/);
+});
+
+test('healRowConfig 幂等且不碰相邻行', () => {
+  const bad = "- insert:\n    - id: navbar\n      name: 'n'\n- insert:\n    - id: dsh-pet\n      name: 'dsh-pet'\n";
+  const once = healRowConfig(bad, 'dsh-pet', { size: 260, position: 'bottom-right' });
+  const twice = healRowConfig(once.patch, 'dsh-pet', { size: 260, position: 'bottom-right' });
+  assert.equal(twice.patch, once.patch, '二次 heal 不应再改动');
+  assert.ok(once.patch.includes("id: navbar"));
 });

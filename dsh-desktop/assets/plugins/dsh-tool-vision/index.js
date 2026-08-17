@@ -69,6 +69,14 @@ const Config = z.object({
   bridgeExportDir: z.string().default(""),
   /** Model ids that receive image blocks directly (never bridged). */
   multimodalModels: z.array(z.string()).default([]),
+  /**
+   * Last-chance guard on the `llm/stream` waterfall: when a request for a
+   * non-whitelisted model still carries image blocks (bridge disabled, images
+   * logged before the plugin was active, forks, other adapters), downgrade
+   * them to inspect_image hints right before adapter dispatch instead of
+   * letting the adapter throw UNSUPPORTED_CONTENT and fail the whole turn.
+   */
+  requestGuard: z.boolean().default(true),
 });
 
 const MIME_BY_EXT = {
@@ -155,7 +163,8 @@ async function bridgeMessages(messages, ctx, dir) {
         type: "text",
         text:
           `[User sent an image${name}, exported to: ${path}. ` +
-          `Inspect it with the inspect_image tool to see its content.]`,
+          `You cannot see images directly. Call the inspect_image tool with path="${path}" ` +
+          `now to have the external vision model analyze it, then answer using its result.]`,
       });
     }
     next.push(deepFreeze({ ...message, content: blocks }));
@@ -348,6 +357,40 @@ async function callVision(config, imageUrl, question, detail, signal) {
   }
 }
 
+/**
+ * Last-chance guard on the `llm/stream` waterfall (config `requestGuard`).
+ * Any image block still riding a request for a non-whitelisted model at
+ * adapter-dispatch time would make the adapter throw UNSUPPORTED_CONTENT
+ * (DeepSeek chat-completions is text-only; pi-ai gates on declared input
+ * modalities) and fail the entire turn. Downgrade those blocks to the same
+ * inspect_image hint the pre-step bridge uses. The durable log is untouched —
+ * only this outgoing request is rewritten, so a whitelisted-model switch
+ * later still sees the original images.
+ */
+function attachRequestGuard(ctx, getConfig, exportDir) {
+  ctx.on("llm/stream", async (options, next) => {
+    try {
+      const config = getConfig();
+      if (config.requestGuard && typeof options?.model === "string"
+        && !config.multimodalModels.includes(options.model)
+        && hasImageBlock(options.messages)) {
+        const messages = await bridgeMessages(options.messages, ctx, exportDir);
+        if (messages.some((message, index) => message !== options.messages[index])) {
+          ctx.logger.info(
+            `[tool-vision] request guard downgraded image blocks for model "${options.model}"`,
+          );
+          return next({ ...options, messages });
+        }
+      }
+    } catch (error) {
+      // The guard must never break the call: fall through with the original
+      // options (the adapter's own error, if any, is the status quo ante).
+      ctx.logger.warn(`[tool-vision] request guard failed: ${String(error)}`);
+    }
+    return next();
+  });
+}
+
 function apply(ctx, config) {
   // ── settings-backed configuration ─────────────────────────────────────────
   // The composition entry stays the `base` layer; a registered `tool-vision`
@@ -380,6 +423,14 @@ function apply(ctx, config) {
     // so one registration serves every agent (new and resumed alike) and the
     // agent is read from the fused payload.
     attachPreStepBridge(ctx, getConfig, exportDir);
+    // Last-chance guard at adapter dispatch (see attachRequestGuard): the
+    // export dir is shared so both paths emit the same cached file paths.
+    attachRequestGuard(ctx, getConfig, exportDir);
+  } else if (getConfig().requestGuard) {
+    // Bridge off but guard on: the guard still protects text-only requests.
+    const exportDir = getConfig().bridgeExportDir || join(os.tmpdir(), "dsh-vision-bridge");
+    mkdir(exportDir, { recursive: true }).catch(() => {});
+    attachRequestGuard(ctx, getConfig, exportDir);
   }
 
   ctx.tools.register(defineTool({
@@ -421,6 +472,7 @@ export {
   EXT_BY_MEDIA,
   apply,
   attachPreStepBridge,
+  attachRequestGuard,
   bridgeMessages,
   currentModelAcceptsImage,
   deepFreeze,

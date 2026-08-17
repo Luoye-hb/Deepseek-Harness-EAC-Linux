@@ -17,7 +17,7 @@ const fs = require('node:fs');
 // 用户手工维护的同名 overlay 永不触碰。
 const PICKER_BROWSE_OVERLAY_MARKER = '# DSH-DESKTOP-AUTO: picker browse fallback';
 
-// 运行 koffi 冒烟探针。deps：
+// 运行 koffi 冒烟探针（同步版，保留给脚本/测试场景）。deps：
 //   spawnSync / nodeExe / script / existsSync / log
 // 返回 true=通过（或跳过），false=失败（应启用降级 overlay）。
 function runKoffiPreflight(deps) {
@@ -48,6 +48,57 @@ function runKoffiPreflight(deps) {
     log('koffi 预检异常: ' + err.message);
     return false;
   }
+}
+
+// V4：异步版探针（spawn 而非 spawnSync）。同步版会在启动期阻塞 Electron
+// 主进程事件循环最长 20 秒 —— 托盘/菜单/IPC 全部无响应，是「启动卡死」
+// 体感的一部分。启动链路改用本函数，语义与同步版一致。
+function runKoffiPreflightAsync(deps) {
+  const {
+    spawn, nodeExe, script,
+    existsSync: exists = fs.existsSync,
+    log = () => {},
+    timeout = 20000,
+  } = deps;
+  return new Promise((resolve) => {
+    if (!exists(script)) {
+      log('koffi 预检脚本不存在，跳过（视为通过）');
+      return resolve(true);
+    }
+    let settled = false;
+    const finish = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+    let child;
+    try {
+      child = spawn(nodeExe, [script], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      log('koffi 预检无法执行: ' + err.message);
+      return resolve(false);
+    }
+    let output = '';
+    const onData = (c) => { output += c.toString(); };
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    const timer = setTimeout(() => {
+      log('koffi 预检超时，按失败处理');
+      try { child.kill(); } catch {}
+      finish(false);
+    }, timeout);
+    timer.unref();
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      log('koffi 预检无法执行: ' + err.message);
+      finish(false);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        log('koffi 预检通过');
+        return finish(true);
+      }
+      log(`koffi 预检失败（退出码 0x${(code >>> 0).toString(16)}）: ${output.trim().slice(0, 400)}`);
+      finish(false);
+    });
+  });
 }
 
 // 降级 overlay 的完整内容（纯函数，便于测试）。
@@ -100,6 +151,7 @@ function clearAutoPickerBrowseOverlay({ file, fs: fsys = fs, log = () => {} }) {
 module.exports = {
   PICKER_BROWSE_OVERLAY_MARKER,
   runKoffiPreflight,
+  runKoffiPreflightAsync,
   buildPickerOverlayContent,
   enablePickerBrowseOverlay,
   clearAutoPickerBrowseOverlay,

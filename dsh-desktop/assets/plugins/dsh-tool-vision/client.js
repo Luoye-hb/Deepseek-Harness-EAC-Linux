@@ -56,6 +56,7 @@ window.__ModuleLoader__.load({
       bridgeTextOnly: "图片桥接（文本模型贴图自动转 inspect_image 指引）",
       bridgeExportDir: "桥接图片导出目录（空 = 系统临时目录）",
       multimodalModels: "多模态白名单（逗号分隔，这些模型直收图片块）",
+      requestGuard: "请求兜底（发往文本模型的图片块在请求发出前自动降级为 inspect_image 指引，避免整轮失败）",
       save: "保存",
       reset: "恢复默认",
       saved: "已保存",
@@ -75,6 +76,7 @@ window.__ModuleLoader__.load({
       bridgeTextOnly: "Image bridge (pasted images on text-only models become inspect_image hints)",
       bridgeExportDir: "Bridge export dir (empty = system temp)",
       multimodalModels: "Multimodal whitelist (comma-separated; these models receive image blocks directly)",
+      requestGuard: "Request guard (image blocks headed to a text-only model are downgraded to inspect_image hints before dispatch, so the turn never hard-fails)",
       save: "Save",
       reset: "Reset",
       saved: "Saved",
@@ -96,7 +98,8 @@ window.__ModuleLoader__.load({
       { key: "maxImageBytes", label: "图片大小上限（字节）", type: "number" },
       { key: "bridgeTextOnly", label: "图片桥接开关", type: "checkbox" },
       { key: "bridgeExportDir", label: "桥接导出目录", type: "text" },
-      { key: "multimodalModels", label: "多模态白名单（逗号分隔）", type: "csv" }
+      { key: "multimodalModels", label: "多模态白名单（逗号分隔）", type: "csv" },
+      { key: "requestGuard", label: "请求兜底开关", type: "checkbox" }
     ];
     var ZH_HINTS = {
       apiKey: "apiKeyHint",
@@ -105,7 +108,8 @@ window.__ModuleLoader__.load({
       maxImageBytes: "maxImageBytes",
       bridgeTextOnly: "bridgeTextOnly",
       bridgeExportDir: "bridgeExportDir",
-      multimodalModels: "multimodalModels"
+      multimodalModels: "multimodalModels",
+      requestGuard: "requestGuard"
     };
 
     function labelOf(f) {

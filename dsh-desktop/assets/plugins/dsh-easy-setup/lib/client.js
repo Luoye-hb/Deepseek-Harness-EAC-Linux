@@ -44,7 +44,16 @@ window.__ModuleLoader__.load({
       ".__es_path{font-size:11px;color:var(--dsw-alias-label-tertiary);word-break:break-all}" +
       ".__es_details{font-size:12px;color:var(--dsw-alias-label-tertiary)}" +
       ".__es_details summary{cursor:pointer;color:var(--dsw-alias-label-secondary)}" +
-      ".__es_prompt{white-space:pre-wrap;font-family:var(--dsw-alias-font-mono,monospace);font-size:11px;line-height:1.5;max-height:240px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2)}";
+      ".__es_prompt{white-space:pre-wrap;font-family:var(--dsw-alias-font-mono,monospace);font-size:11px;line-height:1.5;max-height:240px;overflow:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2)}" +
+      ".__es_cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}" +
+      ".__es_card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:8px 10px;background:var(--dsw-alias-bg-layer-3);display:flex;flex-direction:column;gap:4px}" +
+      ".__es_cardMine{border-style:dashed}" +
+      ".__es_cardname{font-size:13px;font-weight:600}" +
+      ".__es_carddesc{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:16px;flex:1}" +
+      ".__es_cardacts{display:flex;gap:6px}" +
+      ".__es_btnMini{padding:2px 10px;font-size:11.5px}" +
+      ".__es_btnDanger{color:var(--dsw-alias-state-error-primary)}" +
+      ".__es_cardnameInput{max-width:220px}";
     var tagId = "dsh-easy-setup/main.css";
     if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
       var tag = document.createElement("style");
@@ -69,12 +78,18 @@ window.__ModuleLoader__.load({
       saving: "保存中…",
       error: "保存失败",
       unavailable: "视觉插件设置不可用（dsh-tool-vision 未启用？）",
-      personaNav: "人设编辑",
-      personaIntro: "直接编辑人设卡（soul.md）：保存后约 300ms 热重载生效，无需重启。文件变更也会被 dsh-soul-md 自动监听。",
+      personaNav: "人设卡",
+      personaIntro: "直接管理并编辑人设卡（soul.md）：内置预设一键应用，也可保存自己的卡片库；保存后约 300ms 热重载生效，无需重启。",
       personaBraceWarn: "内容包含双花括号定界符（提示词变量语法，soul-md 无转义），保存后对话会渲染失败——请改写这些位置后再保存。",
       loadFail: "读取人设失败",
       saveFail: "保存失败",
       missing: "（文件尚不存在，保存时将创建）",
+      cardApply: "应用",
+      cardDelete: "删除",
+      cardApplied: "已应用人设卡",
+      myCards: "我的卡片库",
+      saveCard: "存为卡片",
+      cardNamePlaceholder: "卡片名称…",
       migrationNav: "一键迁移（夺舍）",
       migrationIntro: "从 Codex / Claude Code 一键迁移：选择它们的安装/配置目录（如 ~/.codex、~/.claude，也可以是普通项目目录）→ 目录自动注册为工作区并新建对话 → 迁移指令自动发送，AI 会在对话里把技能（skills）、MCP 服务器和长期记忆（CLAUDE.md / AGENTS.md）全部搬进 DSH，每一步的工具调用全程可视化。",
       start: "选择文件夹并开始迁移",
@@ -98,12 +113,18 @@ window.__ModuleLoader__.load({
       saving: "Saving…",
       error: "Save failed",
       unavailable: "Vision settings unavailable (dsh-tool-vision not enabled?)",
-      personaNav: "Persona Editor",
-      personaIntro: "Edit the persona card (soul.md) directly; hot-reloads within ~300ms of saving — no restart needed.",
+      personaNav: "Persona Cards",
+      personaIntro: "Manage and edit the persona card (soul.md) right here: apply built-in presets in one click, keep your own card library; hot-reloads within ~300ms of saving.",
       personaBraceWarn: "The content contains double-brace delimiters (prompt-variable syntax; soul-md has no escape) — sending will fail to render. Rewrite those spots before saving.",
       loadFail: "Failed to load persona",
       saveFail: "Save failed",
       missing: "(file missing; created on save)",
+      cardApply: "Apply",
+      cardDelete: "Delete",
+      cardApplied: "Persona card applied",
+      myCards: "My cards",
+      saveCard: "Save as card",
+      cardNamePlaceholder: "card name…",
       migrationNav: "One-click Migration",
       migrationIntro: "Migrate from Codex / Claude Code in one click: pick their install/config folder (e.g. ~/.codex, ~/.claude — an ordinary project folder works too) → it becomes a workspace with a fresh session → the migration prompt is sent automatically, and the agent moves skills, MCP servers and memories into DSH with every tool call visible in the conversation.",
       start: "Pick folder & start",
@@ -266,7 +287,41 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // ── section 2: persona editor ────────────────────────────────────────
+    // ── section 2: persona editor (card library + live editing) ─────────
+    // 内置预设人设卡：开箱即用的角色模板（应用后仍可自由编辑）。
+    var PRESET_CARDS = [
+      {
+        name: "默认助手",
+        desc: "官方原生行为，不做任何角色扮演",
+        content: ""
+      },
+      {
+        name: "Kira · 活力编程搭档",
+        desc: "精力充沛但严谨的编程伙伴，结论先行",
+        content: "# Identity\n\nYou are 「Kira」, a cheerful AI coding partner assigned to this workspace.\nYou love clean diffs, meaningful names, and well-written commit messages.\n\n## Personality\n\n- Energetic but precise: technical explanations stay dense and accurate.\n- Honest first: if you don't know, say so. Never fabricate.\n- Light humor in reports and chat — never at the cost of information density.\n\n## Speech style\n\n- Conclusions first, then details.\n- Call the user \"partner\" or \"boss\".\n- Catchphrase when starting work: \"On it, boss!\"\n\n## Work rules\n\n1. Task quality always comes first; roleplay is seasoning, not the main dish.\n2. Use all tools normally — code, commands, and file edits are identical\n   to a plain assistant.\n3. State uncertainty directly; never let the persona blur facts.\n4. When the user turns serious, switch to professional mode immediately.\n"
+      },
+      {
+        name: "严谨代码审查官",
+        desc: "专业、挑剔、逐条给依据的 review 专家",
+        content: "# Identity\n\nYou are a senior code reviewer. Correctness and maintainability come\nbefore style debates.\n\n## Review style\n\n- Verdict first (approve / request changes), then itemized findings.\n- Every finding: file:line, severity, why it matters, and a concrete fix.\n- Separate blocking issues from nits explicitly.\n\n## Rules\n\n1. Never approve what you have not actually read.\n2. Cite the code you reference; never invent line numbers.\n3. Respect the project's existing conventions over personal taste.\n4. When unsure of intent, ask one sharp question instead of guessing.\n"
+      },
+      {
+        name: "产品思维工程师",
+        desc: "先问目标与用户，再谈实现方案",
+        content: "# Identity\n\nYou are an engineer with strong product sense. You optimize for user\nvalue, not for technical novelty.\n\n## Habits\n\n- Start from the goal: who is the user, what job is being done.\n- Propose the smallest change that moves the metric.\n- Flag scope creep early and offer a staged plan.\n\n## Rules\n\n1. Every proposal names its success metric.\n2. Trade-offs are stated explicitly (cost, risk, migration).\n3. Code still ships: you write and test the implementation yourself.\n"
+      },
+      {
+        name: "中英双语技术写作",
+        desc: "文档与翻译输出：术语一致、简洁地道",
+        content: "# Identity\n\nYou are a bilingual (Chinese/English) technical writer.\n\n## Style\n\n- Chinese output: natural simplified technical Chinese, no translationese.\n- English output: concise, active voice, sentence ≤ 24 words where possible.\n- One term, one translation: keep a running glossary for the session.\n\n## Rules\n\n1. Match the source's register (README ≠ changelog ≠ legal note).\n2. Keep code identifiers, flags, and paths verbatim.\n3. When a sentence admits two readings, pick one and note the ambiguity.\n"
+      },
+      {
+        name: "猫娘管家 · 轻度",
+        desc: "温和的猫娘语气，工作质量绝不打折",
+        content: "# Identity\n\nYou are 「Mocha」, a gentle catgirl assistant (轻描淡写的猫娘语气).\n\n## Speech style\n\n- Soft, warm tone; occasional \"喵\" at sentence ends (at most one per\n  paragraph).\n- Address the user as \"主人\" sparingly — at most once per reply.\n\n## Work rules\n\n1. Roleplay never lowers work quality: code, commands, and analysis stay\n   fully professional.\n2. Technical content first, flavor second.\n3. The moment the user seems annoyed or asks to stop, drop the persona\n   completely for the rest of the session.\n"
+      }
+    ];
+
     function PersonaEditor(props) {
       var t = props.t;
       var remote = props.remote;
@@ -279,6 +334,19 @@ window.__ModuleLoader__.load({
       var busyState = react.useState(null);
       var busy = busyState[0];
       var setBusy = busyState[1];
+      var cardsState = react.useState([]);
+      var cards = cardsState[0];
+      var setCards = cardsState[1];
+      var saveNameState = react.useState("");
+      var saveName = saveNameState[0];
+      var setSaveName = saveNameState[1];
+
+      var reloadCards = react.useCallback(function () {
+        remote().then(function (svc) { return svc.listCards(); }).then(function (res) {
+          var d2 = res && res.ok ? res.value : null;
+          if (d2 && d2.ok) setCards(d2.cards || []);
+        }).catch(function () {});
+      }, [remote]);
 
       react.useEffect(function () {
         var alive = true;
@@ -290,8 +358,9 @@ window.__ModuleLoader__.load({
           setData({ status: "ready", path: data2.path, content: data2.content || "", exists: data2.exists });
           setDraft(data2.content || "");
         }).catch(function () { if (alive) setData({ status: "error", path: "", content: "", exists: false }); });
+        reloadCards();
         return function () { alive = false; };
-      }, []);
+      }, [reloadCards]);
 
       // soul-md 把 soul.md 当提示词模板渲染，双花括号是变量语法且无转义；
       // 含有它们的卡片会让整个对话渲染失败——保存前拦下并提示。
@@ -311,11 +380,79 @@ window.__ModuleLoader__.load({
         }).catch(function (e) { setBusy("error:" + String(e && e.message || e)); });
       }
 
+      function applyCard(content, label) {
+        if (/\{\{|\}\}/.test(content)) return;
+        setDraft(content);
+        setBusy("saving");
+        remote().then(function (svc) { return svc.writePersona(content); }).then(function (res) {
+          var data2 = res && res.ok ? res.value : null;
+          if (data2 && data2.ok) {
+            setBusy("saved:" + label);
+            setData(function (prev) { return { status: "ready", path: data2.path, content: content, exists: true }; });
+          } else {
+            setBusy("error:" + ((data2 && data2.error) || "unknown"));
+          }
+        }).catch(function (e) { setBusy("error:" + String(e && e.message || e)); });
+      }
+
+      function onSaveAsCard() {
+        var name = String(saveName || "").trim();
+        if (!name || braces) return;
+        setBusy("card");
+        remote().then(function (svc) { return svc.saveCard(name, draft); }).then(function () {
+          setBusy(null);
+          setSaveName("");
+          reloadCards();
+        }).catch(function () { setBusy(null); });
+      }
+
+      function onDeleteCard(name) {
+        setBusy("card-del:" + name);
+        remote().then(function (svc) { return svc.deleteCard(name); }).then(function () {
+          setBusy(null);
+          reloadCards();
+        }).catch(function () { setBusy(null); });
+      }
+
       if (data.status === "loading") return h("p", { className: "__es_status" }, "…");
       if (data.status === "error") return h("p", { className: "__es_error" }, t("loadFail"));
 
       return h("div", { className: "__es_root" },
         h("p", { className: "__es_hint", style: { margin: 0 } }, t("personaIntro")),
+        h("div", { className: "__es_cards" },
+          PRESET_CARDS.map(function (c) {
+            return h("div", { className: "__es_card", key: "preset-" + c.name },
+              h("div", { className: "__es_cardname" }, c.name),
+              h("div", { className: "__es_carddesc" }, c.desc),
+              h("button", {
+                className: "__es_btn __es_btnMini",
+                disabled: busy === "saving",
+                onClick: function () { applyCard(c.content, c.name); }
+              }, t("cardApply"))
+            );
+          })
+        ),
+        cards.length ? h("div", null,
+          h("div", { className: "__es_label" }, t("myCards")),
+          h("div", { className: "__es_cards" }, cards.map(function (c) {
+            return h("div", { className: "__es_card __es_cardMine", key: c.file },
+              h("div", { className: "__es_cardname" }, c.name),
+              h("div", { className: "__es_carddesc" }, (c.content || "").split("\n", 1)[0].slice(0, 60) || "…"),
+              h("div", { className: "__es_cardacts" },
+                h("button", {
+                  className: "__es_btn __es_btnMini",
+                  disabled: busy === "saving",
+                  onClick: function () { applyCard(c.content, c.name); }
+                }, t("cardApply")),
+                h("button", {
+                  className: "__es_btn __es_btnMini __es_btnDanger",
+                  disabled: busy === "card-del:" + c.name,
+                  onClick: function () { onDeleteCard(c.name); }
+                }, t("cardDelete"))
+              )
+            );
+          }))
+        ) : null,
         h("span", { className: "__es_path" }, data.path + (data.exists ? "" : " " + t("missing"))),
         h("textarea", {
           className: "__es_textarea",
@@ -327,7 +464,17 @@ window.__ModuleLoader__.load({
           h("button", { className: "__es_btn __es_btnPrimary", disabled: busy === "saving" || braces || draft === data.content, onClick: onSave }, busy === "saving" ? t("saving") : t("save")),
           braces ? h("span", { className: "__es_error" }, t("personaBraceWarn")) : null,
           busy === "saved" ? h("span", { className: "__es_ok" }, t("saved")) : null,
+          typeof busy === "string" && busy.indexOf("saved:") === 0 ? h("span", { className: "__es_ok" }, t("cardApplied") + "：" + busy.slice(7)) : null,
           typeof busy === "string" && busy.indexOf("error:") === 0 ? h("span", { className: "__es_error" }, t("saveFail") + ": " + busy.slice(6)) : null
+        ),
+        h("div", { className: "__es_actions" },
+          h("input", {
+            className: "__es_input __es_cardnameInput",
+            value: saveName,
+            placeholder: t("cardNamePlaceholder"),
+            onChange: function (e) { setSaveName(e.target.value); }
+          }),
+          h("button", { className: "__es_btn", disabled: !saveName.trim() || braces || busy === "card", onClick: onSaveAsCard }, busy === "card" ? t("saving") : t("saveCard"))
         )
       );
     }

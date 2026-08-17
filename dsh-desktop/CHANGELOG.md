@@ -5,7 +5,227 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 版本路径：0.1.0（基础壳）→ 0.2.0（伴侣插件体系 + 自更新 + 会话工具链）→
 1.0.0（品牌升级 EAC + 界面皮肤 + 快速配置 + 插件市场 + 稳定性自愈）→
 2.0.0（社区插件市场 + 视觉/记忆/人设插件全家桶 + 重启窗口期排队任务 + 插件原样分发）→
-3.0.0（本版：升级链路根治 + 崩溃自恢复/看门狗 + 右侧边栏 + 上游预设全家桶）。
+3.0.0（升级链路根治 + 崩溃自恢复/看门狗 + 右侧边栏 + 上游预设全家桶）→
+3.1.0（插件保护中心 + 原生 CLI 共存根治 + 字体自定义 + 自动压缩 + 人设卡库）→
+4.0.0（本版：四大用户反馈问题根治 + SHA-256 更新校验 + 微信 ClawBot 桥 + 多窗口
++ 会话删除 + AI 变更审核 + 崩溃急救 undo + 大肥鱼桌宠 + 插件启停管理）。
+
+## [4.0.0] — 2026-08-16
+
+### 修复：退出后残留一对进程（用户实测三次三次成对残留）
+- 根因：`before-quit` 里的 `killTree` 把强杀补刀挂在 1500ms 的 `setTimeout` 上，
+  而 Electron 在 before-quit 后数百毫秒内就退出，定时器随主进程湮灭；无 `/F` 的
+  taskkill 对控制台进程（node.exe 无顶层窗口，无处投递 WM_CLOSE）基本无效 ——
+  dsh web 的 node.exe 连同它的 conhost.exe 每次退出都原样残留。
+- 修复：新增 `killTreeAndWait`（优雅 taskkill → 有界等待 → `taskkill /T /F` → 再
+  等待，全程有界）；`before-quit` 改为 `preventDefault` + 异步清理完成后
+  `app.exit(0)`；客户端更新重启路径同样等待进程树死透；退出时强杀在跑的市场
+  排队任务（pnpm 子进程）并回收全部会话浮窗。
+
+### 修复：更换快捷方式图标后重启多出一个快捷方式
+- 根因：存在性判断只认「桌面\Deepseek Harness EAC.lnk」精确文件名。用户换图标
+  通常删旧 .lnk 自建新快捷方式（文件名几乎必然不同），下次启动判定「缺失」→
+  再造一个标准名快捷方式 → 桌面出现两个；且图标版本分支会无条件 replace，把用户
+  自定义图标静默还原成默认（「改一次→还原一次」循环）。
+- 修复：按「.lnk 的 target 是否指向本应用 exe」识别既有快捷方式（任意文件名都
+  算），桌面上已有指向本应用的 .lnk 就绝不重复新建；图标刷新只针对仍使用壳层
+  自管 icon.ico 的快捷方式，用户自定义图标绝不覆盖；NSIS `createDesktopShortcut:
+  always → true`（尊重安装向导勾选，升级不再无条件重建）；⋯ 菜单新增「桌面快捷
+  方式自动维护」开关（`settings.shortcutPolicy: never` 时完全不碰桌面快捷方式）。
+
+### 修复：更新/重装依赖清掉第三方插件的构建产物（meow-memory lib/ 蒸发）
+- 根因：`dsh plugin` 是 pnpm 转发器，任何安装/卸载都按锁文件重新解包整棵 profile
+  node_modules；meow-memory 这类 GitHub 插件 tarball 不含构建好的 lib/（pnpm v10
+  还封锁未 allowBuilds 的构建脚本），人工补齐的 lib/ 每次重装必被清掉。
+- 修复：新增 artifact-keep 机制（主进程与市场 host 共用一份实现）—— 桌面端触发
+  pnpm 前快照第三方包到 `<DSH_HOME>/plugin-artifact-cache/<profile>/`，完成后把
+  「磁盘上消失而快照里有」的文件补回（只补缺、绝不覆盖现存文件；包卸载清快照、
+  版本升级放弃旧快照）；启动时兜底回填上次异常退出没回填的部分；配套插件与
+  @deepseek-ai 官方闭包不进快照（壳层本就会重建）。
+
+### 修复/优化：启动「60 秒超时」
+- 就绪判定改为 stdout 就绪行与 HTTP 探测（期望端口）并行竞争 —— 就绪行被管道
+  缓冲吞掉或格式变化时不再假超时；
+- profile 首次引导（node_modules 缺失，dsh 要先跑 pnpm 装依赖）就绪上限放宽到
+  180 秒，稳态维持 60 秒；
+- koffi FFI 预检从 `spawnSync`（同步阻塞主进程事件循环最长 20 秒，托盘/菜单/IPC
+  全无响应）改为异步 spawn；
+- 配套插件拷贝增加内容戳记（版本+文件数+字节数一致即跳过），大资产插件
+  （dsh-pet 15MB / dsh-dafeiyu 54MB）不再每次启动全量重拷。
+
+### 新增：客户端更新 SHA-256 内容校验（用户建议⑥）
+- 下载完成后强校验 SHA-256，不一致 → 删除文件并中止更新（绝不运行被篡改/损坏的
+  安装包）。校验值来源按优先级：GitHub Release 资产自带 digest 字段 → Release
+  附带的 SHA256SUMS.txt（`npm run dist` 自动生成，发布时随资产上传；Gitee 分片
+  合并后同样适用）→ 都没有时记录告警并放行（老 release 兼容）。
+
+### 新增：微信 ClawBot / OpenClaw 桥（自上游 dsh_desktop 移植，v0.7.0）
+- 设置页新增「ClawBot」栏：扫码绑定微信官方 ClawBot 小程序（腾讯 iLink 协议、
+  仅出站长轮询，无需公网 IP），每个微信用户映射独立 DSH 会话与工作区；
+  `/help` `/list` `/attach` `/new` 指令；微信用户白名单。
+- OpenAI 兼容端点 `/openclaw-bridge/v1/chat/completions`（stream/非 stream），
+  OpenClaw 等网关可直接驱动常驻 DSH 会话；回环免 token、非回环强制 Bearer。
+- 第三方模型：ClawBot 栏可填 baseURL/key/model 走别家 OpenAI 兼容模型。
+- 壳层补丁：dsh-host-apiproxy 设置命名空间白名单加 `openclaw-bridge`（随启动
+  幂等应用、覆盖 agent overlay，官方更新后自动重放）。
+
+### 新增：多窗口（会话浮窗，自上游移植）
+- 会话头部「弹出到独立窗口」：独立无边框窗口打开该会话（同会话去重、全局上限
+  8 个）；浮窗与主窗 localStorage 隔离（独立 partition），标题跟随会话；配套
+  dsh-side-session 插件提供侧边临时会话（浮窗追问、不写主会话、Ctrl+Shift+S）。
+
+### 新增：会话删除与归档管理（自上游移植 + 补丁）
+- 官方只有归档没有删除；运行时补丁（幂等、锚点不匹配自动跳过、覆盖 agent
+  overlay）打通全链路：会话行菜单「删除对话」+ 设置内归档管理面板（恢复/删除）。
+
+### 新增：AI 变更审核（用户建议⑤，dsh-change-review 配套插件）
+- 监听官方 fileChanges 投影：手动（设置页按钮）或自动（变更停止 20 秒后，10 分钟
+  冷却）向当前对话发送审核请求，模型从正确性/安全性/目标一致性复查自己刚做的
+  改动，结论配合「文件」页一键还原落地。
+
+### 新增：崩溃急救与撤销（dsh-undo-savepoint 内置，lire1131，MIT）
+- 配置文件 + 用户插件代码树快照（自动/手动双库）、undo/redo/回退任意版本、
+  密钥脱敏 + 本机 vault、一键安全模式（禁用除自身外所有插件保启动）、崩溃归因、
+  跨机迁移 ZIP。与插件保护中心（配置面）、「文件」还原（会话内改动）互补。
+
+### 新增：大肥鱼桌宠（dsh-dafeiyu 内置，QCYTSN；默认禁用）
+- 真实会话状态驱动的原生置顶桌宠：空闲/思考/工作/等待/完成/错误六态 + 项目状态
+  卡 + 摸头/戳一戳/拖拽（PySide6 helper，随包分发 49MB exe）。
+- 默认禁用（含大体量二进制，按需开启）：「设置 → 插件 → 管理」里启用；角色素材
+  按 ASSET_LICENSE.md 随包分发保留署名（代码 MIT）。
+
+### 新增：插件启停管理（自上游移植 + EAC 修复）
+- 设置页「插件 → 管理」标签：列出配套/用户/核心插件与启用状态，不重启切换启停
+  （写 profile patch 的用户层 disabled 条目，纯文本手术）。
+- EAC 修复了上游手术脚本的两个缺陷：① 禁用条目时贪婪正则会把后续兄弟条目整块
+  误删（数据丢失，实测复现）；② 默认禁用的配套插件被用户启用后会被下次启动的
+  sync 重新插回 disabled 行。改为行级扫描手术 + 启用保留裸条目。
+
+### 新增：其它自上游移植的配套插件
+- dsh-navbar（对话节点导航条）、dsh-conversation-tweaks（隐藏大量工具输出）、
+  dsh-prompt-custom（自定义注入提示词）、dsh-third-party-thinking（第三方模型
+  reasoning_effort 控件）。
+
+### 菜单与托盘增强（用户建议③④）
+- ⋯ 菜单与托盘菜单新增「重启 Web 服务」：不关闭应用原地重启 dsh web（皮肤/插件
+  切换生效路径，等同市场安装后的自动重启）。
+
+### 新增：浏览器风格右键菜单（用户反馈）
+- 主窗与浮窗的右键菜单按场景自建（Electron 不展示 Chromium 内置菜单）：
+  输入框/编辑器 → 撤销/重做/剪切/复制/粘贴/删除/全选（enabled 实时跟随
+  可操作性灰显）；图片 → 复制图片/图片另存为；选中文本 → 复制/全选；
+  页面空白区 → 后退/前进/重新加载。
+
+### 新增：余额 / 高峰提醒样式定制（用户反馈）
+- 设置 →「外观 · 字体与颜色」新增「余额 / 高峰提醒样式」分组：文字颜色、
+  流光开关与流光颜色（循环扫光动画：余额徽章背景扫光、高峰提醒弹窗标题
+  文字流光）；「预览效果」弹出预览窗，用真实样式类复刻余额徽章与高峰
+  提醒弹窗，所见即所得。峰/谷徽章的橙绿语义色不受影响；不设置时零视觉
+  变化；配置经 CSS 变量（--eac-widget-fg / --eac-widget-glow）下发并走
+  颜色白名单校验（防 CSS 注入）。
+
+### 修复：v3.1.0 全新安装即「启动失败」的根因（dsh-pet 行缺 config）
+- 配套插件 dsh-pet 的宿主半边读取 config.fullRoot（无空值守卫），而壳层为它
+  写入的 patch 行不带 config 块 —— loader 传入 undefined，dsh-pet apply 即
+  崩，整棵插件树加载失败、dsh web 退出码 1。老用户因市场安装过的行自带
+  config 才幸免；全新安装必现。
+- 修复：配套条目按包内出厂值显式写 config（size/position），并新增
+  healRowConfig 一次性修复 v3.1.0 存量坏行（幂等，用户改过的值不动）。
+  同轮排查全部配套插件：其余 apply(config) 均有空值守卫，无同类问题。
+
+### 修复：上游发布 Linux 产物后 Windows 更新失败（平台感知选版）
+- 场景：本仓库双平台（Windows + Linux）发布后，若最新 release 只有 Linux
+  资产，旧版客户端的 `/releases/latest` 查询会把 Windows 用户引向一次必然
+  失败的更新（selectAsset 找不到 .exe）。
+- 修复：检查更新改用 releases 列表（近 20 个），自新向旧扫描，选中「第一个
+  含本平台（Windows）安装包资产的 release」—— Linux-only 版本被跳过并记
+  日志，更早的 Windows 版本可正常回退选中，不漏更新也不报错；
+  draft/prerelease 与 /latest 同语义过滤；selectAsset 显式拒绝文件名带
+  linux/arm64/appimage/.deb 等标记的资产。自定义镜像 API 兼容单对象与
+  列表两种形态。
+
+### 新增：峰谷价格卫士（dsh-offpeak 内置，christophersmith2737-commits，MIT）
+- DeepSeek 峰谷定价（2026-08-17 起）高峰时段（北京时间 9:00–12:00 /
+  14:00–18:00）在发送前拦截提醒：消息保留在输入框，弹窗展示当前模型
+  高峰/闲时价目；「继续执行」原样放行、「定时执行」排到闲时段自动执行
+  （持久化到 profile，浏览器不在线也到点执行）、「今日不再提醒」当天静音。
+- 与余额小部件互补（事前拦截省钱 vs 事后显示花费）；auto-compact / AI 变更
+  审核 / 消息回退 / openclaw 桥的程序化提交不经 DOM 拦截层，互不影响；
+  可在「设置 → 插件 → 管理」关闭。
+
+### 其他
+- E2E/自动化守卫：`DSH_DESKTOP_TEST_NO_SHORTCUTS=1` 跳过快捷方式维护与
+  临时目录告警（测试环境不污染真实开始菜单/桌面快捷方式）。
+
+## [3.1.0] — 2026-08-16
+
+### 新增：内置插件保护中心（plugin-guard.js，融合三大社区保护插件并升华）
+- 融合 [lxzy-7/dsh-plugin-guard]（安装前快照 / 一键与自动回滚 / 守护启动 / 事故报告）、
+  [LX2000WASD/dsh-web-plugin-manager]（安装守卫 + 健康检查入口）、
+  [chenw2759-wq/dsh-plugin-healthcheck]（静态体检）三者的能力，跑在 Electron 主进程：
+- **快照与回滚**：每次启动 / 每个市场排队任务执行前自动快照 profile 的四个配置文件
+  （package.json / pnpm-lock.yaml / pnpm-workspace.yaml / cordis.patch.yml，保留最近 10 份）；
+  回滚前自动再留一份「回滚前」快照，反悔有路。
+- **守护启动**：启动失败 → 自动体检 → 可修复项修复 → 重试 → 仍失败回滚到最后良好
+  快照 → 再试 → 仍失败落事故报告并走原有失败对话框。每层只重试一次，绝不循环。
+- **静态体检**（只读，绝不执行插件代码）：模块遮蔽（真实目录 + pnpm 链接）、patch 行
+  重复 id / soul-md 缺 config、junction 归属、高危静态扫描（远程下载执行 / base64
+  动态求值 / 持久化驻留 / 环境变量外传五类模式）。
+- **设置页「插件保护」分区**（新配套插件 dsh-plugin-shield）：状态卡 / 立即快照 /
+  快照列表与一键回滚 / 健康检查与一键修复 / 事故报告查看与标记解决。
+- **市场安装增强**：市场排队任务执行前自动快照（`market:<插件>` 原因标记），
+  安装坏插件后可在保护中心一键回到安装前状态。
+
+### 修复：与原生 DeepSeek Harness（CLI / npx）冲突的根治
+- **根因**：dsh-app-boot 每次启动都会把 `<DSH_HOME>/profiles/node_modules` 的共享
+  junction 指向「当前运行的 dsh 实例」自己的闭包 —— 原生 CLI 一跑，桌面端的模块
+  解析被换血（版本错位 / npx 缓存被清理后悬空 →「设置命名空间不可用」、启动失败）；
+  同时桌面端历史版本把配套插件行/包写进共享 `web` profile，pnpm 安装互踩。
+- **桌面专属 profile**：默认改用独立 `web-desktop` profile 启动（`dsh --profile
+  web-desktop`，已实机验证），DSH_HOME 不变 —— 会话、API Key、settings.yaml 依旧
+  与 CLI 共享；插件树 / pnpm / patch 层完全隔离。需要旧行为可设
+  `settings.shareWebProfile: true`。
+- **一次性迁移**：检测到旧共享 profile 里的桌面端痕迹时自动清理（配套行 + 拷贝包 +
+  内置清单标记），用户选中的皮肤迁移到新 profile；用户用市场装的插件是原生端资产，
+  一律不动。
+- **junction 归属守卫**：启动时 + 每 5 分钟巡检共享 junction 指向；被外部 dsh 改指且
+  外部进程已退出时自动修复回客户端闭包（外部进程运行中则等待，互不打扰），修复后
+  系统通知告知。
+- **配套插件宿主半边适配**：dsh-webui-market / dsh-dock-settings 的读写与安装默认
+  落到 `DSH_DESKTOP_PROFILE`（桌面注入环境变量），独立安装使用时保持 `web`。
+
+### 修复：「设置命名空间不可用」再根治
+- `healProfileModuleShadowing` 扩展：除真实目录拷贝外，同时清理 pnpm 链接进 profile
+  自身 `.pnpm` store 的核心包链接（模块双实例的另一形态）；支持按 profile 参数
+  清理（桌面专属 profile 与共享 profile 都能治）。
+- 修复时机补强：守护启动失败链路自动体检 + 修复（不再只依赖启动前的一次 heal）。
+
+### 新增：外观自定义（dsh-font-custom 配套插件）
+- 设置页「外观 · 字体与颜色」：界面/代码字体家族（预设 + 自定义栈）、界面/聊天正文/
+  代码字号、主文字/次要文字/强调色取色器；实时预览、恢复默认、localStorage 持久化。
+- 通过 dsw 主题变量覆盖（与皮肤同体系，自定义优先），MutationObserver 兜底防皮肤
+  切换挤掉覆盖样式。
+
+### 新增：自动压缩（dsh-auto-compact 配套插件，默认开启）
+- 监听会话 `contextPressure` 投影（token-meter），占用率（projectedTokens ÷
+  contextWindow，与官方环指示器同口径）达到阈值（默认 80%，可调 60–95%）且对话空闲
+  时自动提交 `/compact`（官方压缩命令，事务由内核 dsh-compaction-basic 执行）。
+- 触发提示 toast、3 分钟冷却、失败静默重试；设置页可开关 / 调阈值 / 手动立即压缩。
+
+### 新增：人设卡完整管理（dsh-easy-setup 升级）
+- 设置页「人设卡」：内置 6 张预设卡（默认助手 / Kira 搭档 / 代码审查官 / 产品思维
+  工程师 / 双语技术写作 / 轻度猫娘）一键应用；「我的卡片库」保存 / 应用 / 删除
+  自定义卡片（存于 `<DSH_HOME>/persona-cards/`）；当前卡片实时编辑与热重载不变。
+
+### 新增：MCP 一键导入（dsh-dock-settings 升级，对齐 ovo669/dsh-MCP-）
+- MCP 页新增「从 Claude / Codex 导入」：扫描 `~/.claude.json` 的 mcpServers 与
+  `~/.codex/config.toml` 的 `[mcp_servers.*]`，勾选合并导入（同名覆盖），保存后
+  重启生效。原生 MCP 管理（增删改/启停/stdio+http）此前已具备，此补齐迁移链路。
+
+### 测试
+- 新增 `plugin-guard.test.mjs`（13 项：快照/回滚/体检/修复/junction/守护启动/事故）、
+  `desktop-extras.test.mjs`（7 项：字体净化与 CSS 生成 / 压缩占用率与阈值 / MCP
+  导入解析器）；全量 163 项测试通过。
 
 ## [3.0.1] — 2026-08-16
 
