@@ -15,7 +15,7 @@
 // installed for. We deliberately never rebuild them against Electron.
 
 const { app, BrowserWindow, Menu, Tray, shell, dialog, Notification, ipcMain, clipboard } = require('electron');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn, spawnSync, execSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -25,6 +25,8 @@ const os = require('node:os');
 const updater = require('./updater');
 const clientUpdater = require('./client-updater');
 const balance = require('./balance');
+const { dshHomePath } = require('./dsh-home');
+const { loadSettings, saveSettings } = require('./settings');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
 const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
@@ -48,7 +50,7 @@ const fileRootsCache = { at: 0, roots: [] };
 
 function fileRoots() {
   if (Date.now() - fileRootsCache.at < 5 * 60 * 1000) return fileRootsCache.roots;
-  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+  const dshHome = dshHomePath();
   const roots = [];
   const walk = (dir) => {
     let entries;
@@ -163,6 +165,16 @@ function dshVersionSource() {
   return updater.overlayVersion(updCtx()) ? '用户目录（已更新）' : '内置';
 }
 
+// Windows tasklist PID 存活探测（killTree 与 waitForProcExit 共用）。
+// CSV 输出里 PID 总是带引号（"app.exe","1234",...），带引号匹配避免裸
+// 子串误命中（如 PID 234 误匹配内存列 "1,234 K"）。查询失败视为已退出。
+function pidAliveWin(pid) {
+  try {
+    const out = execSync('tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
+    return out.includes('"' + pid + '"');
+  } catch { return false; }
+}
+
 function killTree(proc) {
   if (!proc || !proc.pid) return;
   try {
@@ -172,13 +184,9 @@ function killTree(proc) {
       spawn('taskkill', ['/pid', String(proc.pid), '/T'], { windowsHide: true, stdio: 'ignore' });
       const pid = proc.pid;
       setTimeout(() => {
-        try {
-          const query = 'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH';
-          const alive = require('node:child_process').execSync(query, { encoding: 'utf8', windowsHide: true });
-          if (alive.includes(String(pid))) {
-            spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          }
-        } catch { /* 进程已退出或查询失败 */ }
+        if (pidAliveWin(pid)) {
+          spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        }
       }, 1500);
     } else {
       try { process.kill(-proc.pid, 'SIGTERM'); } catch { proc.kill('SIGTERM'); }
@@ -192,6 +200,38 @@ function killTree(proc) {
   } catch (err) {
     log('killTree', String(err));
   }
+}
+
+// ---------------------------------------------------------------------------
+// 退出/重启仪式（统一收口）。此前这段序列（quitting → 标记 cleanExit →
+// 终结 dsh 子进程 → 重启/退出）在 agent 更新、恢复页面、客户端更新等
+// 路径各写一遍，漏标任何一步（如 cleanExit）都会让看门狗误判为崩溃并
+// 拉起旧实例。改动退出路径只改这两个函数。
+// ---------------------------------------------------------------------------
+
+// 干净退出并重启应用。app.exit 不触发 window close 事件，天然绕过
+// close-to-tray 拦截；force 额外置 forceQuit，供恢复页面等需要确保
+// 退出的入口使用。
+function restartApp({ force = false } = {}) {
+  quitting = true;
+  if (force) forceQuit = true;
+  markCleanExit();
+  killTree(serverProc);
+  app.relaunch();
+  app.exit(0);
+}
+
+// 客户端（封装）更新专用：终结服务与后台任务后交给更新脚本，由它负责
+// 安装并拉起新版本，随后本进程退出（不 app.relaunch，避免新旧实例竞争）。
+function restartWithClientUpdate(ctx, pendingUpdate) {
+  quitting = true;
+  forceQuit = true;
+  markCleanExit();
+  killTree(serverProc);
+  updater.abort();
+  if (sessionWatcher) sessionWatcher.stop();
+  clientUpdater.applyUpdate(ctx, pendingUpdate);
+  setTimeout(() => app.exit(0), 400);
 }
 
 // ---------------------------------------------------------------------------
@@ -309,11 +349,7 @@ function waitForProcExit(proc, timeoutMs) {
     const started = Date.now();
     const check = () => {
       if (IS_WIN) {
-        try {
-          const out = require('node:child_process').execSync(
-            'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
-          if (!out.includes('"' + pid + '"')) return resolve();
-        } catch { return resolve(); }
+        if (!pidAliveWin(pid)) return resolve();
       } else {
         try { process.kill(-pid, 0); } catch {
           try { process.kill(pid, 0); } catch { return resolve(); }
@@ -338,12 +374,12 @@ function showBox(opts) {
 // dsh web server lifecycle
 // ---------------------------------------------------------------------------
 
-// stable-port.js 的依赖注入适配器：把 updater 的 settings 读写桥接过去。
+// stable-port.js 的依赖注入适配器：把 settings 读写桥接过去。
 function stablePortCtx() {
   const c = updCtx();
   return {
-    loadSettings: () => updater.loadSettings(c),
-    saveSettings: (_ctx, s) => updater.saveSettings(c, s),
+    loadSettings: () => loadSettings(c),
+    saveSettings: (_ctx, s) => saveSettings(c, s),
   };
 }
 
@@ -430,9 +466,9 @@ function watchServerProc(proc, out, opts = {}) {
           const actual = Number(new URL(m[1]).port) || 0;
           if (opts.expectedPort != null && actual > 0 && actual !== opts.expectedPort) {
             const c = updCtx();
-            const settings = updater.loadSettings(c);
+            const settings = loadSettings(c);
             settings.webPort = actual;
-            updater.saveSettings(c, settings);
+            saveSettings(c, settings);
           }
         } catch {}
         finish(resolve, m[1]);
@@ -875,7 +911,7 @@ async function runUpdateFlow(manual) {
     return;
   }
   const current = updater.activeVersion(ctx);
-  const settings = updater.loadSettings(ctx);
+  const settings = loadSettings(ctx);
   if (updater.compareVersions(latest, current) <= 0) {
     if (manual) {
       await showBox({
@@ -901,7 +937,7 @@ async function runUpdateFlow(manual) {
   });
   if (response === 1) {
     settings.skipVersion = latest;
-    updater.saveSettings(ctx, settings);
+    saveSettings(ctx, settings);
     log('update', '用户跳过版本 ' + latest);
     return;
   }
@@ -920,13 +956,7 @@ async function runUpdateFlow(manual) {
       defaultId: 0,
       cancelId: 1,
     });
-    if (r2 === 0) {
-      quitting = true;
-      markCleanExit();
-      killTree(serverProc);
-      app.relaunch();
-      app.exit(0);
-    }
+    if (r2 === 0) restartApp();
   } catch (err) {
     log('update', '更新失败: ' + err.message);
     await showBox({
@@ -979,14 +1009,14 @@ function onSessionTurnEnd(info) {
 // ---------------------------------------------------------------------------
 
 function closeToTrayEnabled() {
-  const s = updater.loadSettings(updCtx());
+  const s = loadSettings(updCtx());
   return s.closeToTray !== false;
 }
 
 function setCloseToTray(v) {
-  const s = updater.loadSettings(updCtx());
+  const s = loadSettings(updCtx());
   s.closeToTray = !!v;
-  updater.saveSettings(updCtx(), s);
+  saveSettings(updCtx(), s);
 }
 
 function repoUrls() {
@@ -1020,8 +1050,10 @@ function registerChromeIpc() {
       if (buf.length > 0 && buf[0] === 0x89 && buf[1] === 0x50) {
         iconDataUri = 'data:image/png;base64,' + buf.toString('base64');
       }
-    } catch {}
-    const s = updater.loadSettings(updCtx());
+    } catch (err) {
+      log('chrome', '读取图标失败（恢复页将无图标）: ' + err.message);
+    }
+    const s = loadSettings(updCtx());
     const urls = repoUrls();
     return {
       appVersion: APP_VERSION,
@@ -1069,12 +1101,7 @@ function registerChromeIpc() {
   ipcMain.handle('chrome:recovery-restart', (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
     log('recovery', '用户在恢复页面选择重启客户端');
-    quitting = true;
-    forceQuit = true;
-    markCleanExit();
-    killTree(serverProc);
-    app.relaunch();
-    app.exit(0);
+    restartApp({ force: true });
     return { ok: true };
   });
 
@@ -1109,9 +1136,9 @@ function registerChromeIpc() {
       case 'check-client-update': runClientUpdateFlow(true); break;
       case 'toggle-notify': {
         notifyOnTurnEnd = !notifyOnTurnEnd;
-        const s = updater.loadSettings(updCtx());
+        const s = loadSettings(updCtx());
         s.notifyOnTurnEnd = notifyOnTurnEnd;
-        updater.saveSettings(updCtx(), s);
+        saveSettings(updCtx(), s);
         break;
       }
       case 'toggle-close-to-tray': setCloseToTray(!closeToTrayEnabled()); break;
@@ -1256,7 +1283,9 @@ function trayHintOnce() {
       content: '窗口已隐藏到系统托盘，点击托盘图标可重新打开。',
       iconType: 'info',
     });
-  } catch {}
+  } catch (err) {
+    log('tray', '气泡通知发送失败: ' + err.message);
+  }
 }
 
 // macOS：窗口已关闭（关窗不退出）后从 Dock / 通知回来时重建主窗口。
@@ -1303,9 +1332,9 @@ function createTray() {
         checked: notifyOnTurnEnd,
         click: (item) => {
           notifyOnTurnEnd = item.checked;
-          const s = updater.loadSettings(updCtx());
+          const s = loadSettings(updCtx());
           s.notifyOnTurnEnd = item.checked;
-          updater.saveSettings(updCtx(), s);
+          saveSettings(updCtx(), s);
         },
       },
       { type: 'separator' },
@@ -1328,7 +1357,7 @@ function createTray() {
 // ---------------------------------------------------------------------------
 
 async function refreshBalance() {
-  const home = dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   let result;
   try {
     result = await balance.queryBalance(home);
@@ -1338,7 +1367,7 @@ async function refreshBalance() {
   // 按当前默认模型选择价格档（settings.json 可覆盖 balancePrices.<model>）。
   const model = balance.readActiveModel(home) || 'deepseek-v4-pro';
   const table = result.prices || balance.DEFAULT_PRICES;
-  const s = updater.loadSettings(updCtx());
+  const s = loadSettings(updCtx());
   const override = s.balancePrices && s.balancePrices[model];
   result.prices = { ...(table[model] || balance.FALLBACK_PRICES), ...(override || {}) };
   balanceCache = result;
@@ -1443,7 +1472,7 @@ const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'RE
 // 遮蔽拷贝，让解析回落到 junction —— 与宿主同源、全局单实例。
 function healProfileModules() {
   try {
-    const home = dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     const removed = healProfileModuleShadowing(home);
     if (removed.length) log('boot', '已清理 profile node_modules 中遮蔽安装闭包的包拷贝: ' + removed.join(', '));
   } catch (err) {
@@ -1477,7 +1506,7 @@ function removeMarkerFile(file) {
 function pendingMarketMarkers() {
   const out = [];
   try {
-    const home = dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     const profilesRoot = path.join(home, 'profiles');
     if (!fs.existsSync(profilesRoot)) return out;
     for (const entry of fs.readdirSync(profilesRoot, { withFileTypes: true })) {
@@ -1520,7 +1549,8 @@ function finishMarketMarker(marker, job, attempts, ok, tail) {
     removeMarkerFile(marker);
     return;
   }
-  try { fs.writeFileSync(marker, JSON.stringify({ ...job, attempts }, null, 2)); } catch {}
+  try { fs.writeFileSync(marker, JSON.stringify({ ...job, attempts }, null, 2)); }
+  catch (err) { log('market-pending', '写回重试计数失败（下次可能重跑）: ' + err.message); }
   log('market-pending', '排队任务失败（下次启动重试）: ' + (job.label || job.target));
 }
 
@@ -1588,7 +1618,7 @@ function processPendingMarketOps() {
 
 function syncCompanionPlugins() {
   try {
-    const home = dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     const profileDirP = path.join(home, 'profiles', 'web');
     // 内置社区 agent preset（anchored-standard：首请求锚定 Minimal 工具对，
     // 首次工具调用/回复后开放完整 Standard 目录）：安装到用户 preset 根。
@@ -1703,7 +1733,7 @@ function maintainShortcuts() {
   if (!app.isPackaged || !IS_WIN) return;
   try {
     const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
-    const settings = updater.loadSettings(updCtx());
+    const settings = loadSettings(updCtx());
     const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const APP_TITLE = 'Deepseek Harness EAC';
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
@@ -1721,27 +1751,31 @@ function maintainShortcuts() {
       path.join(linksDir, 'DSH Desktop.lnk'),
       path.join(app.getPath('desktop'), 'DSH Desktop.lnk'),
     ]) {
-      try { if (fs.existsSync(legacy)) { fs.rmSync(legacy); changed = true; } } catch {}
+      try { if (fs.existsSync(legacy)) { fs.rmSync(legacy); changed = true; } }
+      catch (err) { log('shortcut', '清理旧快捷方式失败 ' + legacy + ': ' + err.message); }
     }
     // exe 被移动过，或图标设计更新过：替换现有快捷方式（修复“指向的文件消失”）。
     if ((settings.shortcutTarget && settings.shortcutTarget !== target) || settings.shortcutIcon !== SHORTCUT_ICON_VERSION) {
       for (const p of [startMenu, desktop]) {
         if (fs.existsSync(p)) {
-          try { shell.writeShortcutLink(p, 'replace', opts); changed = true; } catch {}
+          try { shell.writeShortcutLink(p, 'replace', opts); changed = true; }
+          catch (err) { log('shortcut', '替换快捷方式失败 ' + p + ': ' + err.message); }
         }
       }
     }
     // 缺失则创建：便携版补桌面快捷方式；开始菜单快捷方式是系统通知的前置条件。
     if (!fs.existsSync(startMenu)) {
-      try { shell.writeShortcutLink(startMenu, 'create', opts); changed = true; } catch {}
+      try { shell.writeShortcutLink(startMenu, 'create', opts); changed = true; }
+      catch (err) { log('shortcut', '创建开始菜单快捷方式失败: ' + err.message); }
     }
     if (!fs.existsSync(desktop)) {
-      try { shell.writeShortcutLink(desktop, 'create', opts); changed = true; } catch {}
+      try { shell.writeShortcutLink(desktop, 'create', opts); changed = true; }
+      catch (err) { log('shortcut', '创建桌面快捷方式失败: ' + err.message); }
     }
     if (changed) {
       settings.shortcutTarget = target;
       settings.shortcutIcon = SHORTCUT_ICON_VERSION;
-      updater.saveSettings(updCtx(), settings);
+      saveSettings(updCtx(), settings);
       log('boot', '快捷方式已维护（开始菜单/桌面 → ' + target + '，图标 ' + SHORTCUT_ICON_VERSION + '）');
     }
   } catch (err) {
@@ -1787,7 +1821,7 @@ async function runClientUpdateFlow(manual) {
     return;
   }
   const ctx = updCtx();
-  const settings = updater.loadSettings(ctx);
+  const settings = loadSettings(ctx);
   let release;
   try {
     release = await clientUpdater.checkLatest(ctx, APP_VERSION);
@@ -1831,14 +1865,14 @@ async function runClientUpdateFlow(manual) {
   });
   if (response === 1) {
     settings.skipClientVersion = release.version;
-    updater.saveSettings(ctx, settings);
+    saveSettings(ctx, settings);
     log('client-update', '用户跳过版本 ' + release.version);
     return;
   }
   if (response === 2) {
     // M7 修复：记录"稍后"版本，周期检查不再重复打扰（新版本出现时仍会提示）。
     settings.pendingClientVersion = release.version;
-    updater.saveSettings(ctx, settings);
+    saveSettings(ctx, settings);
     log('client-update', '用户稍后处理版本 ' + release.version);
     return;
   }
@@ -1861,7 +1895,7 @@ async function runClientUpdateFlow(manual) {
     settings.pendingClientUpdate = { version: release.version, path: filePath, source: release.source };
     settings.skipClientVersion = null;
     settings.pendingClientVersion = null;
-    updater.saveSettings(ctx, settings);
+    saveSettings(ctx, settings);
     const { response: r2 } = await showBox({
       type: 'info',
       title: '下载完成',
@@ -1871,16 +1905,7 @@ async function runClientUpdateFlow(manual) {
       defaultId: 0,
       cancelId: 1,
     });
-    if (r2 === 0) {
-      quitting = true;
-      forceQuit = true;
-      markCleanExit();
-      killTree(serverProc);
-      updater.abort();
-      if (sessionWatcher) sessionWatcher.stop();
-      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate);
-      setTimeout(() => app.exit(0), 400);
-    }
+    if (r2 === 0) restartWithClientUpdate(ctx, settings.pendingClientUpdate);
   } catch (err) {
     log('client-update', '更新失败: ' + err.message);
     await showBox({
@@ -1899,17 +1924,17 @@ async function runClientUpdateFlow(manual) {
 function offerPendingClientUpdate() {
   if (!IS_WIN) return;
   const ctx = updCtx();
-  const settings = updater.loadSettings(ctx);
+  const settings = loadSettings(ctx);
   const pending = settings.pendingClientUpdate;
   if (!pending || !pending.path) return;
   if (!fs.existsSync(pending.path)) {
     settings.pendingClientUpdate = null;
-    updater.saveSettings(ctx, settings);
+    saveSettings(ctx, settings);
     return;
   }
   if (updater.compareVersions(pending.version, APP_VERSION) <= 0) {
     settings.pendingClientUpdate = null;
-    updater.saveSettings(ctx, settings);
+    saveSettings(ctx, settings);
     return;
   }
   showBox({
@@ -1922,14 +1947,7 @@ function offerPendingClientUpdate() {
     cancelId: 1,
   }).then(({ response }) => {
     if (response !== 0) return;
-    quitting = true;
-    forceQuit = true;
-    markCleanExit();
-    killTree(serverProc);
-    updater.abort();
-    if (sessionWatcher) sessionWatcher.stop();
-    clientUpdater.applyUpdate(ctx, pending);
-    setTimeout(() => app.exit(0), 400);
+    restartWithClientUpdate(ctx, pending);
   });
 }
 
@@ -2095,9 +2113,9 @@ function boot() {
     .then(() => {
       // Session-completion notifications: watch dsh session logs under the
       // effective DSH_HOME (same config the CLI uses).
-      const s = updater.loadSettings(updCtx());
+      const s = loadSettings(updCtx());
       notifyOnTurnEnd = s.notifyOnTurnEnd !== false;
-      const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+      const home = dshHomePath();
       sessionWatcher = new SessionWatcher({
         sessionsDir: path.join(home, 'sessions'),
         log,

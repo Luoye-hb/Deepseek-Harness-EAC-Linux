@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { buildBundleManifest } = require('../bundle-integrity.js');
+const { checkFile: checkGlibcFile } = require('./check-glibc.cjs');
 
 async function afterPack(context) {
   const { appOutDir, electronPlatformName } = context;
@@ -159,6 +160,24 @@ function auditNodePty(appOutDir, electronPlatformName, nodeBinOverride) {
     );
   }
   console.log('afterPack: ' + (r.stdout || '').trim());
+
+  // glibc 兼容性审计（2026-08 Debian 事故）：node-pty 在构建机（Arch glibc 2.42
+  // 或最新 Ubuntu runner）上现场编译会绑定新 glibc，Debian 13（2.41）及更老
+  // 系统加载即崩（GLIBC_2.42 not found）。基线与扫描逻辑统一在
+  // scripts/check-glibc.cjs（阈值 GLIBC_2.34，见 docs/support-matrix.md）。
+  // 超标直接 fail 构建，回到低 glibc chroot 重编。
+  const presentBinary = present.find((rel) => rel.endsWith('pty.node'));
+  if (presentBinary) {
+    const r = checkGlibcFile(path.join(nodePtyRoot, presentBinary));
+    if (!r.ok) {
+      throw new Error(
+        'afterPack: ' + r.message + '。\n' +
+        '在构建机（Arch / 最新 Ubuntu）上 node-gyp 现场编译会绑定新 glibc，Debian 13 及更老系统无法加载。\n' +
+        '必须回到低 glibc chroot 重编：见 docs/support-matrix.md（debootstrap bookworm + 官方 node）。'
+      );
+    }
+    console.log('afterPack: ' + r.message);
+  }
 }
 
 function auditBundledPluginRuntime(pluginsRoot, platform) {

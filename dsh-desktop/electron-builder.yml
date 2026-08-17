@@ -26,8 +26,10 @@ buildDependenciesFromSource: false
 files:
   - main.js
   - updater.js
+  - settings.js
   - client-updater.js
   - balance.js
+  - dsh-home.js
   - session-watcher.js
   - profile-module-heal.js
   - patch-row-heal.js
