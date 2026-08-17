@@ -283,5 +283,11 @@ jobs:
           files: release-artifacts/**/*
           draft: false
           generate_release_notes: true
+          # 版本隔离：-linux Release 永远不占 /releases/latest —— 该端点被
+          # v4 之前的老 Windows 客户端当作唯一更新源（v4 起才有按资产过滤
+          # 的平台围栏）。latest 必须始终指向 Windows Release，否则老客户端
+          # 会拿到只有 Linux 资产的 latest（虽因无 .exe 装不上，但会弹
+          # 「未找到安装包」错误）。Windows tag 走本 workflow 时保持默认。
+          make_latest: ${{ endsWith(github.ref, '-linux') && 'false' || 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
