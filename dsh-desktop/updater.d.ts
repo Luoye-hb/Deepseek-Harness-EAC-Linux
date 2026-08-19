@@ -43,3 +43,27 @@ export declare function overlayBinPath(ctx: UpdCtx): string | null;
 export declare function activeVersion(ctx: UpdCtx): string | null;
 /** overlay 里记录的版本（用于判断「内置/已更新」来源）。 */
 export declare function overlayVersion(ctx: UpdCtx): string | null;
+/** settings.json 路径（userData 目录）。 */
+export declare function settingsPath(ctx: UpdCtx): string;
+/** npm 检查最新版本；失败抛错。 */
+export declare function checkLatest(ctx: UpdCtx): Promise<string>;
+/** agent 更新的进度事件（npm 阶段流）。 */
+export interface AgentProgressEvent {
+  stage: 'fetch' | 'install' | 'done' | 'mirror' | string;
+  count?: number;
+  elapsed?: string;
+  registry?: string;
+}
+/** 下载并安装 agent 更新 overlay。 */
+export declare function applyUpdate(
+  ctx: UpdCtx, version: string,
+  opts?: { onProgress?: (ev: AgentProgressEvent) => void },
+): Promise<unknown>;
+/** 上一版本信息（更新保障②的回退目标；无则 null）。 */
+export declare function previousAgentInfo(ctx: UpdCtx): { version: string } | null;
+/** 回退到上一版本 overlay。 */
+export declare function rollbackToPrevious(ctx: UpdCtx): unknown;
+/** 回退到内置版本（清掉 overlay）。 */
+export declare function rollback(ctx: UpdCtx): unknown;
+/** 中止正在进行的 npm 子进程（更新/回退期间应用退出时调用）。 */
+export declare function abort(): void;

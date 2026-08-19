@@ -46,6 +46,12 @@ files:
   - lib/plugins.js
   - lib/market-ops.js
   - lib/migration.js
+  - lib/guard.js
+  - lib/preflight.js
+  - lib/onboarding.js
+  - lib/balance-ui.js
+  - lib/shortcuts.js
+  - lib/update-flow.js
   - updater.js
   - client-updater.js
   - logger.js
