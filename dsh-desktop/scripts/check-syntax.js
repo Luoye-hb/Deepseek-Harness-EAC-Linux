@@ -25,6 +25,8 @@ const entryFiles = [
   'renderer-recovery.js',
   'watchdog.js',
   'shortcut-maintenance.js',
+  'profile-closure-extras.js',
+  'window-frame.js',
   'stable-port.js',
   'koffi-preflight.js',
   'profile-module-heal.js',

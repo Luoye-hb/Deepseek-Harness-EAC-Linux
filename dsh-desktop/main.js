@@ -35,6 +35,8 @@ const { createGuard } = require('./plugin-guard');
 const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
 const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
+const { customFrameOptions } = require('./window-frame');
+const { ensureProfileClosureExtras } = require('./profile-closure-extras');
 const {
   STANDARD_SHORTCUT_NAME,
   RUNTIME_SHORTCUT_DESCRIPTION,
@@ -1262,8 +1264,8 @@ function createWindow({ startHidden = false } = {}) {
     title: 'Deepseek Harness EAC',
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, 'assets', 'icon.png'),
-    // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    // Windows / Linux 使用自绘栏；macOS 保留原生窗口框架与菜单栏。
+    ...customFrameOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1402,7 +1404,7 @@ function createFloatWindow(sessionId, { title } = {}) {
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     // 与主窗一致的无边框；浮窗 preload 注入一条更细的纯拖拽条。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    ...customFrameOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1515,7 +1517,7 @@ function openPluginWizard({ mode = 'first' } = {}) {
       title: '内置插件选择向导',
       backgroundColor: '#0b1220',
       icon: path.join(__dirname, 'assets', 'icon.png'),
-      ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+      ...customFrameOptions(),
       webPreferences: {
         preload: path.join(__dirname, 'assets', 'onboarding-preload.js'),
         contextIsolation: true,
@@ -3631,6 +3633,13 @@ function syncCompanionPlugins() {
     const home = dshHomePath();
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
     ensureDesktopProfileInit();
+    const extras = ensureProfileClosureExtras(
+      home,
+      path.join(__dirname, 'node_modules'),
+      ['schemastery'],
+      (message) => log('boot', message)
+    );
+    if (extras.linked.length) log('boot', '已补齐 profile 安装闭包依赖: ' + extras.linked.join(', '));
     // V4 运行时补丁（幂等，随启动 / 服务重启 / agent 更新后重放）：
     //  · 对话删除/归档 —— dsh-session-manager 插件的全链路前置依赖；
     applySessionManageFix();
