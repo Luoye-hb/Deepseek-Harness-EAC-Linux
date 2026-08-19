@@ -27,6 +27,7 @@ const entryFiles = [
   'shortcut-maintenance.js',
   'profile-closure-extras.js',
   'window-frame.js',
+  'linux-update-guidance.js',
   'stable-port.js',
   'koffi-preflight.js',
   'profile-module-heal.js',
