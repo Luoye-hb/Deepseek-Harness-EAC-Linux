@@ -1,0 +1,184 @@
+appId: com.deepseek.dsh.desktop
+# No version suffix in productName: a versioned install dir gets nested on
+# upgrades (.../v1.0/v2.0) when the registry keeps the old INSTALLDIR, which
+# pushes deep node_modules paths past MAX_PATH — the NSIS 7z extractor then
+# silently drops those files and dsh web crashes with MODULE_NOT_FOUND (issue #4).
+productName: Deepseek Harness EAC
+copyright: MIT License
+# 仅保留中英文，移除 Electron 其余语言包（.pak，约 80MB），不影响功能体验。
+electronLanguages:
+  - en-US
+  - zh-CN
+directories:
+  output: dist
+  buildResources: build
+
+# electron-builder strips nested node_modules from extraResources; this hook
+# restores the bundled npm CLI's own dependencies after packing.
+afterPack: scripts/after-pack.js
+
+# Native modules (sharp / node-pty / koffi) are loaded by the bundled plain
+# Node runtime, so keep everything as real files and never rebuild for Electron.
+asar: false
+npmRebuild: false
+buildDependenciesFromSource: false
+
+files:
+  - main.js
+  - updater.js
+  - settings.js
+  - client-updater.js
+  - logger.js
+  - plugin-updater.js
+  - balance.js
+  - dsh-home.js
+  - session-watcher.js
+  - session-encoding-heal.js
+  - profile-module-heal.js
+  - patch-row-heal.js
+  - builtin-collision.js
+  - plugin-manager-state.js
+  - plugin-guard.js
+  - preset-sync.js
+  - error-detail.js
+  - bundle-integrity.js
+  - stable-port.js
+  - koffi-preflight.js
+  - renderer-recovery.js
+  - watchdog.js
+  - shortcut-maintenance.js
+  - profile-closure-extras.js
+  - window-frame.js
+  - preload.js
+  - assets/**/*
+  # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
+  # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。
+  - scripts/koffi-preflight.cjs
+  - scripts/patch-session-manage.js
+  - scripts/plugin-manager-patch.js
+  - scripts/onboarding.js
+  - scripts/make-release-hashes.js
+  - package.json
+  - "!**/*.md"
+  # `!**/*.md` above would strip every .md from node_modules too, which removes
+  # the SKILL.md files the bundled @deepseek-ai/dsh ships for its agent presets
+  # and silently breaks the 创造模式 skills. Re-include them: later patterns
+  # override earlier ones.
+  - "**/SKILL.md"
+
+extraResources:
+  - from: vendor/node
+    to: node
+  - from: vendor/npm
+    to: npm
+
+win:
+  icon: build/icon.png
+  target:
+    - target: portable
+      arch:
+        - x64
+    - target: nsis
+      arch:
+        - x64
+
+linux:
+  icon: build/icon.png
+  executableName: deepseek-harness-eac
+  syncDesktopName: true
+  category: Development
+  target:
+    - target: pacman
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+    - target: rpm
+      arch:
+        - x64
+    - target: AppImage
+      arch:
+        - x64
+
+pacman:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+  depends:
+    - alsa-lib
+    - gtk3
+    - libnotify
+    - nss
+    - libxss
+    - libxtst
+    - xdg-utils
+    - at-spi2-core
+    - libsecret
+
+deb:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2
+  recommends:
+    - libappindicator3-1
+
+rpm:
+  artifactName: Deepseek-Harness-EAC-${version}.${arch}.${ext}
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - libXtst
+    - xdg-utils
+    - at-spi2-core
+    - libuuid
+    - libsecret
+    - alsa-lib
+
+appImage:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+
+# macOS（仅在 macOS 主机上构建，见 .github/workflows/build-macos.yml）。
+# 架构由 CLI 传入（--x64 / --arm64），不在这里写死；
+# 无签名证书时产出未签名包，后续可用 CSC_LINK / notarytool 补签名公证。
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+
+# No ${version} in artifact names: the README links to
+# releases/latest/download/<fixed-name>.exe, which must stay valid across
+# releases (hard-coded v2.0.1 names 404'd after v2.0.2 shipped).
+portable:
+  artifactName: Deepseek-Harness-EAC-Portable-${arch}.${ext}
+  # 稳定缓存目录名：配合 scripts/patch-portable-template.js 复用已解压目录，
+  # 避免每次启动都解压 app-64.7z（Defender 扫描 2.4 万文件导致分钟级冷启动）。
+  unpackDirName: deepseek-harness-eac-portable
+
+nsis:
+  artifactName: Deepseek-Harness-EAC-Setup-${arch}.${ext}
+  include: build/installer.nsh
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # V4：always 会在每次升级（含自动更新拉起的静默安装）时无条件重建桌面
+  # 快捷方式，与用户自定义/改名/换图标的快捷方式并存成两个。改为 true
+  # （尊重安装向导勾选项）；运行时维护见 main.js maintainShortcuts。
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Deepseek Harness EAC
+  uninstallDisplayName: Deepseek Harness EAC
+
+publish: null
