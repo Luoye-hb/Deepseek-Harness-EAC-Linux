@@ -264,6 +264,7 @@ function renderMenu() {
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="restart-service"><span>重启 Web 服务</span><span class="dch-kbd">不关闭应用</span></button>
     <button class="dch-item" data-act="reload"><span>重新加载</span><span class="dch-kbd">Ctrl+R</span></button>
+    <button class="dch-item" data-act="open-terminal"><span>内置终端</span><span class="dch-kbd">Node+npm</span></button>
     <button class="dch-item" data-act="devtools"><span>开发者工具</span><span class="dch-kbd">F12</span></button>
     <button class="dch-item" data-act="fullscreen"><span>全屏</span><span class="dch-kbd">F11</span></button>
     <div class="dch-sep"></div>
