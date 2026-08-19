@@ -85,3 +85,78 @@ export interface TransitionResult {
   /** 转移原因（写事故记录）。 */
   readonly reason?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Extension Host RPC（长度前缀帧 + JSON-RPC 风格消息，§5/§9 Phase 2）
+// ---------------------------------------------------------------------------
+
+/** 帧上限（4MB）：超限视为恶意/故障流，立即断开 Host。 */
+export const RPC_MAX_FRAME_BYTES = 4 * 1024 * 1024;
+
+/** 请求（Supervisor → Host 或 Host → Supervisor 双向）。 */
+export interface RpcRequest {
+  kind: 'req';
+  id: string;
+  method: string;
+  params?: unknown;
+}
+
+/** 响应（ok=true 携 result；ok=false 携 error 文本）。 */
+export interface RpcResponse {
+  kind: 'res';
+  id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
+/** 通知（单向，无需应答：事件推送/心跳）。 */
+export interface RpcNotification {
+  kind: 'notify';
+  method: string;
+  params?: unknown;
+}
+
+export type RpcMessage = RpcRequest | RpcResponse | RpcNotification;
+
+/** Host → Supervisor 的生命周期通知。 */
+export interface HostHello {
+  pluginId: string;
+  version: string;
+  /** 插件声明的工具名列表（Core Bridge 桥接用）。 */
+  tools: string[];
+}
+
+/** Supervisor → Host 心跳探测参数。 */
+export interface PingParams {
+  /** 发出时间戳（Host 原样回带，供 RTT 测量）。 */
+  t: number;
+}
+
+/** Supervisor → Host 初始化参数（host-bootstrap 收到后才加载插件代码）。 */
+export interface HostInitParams {
+  pluginId: string;
+  /** 插件入口绝对路径（extensions/<id>/package/<main>）。 */
+  entryPath: string;
+  /** 插件私有数据目录（extensions/<id>/data）。 */
+  dataDir: string;
+  /** deny-by-default 权限（来自注册表档案）。 */
+  permissions: ExtensionPermissions;
+}
+
+/** Host init 应答：插件声明的工具名列表（Core Bridge 桥接用）。 */
+export interface HostInitResult {
+  tools: string[];
+}
+
+/** Supervisor → Host 工具调用参数。 */
+export interface HostInvokeParams {
+  tool: string;
+  args?: unknown;
+}
+
+/** Host → Supervisor 日志通知参数。 */
+export interface HostLogParams {
+  level: 'debug' | 'info' | 'warn' | 'error';
+  msg: string;
+}

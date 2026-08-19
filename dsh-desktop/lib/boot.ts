@@ -57,6 +57,7 @@ import {
   openRecoveryCenter, archivePluginProfiles,
 } from './recovery-center/register.js';
 import { recordStartFailure } from './supervisor/registry.js';
+import { startEnabledExtensionHosts } from './extension-host/manager.js';
 
 /** 更新定时器间隔：agent 6 小时 / 插件 6 小时 / 客户端 12 小时。 */
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -370,6 +371,9 @@ export async function boot(): Promise<void> {
       // 便携版客户端旧 exe 备份（崩溃自回退的保险丝就此解除）。
       updater.confirmPreviousAgentHealthy(updCtx());
       cleanupClientBackupIfHealthy();
+      // VNext Phase 2：核心 Web 服务健康后并行拉起全部启用的 SDK 插件
+      // Host（进程隔离 + Job 围栏；无 SDK 插件时为空操作，失败不影响核心）。
+      void startEnabledExtensionHosts();
       // V4.3 PR（独有价值）：客户端更新成功后 24h 内非阻塞询问是否清理 4 目录备份
       // （超 24h 自动登记 pendingBackupCleanup；确认删时保留 manifest.json 诊断副本）。
       offerBackupCleanupConfirm();

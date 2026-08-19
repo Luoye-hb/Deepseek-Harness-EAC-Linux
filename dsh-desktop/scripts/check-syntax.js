@@ -15,6 +15,8 @@ const root = path.resolve(__dirname, '..');
 const entryFiles = [
   'main.js',
   'preload.js',
+  // VNext Phase 2：Host 进程入口（tsc 编译产物，predist 在 build 之后运行）。
+  'host-bootstrap.js',
   'updater.js',
   'client-updater.js',
   'balance.js',

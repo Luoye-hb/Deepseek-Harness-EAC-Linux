@@ -37,7 +37,9 @@ export const STABLE_MS = 60 * 1000;
 const TRANSITIONS: Record<ExtensionState, ExtensionState[]> = {
   installed: ['disabled', 'starting', 'uninstalled'],
   disabled: ['installed', 'starting', 'uninstalled'],
-  starting: ['running', 'failed', 'disabled'],
+  // quarantined：连续第 3 次启动失败（start-failed 达阈值）直接隔离 ——
+  // 曾缺失该目标导致 applyTransition 拒绝转移、状态卡死在 starting。
+  starting: ['running', 'failed', 'quarantined', 'disabled'],
   running: ['retrying', 'failed', 'disabled', 'uninstalled', 'quarantined'],
   retrying: ['running', 'failed', 'quarantined', 'disabled'],
   failed: ['starting', 'retrying', 'quarantined', 'disabled', 'uninstalled'],
@@ -169,4 +171,26 @@ export function applyTransition(id: string, ev: SmEvent): TransitionResult {
   }
   log('state-machine', `${id}: ${from} → ${step.to}` + (step.reason ? `（${step.reason.slice(0, 120)}）` : ''));
   return { from, to: step.to, changed: true };
+}
+
+/**
+ * 稳定运行清零（Manager 心跳成功路径调用）：
+ * running 态下持续存活达到 STABLE_MS 后把 crashStreak 清零 —— 长期稳定
+ * 的插件偶发一次崩溃不应再向隔离阈值累积（架构文档 §8「稳定清零」）。
+ * 非 running 态 / 计数已为 0 时为无操作。
+ */
+export function noteStableRunning(id: string): void {
+  try {
+    const reg = readRegistry();
+    const e = reg.plugins[id] as RegistryEntry | undefined;
+    if (!e || e.state !== 'running' || e.crashStreak === 0) return;
+    e.crashStreak = 0;
+    delete e.nextRetryAt;
+    reg.plugins[id] = e;
+    if (writeRegistry(reg)) {
+      log('state-machine', `${id}: 稳定运行 ${STABLE_MS / 1000}s，crashStreak 清零`);
+    }
+  } catch {
+    /* 留痕/落盘失败不阻断心跳路径 */
+  }
 }

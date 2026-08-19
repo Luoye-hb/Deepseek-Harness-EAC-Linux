@@ -18,6 +18,6 @@
     "types": ["node"],
     "noEmit": false
   },
-  "include": ["lib/**/*.ts", "shared/**/*.ts", "types-*.d.ts"],
+  "include": ["lib/**/*.ts", "shared/**/*.ts", "host-bootstrap.ts", "types-*.d.ts"],
   "exclude": ["node_modules", "vendor", "dist", "out", "assets", "docs"]
 }

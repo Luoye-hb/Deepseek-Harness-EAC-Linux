@@ -65,7 +65,15 @@ files:
   - lib/supervisor/incidents.js
   - lib/supervisor/permissions.js
   - lib/supervisor/installer.js
+  - lib/extension-host/rpc.js
+  - lib/extension-host/job-fence.js
+  - lib/extension-host/manager.js
   - lib/recovery-center/register.js
+  - shared/protocol.js
+  # VNext Phase 2：Host 进程入口（内置 node.exe 拉起）与 Rust 围栏预编译产物
+  # （predist 经 scripts/build-native.js copy 强制校验存在）。
+  - host-bootstrap.js
+  - native/supervisor/index.node
   - updater.js
   - client-updater.js
   - logger.js

@@ -42,6 +42,7 @@ const {
 const { processPendingMarketOps } = require('./lib/market-ops.js');
 const { runUpdateFlow, runClientUpdateFlow } = require('./lib/update-flow.js');
 const { boot, fatal, handleBootFailure } = require('./lib/boot.js');
+const { shutdownExtensionHosts } = require('./lib/extension-host/manager.js');
 const structuredLogger = require('./logger');
 const updaterReal = require('./updater');
 
@@ -101,6 +102,9 @@ if (!gotLock) {
           } catch {}
         }
         await killTreeAndWait(state.serverProc);
+        // VNext Phase 2：树杀全部 SDK 插件 Host（Job 围栏下 Supervisor 崩溃
+        // 也有 OS 兜底回收；此处覆盖正常退出路径）。
+        await shutdownExtensionHosts();
         updaterReal.abort();
         if (state.sessionWatcher) state.sessionWatcher.stop();
       } catch (err) {
