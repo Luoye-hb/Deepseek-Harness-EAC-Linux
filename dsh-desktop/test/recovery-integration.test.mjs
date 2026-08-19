@@ -24,9 +24,14 @@ test('main.js builds the recovery state machine and attaches the main window', (
 });
 
 test('main.js runs the watchdog lifecycle: run-state write, spawn, clean-exit mark', () => {
-  assert.ok(/function writeRunState\(/.test(mainSrc), 'writeRunState() missing');
-  assert.ok(/function markCleanExit\(/.test(mainSrc), 'markCleanExit() missing');
-  assert.ok(/function startWatchdog\(\)/.test(mainSrc), 'startWatchdog() missing');
+  // Task 2：run-state/writeRunState/markCleanExit 迁 lib/run-state.ts，
+  // startWatchdog 迁 lib/watchdog-boot.ts；main.js 经 require 接线并在 boot 链调用。
+  const runStateSrc = readFileSync(join(ROOT, 'lib', 'run-state.ts'), 'utf8');
+  const watchdogSrc = readFileSync(join(ROOT, 'lib', 'watchdog-boot.ts'), 'utf8');
+  assert.ok(/export function writeRunState\(/.test(runStateSrc), 'writeRunState() missing');
+  assert.ok(/export function markCleanExit\(/.test(runStateSrc), 'markCleanExit() missing');
+  assert.ok(/export function startWatchdog\(\)/.test(watchdogSrc), 'startWatchdog() missing');
+  assert.ok(/require\('\.\/lib\/watchdog-boot\.js'\)/.test(mainSrc), 'watchdog-boot wiring missing');
   assert.ok(/startWatchdog\(\);/.test(mainSrc), 'startWatchdog() is never called');
 });
 

@@ -25,11 +25,18 @@ buildDependenciesFromSource: false
 
 files:
   - main.js
-  # Task 1.x：lib/ 为 tsc 原地编译产物（prepack 时生成），bundled-files 防呆覆盖。
+  # Task 1.x/2.x：lib/ 为 tsc 原地编译产物（prepack 时生成），bundled-files 防呆覆盖。
   - lib/state.js
   - lib/log.js
   - lib/proc.js
   - lib/paths.js
+  - lib/bridge.js
+  - lib/run-state.js
+  - lib/watchdog-boot.js
+  - lib/server.js
+  - lib/terminal.js
+  - lib/preview.js
+  - lib/market-modules.js
   - updater.js
   - client-updater.js
   - logger.js
