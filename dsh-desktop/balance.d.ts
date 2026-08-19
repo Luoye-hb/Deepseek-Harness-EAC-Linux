@@ -28,6 +28,12 @@ export interface BalanceResult {
 }
 
 export declare function queryBalance(dshHome: string): Promise<BalanceResult>;
+/** 校验/清洗用户自定义价格（三字段非负数字，非法抛错）。 */
+export declare function sanitizePrices(prices: unknown): {
+  cacheMiss: number;
+  cacheHit: number;
+  output: number;
+};
 export declare function readActiveModel(dshHome: string): string | null;
 export declare const DEFAULT_PRICES: Record<string, TierPrice>;
 export declare const FALLBACK_PRICES: TierPrice;

@@ -16,3 +16,21 @@ export declare function info(msg: string, fields?: LogFields): void;
 export declare function warn(msg: string, fields?: LogFields): void;
 export declare function debug(msg: string, fields?: LogFields): void;
 export declare function error(msg: string, fields?: LogFields): void;
+
+/** 日志系统初始化（boot 最早调用；失败不影响 desktop.log 通道）。 */
+export declare function init(opts: {
+  logsDir: string;
+  level: string;
+  appVersion: string;
+  env: string;
+}): void;
+
+/** 退出前 flush（结构化缓冲 + rotation stream 收尾）。 */
+export declare function close(): void;
+
+/** 一键导出诊断 zip（logs + configs + updater meta + 备份 manifest）。 */
+export declare function buildDiagnosticsZip(opts: {
+  logsDir: string;
+  userDataDir: string;
+  dshHome: string;
+}): Promise<string>;

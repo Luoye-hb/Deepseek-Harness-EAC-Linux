@@ -20,9 +20,13 @@ export interface ZstdScanResult {
 /** 扫描 buffer 中的 zstd 魔数（0x28 B5 2F FD）帧边界。 */
 export declare function scanZstdFrames(buf: Buffer): ZstdScanResult;
 
-/** 会话文件监听器（main.js 使用；此处仅占位声明类型形状）。 */
+/** 会话文件监听器（lib/boot.ts 装配；watch sessions/*.jsonl.zstd 的回合结束）。 */
 export declare class SessionWatcher {
-  constructor(...args: unknown[]);
+  constructor(opts: {
+    sessionsDir: string;
+    log(tag: string, msg: string): void;
+    onTurnEnd(info: { sessionId: string; title?: string; body?: string }): void;
+  });
   start(): void;
   stop(): void;
 }

@@ -67,3 +67,5 @@ export declare function rollbackToPrevious(ctx: UpdCtx): unknown;
 export declare function rollback(ctx: UpdCtx): unknown;
 /** 中止正在进行的 npm 子进程（更新/回退期间应用退出时调用）。 */
 export declare function abort(): void;
+/** 新版健康启动后调用：清理上一版本备份（解除回退保险丝）。 */
+export declare function confirmPreviousAgentHealthy(ctx: UpdCtx): void;

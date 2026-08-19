@@ -52,6 +52,14 @@ files:
   - lib/balance-ui.js
   - lib/shortcuts.js
   - lib/update-flow.js
+  - lib/ipc/index.js
+  - lib/ipc/sender.js
+  - lib/ipc/app.js
+  - lib/ipc/recovery.js
+  - lib/ipc/plugin.js
+  - lib/ipc/onboard.js
+  - lib/ipc/session.js
+  - lib/boot.js
   - updater.js
   - client-updater.js
   - logger.js

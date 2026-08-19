@@ -18,3 +18,18 @@ export declare function autoApplyUpdates(
     copyIntoProfile(overlayDir: string, name: string): void;
   },
 ): Promise<{ done: { name: string }[]; failed: { name: string }[] }>;
+/** 手动更新单个内置插件（设置页「插件 → 更新」）。 */
+export declare function applyBuiltinPluginUpdate(
+  ctx: unknown, source: unknown, opts: {
+    profileDirP: string;
+    guard: unknown;
+    copyIntoProfile(overlayDir: string, name: string): void;
+  },
+): Promise<{
+  ok: boolean;
+  noop?: boolean;
+  current?: string;
+  latest: string;
+  restartRequired?: boolean;
+  error?: string;
+}>;

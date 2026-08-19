@@ -8,6 +8,15 @@ export declare function needsPluginOnboarding(opts: {
   profileDirExists: boolean;
   sharedProfileExists: boolean;
 }): boolean;
+/** 清洗用户勾选（只留已知插件 id，核心插件强制保留）。 */
+export declare function sanitizeSelection(
+  ids: unknown, companion: unknown[], coreIds: Set<string>,
+): Set<string>;
+/** 由勾选差异生成启停操作序列。 */
+export declare function buildSelectionOps(
+  companion: unknown[], coreIds: Set<string>,
+  want: Set<string>, current: unknown,
+): { id: string; enable: boolean }[];
 export declare function buildCatalog(
   companion: unknown[], opts: Record<string, unknown>,
 ): unknown;
