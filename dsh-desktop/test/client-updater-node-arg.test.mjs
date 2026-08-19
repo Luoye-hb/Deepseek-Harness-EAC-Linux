@@ -41,6 +41,14 @@ test('applyUpdate inlines the bundled node exe into the script body', () => {
   // 生产环境中 updates/ 由下载器创建（Setup 就躺在里面）；applyUpdate 只写文件不建目录
   fs.mkdirSync(path.join(dir, 'updates'), { recursive: true });
   const prevFile = process.env.PORTABLE_EXECUTABLE_FILE;
+  const realExistsSync = fs.existsSync;
+  // 此处覆盖 Windows 安装版脚本生成逻辑。Linux CI 不会有 PowerShell，
+  // 因此只模拟该系统二进制存在，实际启动仍由上面的 spawn 拦截器接管。
+  const powershell = path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'
+  );
+  fs.existsSync = (file) => file === powershell || realExistsSync(file);
   // oldExe 取 PORTABLE_EXECUTABLE_FILE，便于断言安装版参数与脚本内容。
   process.env.PORTABLE_EXECUTABLE_FILE = path.join(dir, 'FakeOldApp.exe');
   try {
@@ -77,6 +85,7 @@ test('applyUpdate inlines the bundled node exe into the script body', () => {
   } finally {
     if (prevFile === undefined) delete process.env.PORTABLE_EXECUTABLE_FILE;
     else process.env.PORTABLE_EXECUTABLE_FILE = prevFile;
+    fs.existsSync = realExistsSync;
     cp.spawn = realSpawn;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
