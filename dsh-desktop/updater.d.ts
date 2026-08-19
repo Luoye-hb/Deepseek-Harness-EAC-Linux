@@ -1,0 +1,43 @@
+/**
+ * updater.d.ts — legacy `updater.js` 的最小类型垫片（过渡期产物）。
+ *
+ * 背景：lib/*.ts（TypeScript）需要引用尚未迁移 TS 的根目录 `updater.js`。
+ * 提供「按需、强类型」的声明而非 allowJs 直接吃 JS（后者会让 tsc 把整个
+ * updater.js 拉进编译程序并原地产出重排版 emit，污染工作区）。
+ *
+ * 约定：仅声明 lib 层实际消费的符号；main.js（仍是 JS）不受影响。
+ * 待 Task 7 将 updater.js 迁 TS 后本文件删除，类型并入真实实现。
+ */
+
+/** 传给 updater 各 API 的上下文（见 lib/proc.ts 的 updCtx()）。 */
+export interface UpdCtx {
+  /** Electron userData 目录。 */
+  userDataDir: string;
+  /** 内置 node.exe 路径解析器。 */
+  nodeExe(): string;
+  /** 内置 npm-cli.js 路径解析器。 */
+  npmCli(): string;
+  /** 统一日志通道（lib/log.ts）。 */
+  log(tag: string, msg: string): void;
+}
+
+/** settings.yaml 的形状（仅声明桌面壳读写的字段，其余视为未知扩展）。 */
+export interface DshSettings {
+  /** 与官方 web profile 共享（旧兼容模式）。 */
+  shareWebProfile?: boolean;
+  /** 关闭主窗时最小化到托盘（默认 true）。 */
+  closeToTray?: boolean;
+  /** 快捷方式维护策略：'never' | 'auto'。 */
+  shortcutPolicy?: string;
+  /** 其余字段（dsh 侧维护）原样透传。 */
+  [key: string]: unknown;
+}
+
+export declare function loadSettings(ctx: UpdCtx): DshSettings;
+export declare function saveSettings(ctx: UpdCtx, settings: DshSettings): void;
+/** 用户已批准安装的 agent 更新 overlay 的 bin 路径（无则 null）。 */
+export declare function overlayBinPath(ctx: UpdCtx): string | null;
+/** 当前生效的 dsh 版本号（内置或 overlay）。 */
+export declare function activeVersion(ctx: UpdCtx): string | null;
+/** overlay 里记录的版本（用于判断「内置/已更新」来源）。 */
+export declare function overlayVersion(ctx: UpdCtx): string | null;

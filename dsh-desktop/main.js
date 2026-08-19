@@ -42,60 +42,29 @@ const {
 const { configLinesFor, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
 const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync');
 const { buildErrorDetail } = require('./error-detail');
-const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
+const { SessionWatcher } = require('./session-watcher');
 const { isEncodingMismatch, healSessionEncodingConflicts } = require('./session-encoding-heal');
 const { patchSessionManage } = require('./scripts/patch-session-manage');
 const { togglePluginInPatch, removePluginFromPatch, hasEntryId } = require('./scripts/plugin-manager-patch');
 const { collectPluginRows } = require('./plugin-manager-state');
 const onboardingLogic = require('./scripts/onboarding');
-const zlib = require('node:zlib');
-// 全局共享可变状态单例（Task 1.1 迁自本文件顶层声明；lib/state.js 为
-// `npm run build` 的 tsc 原地编译产物，见 .gitignore）。
+// 全局共享可变状态单例（Task 1.1 迁自本文件顶层声明）；lib/*.js 均为
+// `npm run build` 的 tsc 原地编译产物，见 .gitignore。
 const { state } = require('./lib/state.js');
+// Task 1.x 提取的单一职责模块：统一日志通道 / 运行时定位与进程回收 /
+// 路径围栏与 profile 解析。
+const { log } = require('./lib/log.js');
+const {
+  IS_WIN, nodeExe, npmCli, updCtx, dshBin, dshVersion, dshVersionSource,
+  killTree, killTreeAndWait, waitForProcExit,
+} = require('./lib/proc.js');
+const {
+  DANGEROUS_EXT, fileRoots, isUnderFileRoots,
+  DESKTOP_PROFILE, DESKTOP_PROFILE_BUNDLES,
+  desktopProfile, desktopProfileDir, ensureDesktopProfileInit,
+  profileDirFor, artifactCacheDirFor,
+} = require('./lib/paths.js');
 
-// ---------------------------------------------------------------------------
-// H2/H3 路径围栏：文件还原/打开只允许「会话 cwd」之下的项目文件。
-// 任意绝对路径（如写入 Startup\*.bat）一律拒绝；缓存 5 分钟。
-// ---------------------------------------------------------------------------
-const DANGEROUS_EXT = /\.(bat|cmd|com|exe|ps1|vbs|lnk|js|jse|msi|scr|pif|reg)$/i;
-const fileRootsCache = { at: 0, roots: [] };
-
-function fileRoots() {
-  if (Date.now() - fileRootsCache.at < 5 * 60 * 1000) return fileRootsCache.roots;
-  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-  const roots = [];
-  const walk = (dir) => {
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) { walk(p); continue; }
-      if (e.name !== 'session.jsonl.zstd') continue;
-      try {
-        const buf = fs.readFileSync(p);
-        const { frames } = scanZstdFrames(buf);
-        if (frames.length === 0) continue;
-        const text = zlib.zstdDecompressSync(buf.subarray(frames[0].start, frames[0].end)).toString('utf8');
-        const header = JSON.parse(text.split('\n', 1)[0]);
-        if (header && typeof header.cwd === 'string' && header.cwd) roots.push(header.cwd);
-      } catch { /* 跳过损坏日志 */ }
-    }
-  };
-  walk(path.join(dshHome, 'sessions'));
-  fileRootsCache.roots = [...new Set(roots)];
-  fileRootsCache.at = Date.now();
-  return fileRootsCache.roots;
-}
-
-function isUnderFileRoots(p) {
-  const resolved = path.resolve(p);
-  return fileRoots().some((r) => {
-    const rp = path.resolve(r);
-    return resolved === rp || resolved.startsWith(rp + path.sep);
-  });
-}
-
-const IS_WIN = process.platform === 'win32';
 const APP_VERSION = app.getVersion();
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 
@@ -111,64 +80,7 @@ const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 // 上限 8 个防资源滥用；主窗关闭/应用退出时统一回收。
 const FLOAT_MAX = 8;
 
-// ---------------------------------------------------------------------------
-// 桌面专属 profile（与原生 CLI 彻底共存）：
-//
-// 历史冲突根因有二 ——
-//   1. 桌面端把配套插件行/包直接写进原生 `web` profile，pnpm 安装、patch
-//      行互踩，原生 CLI 跟着崩；
-//   2. dsh-app-boot 会把 <home>/profiles/node_modules 的共享 junction 指向
-//      「当前运行的 dsh 实例」自己的闭包 —— 原生 npx dsh 一跑，桌面端模块
-//      解析被换血（版本错位 / npx 缓存清理后悬空）。
-// 桌面端从此默认运行在独立 profile `web-desktop`（DSH_HOME 不变：会话、
-// API Key、settings.yaml 依旧共享）；junction 归属由 plugin-guard 周期守卫。
-// 旧共享模式仍可用（settings.shareWebProfile = true），仅供特殊需要。
-// ---------------------------------------------------------------------------
-const DESKTOP_PROFILE = 'web-desktop';
-// 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app）。
-const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
 
-function desktopProfile() {
-  try {
-    const s = updater.loadSettings(updCtx());
-    return s.shareWebProfile === true ? 'web' : DESKTOP_PROFILE;
-  } catch {
-    return DESKTOP_PROFILE;
-  }
-}
-
-function desktopProfileDir() {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
-  return path.join(home, 'profiles', desktopProfile());
-}
-
-// 未知 profile 不会自动初始化（dsh 直接报错退出），桌面端自己按官方模板
-// 创建：package.json（bundles）+ pnpm-workspace.yaml + 空 patch 层。
-function ensureDesktopProfileInit() {
-  try {
-    const dir = desktopProfileDir();
-    if (desktopProfile() === 'web') return; // 共享模式走官方模板
-    fs.mkdirSync(dir, { recursive: true });
-    const manifest = path.join(dir, 'package.json');
-    if (!fs.existsSync(manifest)) {
-      fs.writeFileSync(manifest, JSON.stringify({
-        name: 'dsh-profile-' + desktopProfile(),
-        private: true,
-        dependencies: {},
-        dsh: { profile: { bundles: [...DESKTOP_PROFILE_BUNDLES] } },
-      }, null, 2) + '\n');
-      log('boot', '已初始化桌面专属 profile: ' + dir);
-    }
-    if (!fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
-      fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n');
-    }
-    if (!fs.existsSync(path.join(dir, 'cordis.patch.yml'))) {
-      fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), '[]\n');
-    }
-  } catch (err) {
-    log('boot', '初始化桌面 profile 失败: ' + err.message);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 静态体检 / 自动修复 /
@@ -186,41 +98,6 @@ function ensureGuard() {
   return state.guardInstance;
 }
 
-// ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
-
-function log(tag, msg) {
-  // 双通道记录（日志系统接入 AC-1 / AC-3）：
-  //   1) 旧 desktop.log 纯文本 —— 保留，便于 tail/外部脚本、NSIS 卸载诊断、非结构化查看。
-  //   2) 结构化 logger.{level}(msg, { tag, ... }) —— JSON lines + PII 脱敏 + rotation + 诊断 zip 导出。
-  // 本地时间 + 显式时区偏移：此前用 toISOString()（UTC），本地排查时易误判（issue #4）。
-  const d = new Date();
-  const off = -d.getTimezoneOffset();
-  const sign = off >= 0 ? '+' : '-';
-  const p = (n, w = 2) => String(n).padStart(w, '0');
-  const ts = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}` +
-    ` UTC${sign}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
-  const line = `[${ts}] [${tag}] ${msg}\n`;
-  try { if (state.desktopLog) state.desktopLog.write(line); } catch {}
-  if (process.env.DSH_DESKTOP_DEBUG) process.stdout.write(line);
-  try {
-    const level = /^(warn|warning|err|error|fatal)$/i.test(tag) ? 'warn'
-      : /^debug$|trace$/i.test(tag) ? 'debug' : 'info';
-    structuredLogger[level](msg, { tag });
-  } catch {}
-}
-
-function nodeExe() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'node', 'node.exe');
-  return path.resolve(__dirname, 'vendor', 'node', 'node.exe');
-}
-
-function npmCli() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'npm', 'bin', 'npm-cli.js');
-  return path.resolve(__dirname, 'vendor', 'npm', 'bin', 'npm-cli.js');
-}
 
 // 启动一个「内置终端」：用随应用分发的 node.exe + npm CLI 拼出一个
 // cmd.exe 会话，PATH 前置内置 node 目录与临时垫片目录，使 node / npm /
@@ -298,85 +175,6 @@ function openBuiltinTerminal() {
       detail: String((err && err.message) || err),
       buttons: ['确定'],
     }).catch(() => {});
-  }
-}
-
-// Context shared with the updater module.
-function updCtx() {
-  return { userDataDir: state.userDataDir, nodeExe, npmCli, log };
-}
-
-// Updated overlay (user-approved official release) takes precedence over the
-// bundled copy; the bundled copy is the fallback.
-function dshBin() {
-  const ov = updater.overlayBinPath(updCtx());
-  if (ov && fs.existsSync(ov)) return ov;
-  return require.resolve('@deepseek-ai/dsh/lib/bin.js');
-}
-
-function dshVersion() { return updater.activeVersion(updCtx()) || '未知'; }
-
-function dshVersionSource() {
-  return updater.overlayVersion(updCtx()) ? '用户目录（已更新）' : '内置';
-}
-
-function killTree(proc) {
-  if (!proc || !proc.pid) return;
-  try {
-    if (IS_WIN) {
-      // M2 修复：先优雅（无 /F）给进程收尾机会（避免撕裂 session.jsonl.zstd），
-      // 短等待后仍存活再强杀。
-      spawn('taskkill', ['/pid', String(proc.pid), '/T'], { windowsHide: true, stdio: 'ignore' });
-      const pid = proc.pid;
-      setTimeout(() => {
-        try {
-          const query = 'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH';
-          const alive = require('node:child_process').execSync(query, { encoding: 'utf8', windowsHide: true });
-          if (alive.includes(String(pid))) {
-            spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          }
-        } catch { /* 进程已退出或查询失败 */ }
-      }, 1500);
-    } else {
-      try { process.kill(-proc.pid, 'SIGTERM'); } catch { proc.kill('SIGTERM'); }
-    }
-  } catch (err) {
-    log('killTree', String(err));
-  }
-}
-
-// V4 修复「退出后残留一对进程」：退出路径专用的有界同步回收。
-// 旧实现在 before-quit 里调用 killTree —— 强杀补刀挂在 1500ms 的
-// setTimeout 上，而 Electron 在 before-quit 后数百毫秒内就退出，定时器
-// 随主进程湮灭；无 /F 的 taskkill 对控制台进程（node.exe 没有顶层窗口，
-// 无处投递 WM_CLOSE）基本无效。结果是 dsh web 的 node.exe 连同它的
-// conhost.exe 每次退出都原样残留（用户实测三次，三次成对）。
-// 这里：优雅 taskkill → 等待 graceMs → 仍存活则 taskkill /T /F → 再等
-// hardMs，全程有界，绝不无限阻塞退出。
-async function killTreeAndWait(proc, { graceMs = 1200, hardMs = 4000 } = {}) {
-  if (!proc || !proc.pid || proc.exitCode !== null) return;
-  const pid = proc.pid;
-  try {
-    if (IS_WIN) {
-      spawn('taskkill', ['/pid', String(pid), '/T'], { windowsHide: true, stdio: 'ignore' });
-      await waitForProcExit(proc, graceMs);
-      if (proc.exitCode !== null) return;
-      try {
-        const alive = require('node:child_process').execSync(
-          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
-        if (!alive.includes('"' + pid + '"')) return;
-      } catch { return; }
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      await waitForProcExit(proc, hardMs);
-    } else {
-      try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch {} }
-      await waitForProcExit(proc, graceMs);
-      if (proc.exitCode !== null) return;
-      try { process.kill(-proc.pid, 'SIGKILL'); } catch { try { proc.kill('SIGKILL'); } catch {} }
-      await waitForProcExit(proc, hardMs);
-    }
-  } catch (err) {
-    log('killTree', String(err));
   }
 }
 
@@ -635,35 +433,6 @@ function childEnv() {
   return env;
 }
 
-// 等待一个子进程真正退出（taskkill 先优雅后强杀，锁住的 DLL 要等进程
-// 终止才释放）。轮询 tasklist，超时后放行由调用方自行处理。
-function waitForProcExit(proc, timeoutMs) {
-  return new Promise((resolve) => {
-    if (!proc || !proc.pid) return resolve();
-    const pid = proc.pid;
-    const started = Date.now();
-    const isAlive = () => {
-      if (proc.exitCode !== null) return false;
-      if (!IS_WIN) {
-        try { process.kill(pid, 0); return true; } catch { return false; }
-      }
-      try {
-        const out = require('node:child_process').execSync(
-          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
-        return out.includes('"' + pid + '"');
-      } catch { return false; }
-    };
-    const check = () => {
-      if (!isAlive()) return resolve();
-      if (Date.now() - started >= timeoutMs) {
-        log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
-        return resolve();
-      }
-      setTimeout(check, 200);
-    };
-    check();
-  });
-}
 
 function showBox(opts) {
   if (state.mainWindow && !state.mainWindow.isDestroyed()) return dialog.showMessageBox(state.mainWindow, opts);
@@ -3081,15 +2850,6 @@ async function allowBuilds() {
   return state.allowBuildsMod;
 }
 
-function profileDirFor(profile) {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
-  return path.join(home, 'profiles', profile);
-}
-
-function artifactCacheDirFor(profile) {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
-  return path.join(home, 'plugin-artifact-cache', profile);
-}
 
 // 由桌面壳重建的包（配套插件 + 皮肤）不进快照：丢了也会被 syncCompanion
 // Plugins / 皮肤同步立刻补回，缓存它们只浪费空间。
