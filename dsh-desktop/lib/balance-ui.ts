@@ -12,7 +12,7 @@ import * as os from 'node:os';
 import { Notification } from 'electron';
 import * as updater from '../updater.js';
 import * as balance from '../balance.js';
-import type { BalanceResult, TierPrice } from '../balance.js';
+import type { BalanceResult, PriceEntry, TierPrice } from '../balance.js';
 import { state } from './state.js';
 import type { AppState } from './state.js';
 import { log } from './log.js';
@@ -25,17 +25,17 @@ export async function refreshBalance(): Promise<BalanceResult> {
   try {
     result = await balance.queryBalance(home);
   } catch (err) {
-    result = { ok: false, error: String((err as Error).message), balances: [] };
+    result = { ok: false, error: String((err as Error).message), balances: [], prices: {} };
   }
   // 峰谷定价（2026-08-17 起）：按当前时段 pick 高峰/空闲档，两档随 pricing
   // 一起推给页面，时段切换后 client 可本地换档无需等下一次轮询。
   const model = balance.readActiveModel(home) || 'deepseek-v4-pro';
-  const table = result.prices ?? balance.DEFAULT_PRICES;
+  const table: Record<string, PriceEntry> = result.prices ?? balance.DEFAULT_PRICES;
   const s = updater.loadSettings(updCtx());
   const pricing = balance.computePricingState(
     (s.pricing as { peakWindows?: unknown } | undefined)?.peakWindows,
   );
-  const base: TierPrice = table[model] ?? balance.FALLBACK_PRICES;
+  const base: PriceEntry = table[model] ?? balance.FALLBACK_PRICES;
   const ov =
     ((s.balancePrices as Record<string, Record<string, unknown>> | undefined)?.[model]) ?? {};
   const tier = (src: 'peak' | 'offpeak'): TierPrice => balance.tierPrices(base, ov, src);
@@ -58,7 +58,7 @@ export function startBalanceLoop(): void {
 
 /** 回合结束信息（session-watcher 投影）。 */
 export interface TurnEndInfo {
-  sessionId: string;
+  sessionId: string | null;
   title?: string;
   body?: string;
 }
@@ -69,9 +69,10 @@ const lastNotifyAt = new Map<string, number>(); // sessionId -> timestamp
 export function onSessionTurnEnd(info: TurnEndInfo): void {
   if (!state.notifyOnTurnEnd || state.quitting) return;
   const now = Date.now();
-  const last = lastNotifyAt.get(info.sessionId) ?? 0;
+  const key = info.sessionId ?? '';
+  const last = lastNotifyAt.get(key) ?? 0;
   if (now - last < 30000) return; // same session: at most one toast per 30s
-  lastNotifyAt.set(info.sessionId, now);
+  lastNotifyAt.set(key, now);
   log('notify', '任务完成: ' + JSON.stringify(info));
   try {
     const n = new Notification({

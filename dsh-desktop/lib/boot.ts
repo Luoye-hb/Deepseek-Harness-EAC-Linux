@@ -16,6 +16,7 @@ import { app, dialog, clipboard, Menu } from 'electron';
 import * as updater from '../updater.js';
 import * as structuredLogger from '../logger.js';
 import * as bundleIntegrity from '../bundle-integrity.js';
+import type { BundleManifest } from '../bundle-integrity.js';
 import { SessionWatcher } from '../session-watcher.js';
 import { buildErrorDetail } from '../error-detail.js';
 import { state } from './state.js';
@@ -238,9 +239,9 @@ export function verifyBundledModules(): Promise<void> {
   if (!app.isPackaged) return Promise.resolve();
   const appDir = path.join(process.resourcesPath, 'app');
   const manifestPath = path.join(appDir, 'bundle-manifest.json');
-  let manifest: unknown = null;
+  let manifest: BundleManifest | null = null;
   try {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as BundleManifest;
   } catch {
     return Promise.resolve();
   }

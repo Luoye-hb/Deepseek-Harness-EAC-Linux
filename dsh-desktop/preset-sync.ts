@@ -1,30 +1,42 @@
-'use strict';
+/**
+ * preset-sync.ts — 内置 agent-preset 同步（Task 7.1 自 preset-sync.js 迁 TS）。
+ *
+ * 把社区 preset（如实验性的 "anchored-standard"：首个模型请求锚定官方
+ * Minimal 工具对，首次持久工具调用/回复后开放完整 Standard 目录）随
+ * assets/agent-presets/<name>/ 分发，boot 时安装到用户的 preset 根
+ * （${DSH_HOME:-~/.dsh}/.agent-presets）。
+ *
+ * preset 是纯组合目录，不是 cordis 插件行：永不进 profile 插件树，坏
+ * preset 不可能复现 v2.0.0「插件树加载失败」崩溃循环 —— 最坏情况只是显式
+ * 选择它的那个会话挂载失败。
+ *
+ * Skip-if-exists：已存在的目标目录绝不覆盖（与上游安装指引一致）—— 用户
+ * 手改与手工安装的副本永远优先于内置副本。
+ */
 
-// Bundled agent-preset sync.
-//
-// Ships community presets (e.g. the experimental "anchored-standard": the
-// first model request is anchored on the official Minimal tool pair, then the
-// full Standard catalog opens after the first durable tool call / reply)
-// inside assets/agent-presets/<name>/ and installs them into the user's
-// preset root (${DSH_HOME:-~/.dsh}/.agent-presets) at boot.
-//
-// Presets are plain composition directories, NOT cordis plugin rows: they
-// never enter the profile plugin tree, so a bad preset cannot reproduce the
-// v2.0.0 "plugin tree failed to load" crash loop — the worst case is that one
-// preset failing to mount for a session that explicitly selected it.
-//
-// Skip-if-exists: an existing target directory is never overwritten, matching
-// the upstream install guidance — user edits and manually installed copies
-// always win over the bundled copy.
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const fs = require('node:fs');
-const path = require('node:path');
+/** syncBundledPresets 的结果。 */
+export interface PresetSyncResult {
+  installed: string[];
+  kept: string[];
+}
 
-function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
-  const installed = [];
-  const kept = [];
-  let entries;
-  try { entries = fs.readdirSync(assetsRoot, { withFileTypes: true }); } catch { return { installed, kept }; }
+/** 安装 assets/agent-presets 下的全部内置 preset（skip-if-exists）。 */
+export function syncBundledPresets(
+  assetsRoot: string,
+  presetsRoot: string,
+  log: (msg: string) => void = (): void => {},
+): PresetSyncResult {
+  const installed: string[] = [];
+  const kept: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(assetsRoot, { withFileTypes: true });
+  } catch {
+    return { installed, kept };
+  }
   fs.mkdirSync(presetsRoot, { recursive: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -39,7 +51,7 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
         fs.cpSync(src, sharedDest, { recursive: true });
         log('installed bundled preset shared dir: ' + entry.name);
       } catch (err) {
-        log('failed to install bundled preset shared dir ' + entry.name + ': ' + err.message);
+        log('failed to install bundled preset shared dir ' + entry.name + ': ' + String((err as Error).message));
       }
       continue;
     }
@@ -56,7 +68,7 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
       installed.push(entry.name);
       log('installed bundled agent preset: ' + entry.name);
     } catch (err) {
-      log('failed to install bundled agent preset ' + entry.name + ': ' + err.message);
+      log('failed to install bundled agent preset ' + entry.name + ': ' + String((err as Error).message));
     }
   }
   return { installed, kept };
@@ -75,19 +87,30 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
  *     宿主回落官方默认 preset，绝不破坏用户的 settings.yaml。
  * 指名的 preset 目录不存在时也跳过（默认值不能指向缺失的 preset）。
  */
-function ensureDefaultAgentPreset(home, presetId, log = () => {}) {
+export function ensureDefaultAgentPreset(
+  home: string,
+  presetId: string,
+  log: (msg: string) => void = (): void => {},
+): 'set' | 'kept' | 'skipped' {
   try {
     if (!fs.existsSync(path.join(home, '.agent-presets', presetId, 'preset.yml'))) return 'skipped';
     const file = path.join(home, 'settings.yaml');
     let text = '';
-    try { text = fs.readFileSync(file, 'utf8'); } catch { text = ''; }
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      text = '';
+    }
     let bom = false;
-    if (text.charCodeAt(0) === 0xFEFF) { bom = true; text = text.slice(1); }
+    if (text.charCodeAt(0) === 0xfeff) {
+      bom = true;
+      text = text.slice(1);
+    }
     const eol = text.includes('\r\n') ? '\r\n' : '\n';
     const lines = text.split(/\r?\n/);
     const blockHeader = /^agent-presets[ \t]*:[ \t]*(?:#.*)?$/;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i] as string;
       if (!/^agent-presets[ \t]*:/.test(line)) continue;
       if (!blockHeader.test(line)) {
         // 内联 flow（agent-presets: {…}）等非块状结构：识别不了，不碰。
@@ -96,23 +119,21 @@ function ensureDefaultAgentPreset(home, presetId, log = () => {}) {
       }
       // section 体：到下一个顶层键（或文件尾）为止。
       let end = i + 1;
-      while (end < lines.length && !/^\S/.test(lines[end])) end++;
+      while (end < lines.length && !/^\S/.test(lines[end] as string)) end++;
       for (let k = i + 1; k < end; k++) {
-        if (/^[ \t]+default[ \t]*:/.test(lines[k])) return 'kept';
+        if (/^[ \t]+default[ \t]*:/.test(lines[k] as string)) return 'kept';
       }
       lines.splice(i + 1, 0, '  default: ' + presetId);
-      fs.writeFileSync(file, (bom ? '\uFEFF' : '') + lines.join(eol));
+      fs.writeFileSync(file, (bom ? '﻿' : '') + lines.join(eol));
       return 'set';
     }
     // 缩进出现的 agent-presets 键（嵌套在别的 section 里）不归我们管，
     // 直接追加顶层 section 不会与之冲突。
     const trailing = text === '' || text.endsWith(eol) ? '' : eol;
-    fs.writeFileSync(file, (bom ? '\uFEFF' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
+    fs.writeFileSync(file, (bom ? '﻿' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
     return 'set';
   } catch (err) {
-    log('设置默认 agent preset 失败: ' + err.message);
+    log('设置默认 agent preset 失败: ' + String((err as Error).message));
     return 'skipped';
   }
 }
-
-module.exports = { syncBundledPresets, ensureDefaultAgentPreset };
