@@ -19,7 +19,8 @@ test('main.js requires the renderer-recovery module', () => {
 
 test('main.js builds the recovery state machine and attaches the main window', () => {
   assert.ok(/function initRendererRecovery\(\)/.test(mainSrc), 'initRendererRecovery() missing');
-  assert.ok(/recovery\.attach\(mainWindow,\s*'main'\)/.test(mainSrc), 'main window attach missing');
+  // Task 1.1：顶层状态迁 lib/state.ts 单例后，引用统一为 state.recovery / state.mainWindow。
+  assert.ok(/state\.recovery\.attach\(state\.mainWindow,\s*'main'\)/.test(mainSrc), 'main window attach missing');
 });
 
 test('main.js runs the watchdog lifecycle: run-state write, spawn, clean-exit mark', () => {

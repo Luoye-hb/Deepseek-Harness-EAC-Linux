@@ -36,6 +36,7 @@ test('attachEditContextMenu 定义完整：编辑/图片/选区/导航四类场�
 test('主窗与浮窗都挂接右键菜单', () => {
   const occurrences = main.match(/attachEditContextMenu\(/g) || [];
   assert.ok(occurrences.length >= 3, '定义 + 主窗 + 浮窗至少 3 处引用，实际 ' + occurrences.length);
-  assert.match(main, /attachEditContextMenu\(mainWindow\.webContents\)/, '主窗挂接');
+  // Task 1.1：顶层状态迁 lib/state.ts 单例后，主窗引用统一为 state.mainWindow。
+  assert.match(main, /attachEditContextMenu\(state\.mainWindow\.webContents\)/, '主窗挂接');
   assert.match(main, /attachEditContextMenu\(win\.webContents\)/, '浮窗挂接');
 });

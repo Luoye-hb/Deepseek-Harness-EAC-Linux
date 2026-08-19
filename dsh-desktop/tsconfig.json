@@ -11,12 +11,13 @@
     "noFallthroughCasesInSwitch": true,
     "erasableSyntaxOnly": true,
     "esModuleInterop": true,
+    "allowJs": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "types": ["node"],
     "noEmit": false
   },
-  "include": ["shared/**/*.ts"],
+  "include": ["lib/**/*.ts", "shared/**/*.ts"],
   "exclude": ["node_modules", "vendor", "dist", "out", "assets", "docs"]
 }

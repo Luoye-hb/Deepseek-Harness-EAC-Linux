@@ -25,6 +25,8 @@ buildDependenciesFromSource: false
 
 files:
   - main.js
+  # Task 1.1：main.js 顶层共享状态单例（tsc 原地编译产物，prepack 时生成）。
+  - lib/state.js
   - updater.js
   - client-updater.js
   - logger.js
