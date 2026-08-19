@@ -35,6 +35,8 @@ export interface DshSettings {
 
 export declare function loadSettings(ctx: UpdCtx): DshSettings;
 export declare function saveSettings(ctx: UpdCtx, settings: DshSettings): void;
+/** semver 风格比较：a<b 负数 / 相等 0 / a>b 正数。 */
+export declare function compareVersions(a: string, b: string): number;
 /** 用户已批准安装的 agent 更新 overlay 的 bin 路径（无则 null）。 */
 export declare function overlayBinPath(ctx: UpdCtx): string | null;
 /** 当前生效的 dsh 版本号（内置或 overlay）。 */
