@@ -39,6 +39,13 @@ files:
   - lib/market-modules.js
   - lib/window.js
   - lib/tray.js
+  - lib/session-heal.js
+  - lib/plugin-copy.js
+  - lib/plugin-registry-data.js
+  - lib/plugin-manager-core.js
+  - lib/plugins.js
+  - lib/market-ops.js
+  - lib/migration.js
   - updater.js
   - client-updater.js
   - logger.js

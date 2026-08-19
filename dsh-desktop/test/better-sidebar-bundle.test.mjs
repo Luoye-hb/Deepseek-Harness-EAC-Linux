@@ -63,8 +63,9 @@ test('after-pack injects closure-unreachable deps into the bundled dsh package',
 });
 
 test('COMPANION_PLUGINS registers dsh-better-sidebar', () => {
-  const mainSrc = readFileSync(join(ROOT, 'main.js'), 'utf8');
-  assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(mainSrc),
+  // Task 5：COMPANION_PLUGINS 表迁 lib/plugin-registry-data.ts。
+  const registrySrc = readFileSync(join(ROOT, 'lib', 'plugin-registry-data.ts'), 'utf8');
+  assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(registrySrc),
     'COMPANION_PLUGINS entry missing');
 });
 
