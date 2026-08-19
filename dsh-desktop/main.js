@@ -78,9 +78,22 @@ const {
 const { openBuiltinTerminal } = require('./lib/terminal.js');
 const { startPreviewStaticServer } = require('./lib/preview.js');
 const { artifactKeep, allowBuilds } = require('./lib/market-modules.js');
-// 跨域注入点装配（lib/bridge.ts）：函数声明提升，此处顶层引用安全。
+// Task 3 提取的模块：窗口族（含渲染自恢复装配）与托盘/退出策略。
+const {
+  showBox, isAllowedWebUrl, createWindow, createFloatWindow, closeAllFloatWindows,
+  reloadMainWindow, initRendererRecovery, startHeartbeatLoop,
+} = require('./lib/window.js');
+const {
+  showMainWindow, createTray, trayHintOnce, closeToTrayEnabled, setCloseToTray,
+  getExitAction, setExitAction, askExitAction, showAbout, repoUrls,
+} = require('./lib/tray.js');
+// bridge 更新：窗口/托盘函数已迁入 lib，装配指向新模块导出。
 bridge.showMainWindow = showMainWindow;
 bridge.showBox = showBox;
+bridge.getExitAction = getExitAction;
+bridge.askExitAction = askExitAction;
+bridge.trayHintOnce = trayHintOnce;
+// 跨域注入点装配（lib/bridge.ts）：函数声明提升，此处顶层引用安全。
 bridge.ensureGuard = ensureGuard;
 bridge.handleBootFailure = handleBootFailure;
 bridge.processPendingMarketOps = processPendingMarketOps;
@@ -99,9 +112,6 @@ const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 // 本文件统一经 `state.xxx` 读写；纯常量（FLOAT_MAX 等）仍留在本文件。
 // ---------------------------------------------------------------------------
 
-// V4 多窗口（会话浮窗，摘自上游 dsh_desktop）：同一会话只保留一个浮窗，
-// 上限 8 个防资源滥用；主窗关闭/应用退出时统一回收。
-const FLOAT_MAX = 8;
 
 
 
@@ -125,85 +135,6 @@ function ensureGuard() {
 
 
 
-function showBox(opts) {
-  if (state.mainWindow && !state.mainWindow.isDestroyed()) return dialog.showMessageBox(state.mainWindow, opts);
-  return dialog.showMessageBox(opts);
-}
-
-// H1（共享给主窗/浮窗）：origin 精确比较（protocol+host+port），杜绝前缀/
-// 异域/userinfo 逃逸；file: 一律拦截（同 webContents 下 file 页面仍持有
-// preload 桥）。
-function isAllowedWebUrl(url) {
-  try {
-    const target = new URL(url);
-    if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
-    if (state.webUrl) {
-      const base = new URL(state.webUrl);
-      return target.origin === base.origin;
-    }
-    return target.hostname === '127.0.0.1' || target.hostname === 'localhost' || target.hostname === '::1';
-  } catch {
-    return false;
-  }
-}
-
-// V4（用户反馈）：浏览器风格的右键菜单。Electron 不展示 Chromium 的内置
-// 右键菜单，需在 webContents 的 context-menu 事件自建：
-//   · 可编辑区（输入框/编辑器）→ 撤销/重做/剪切/复制/粘贴/删除/全选
-//     （role 菜单自动路由到焦点渲染进程的编辑器，enabled 用 editFlags
-//     精确反映可操作性）；
-//   · 图片 → 复制图片 / 图片另存为…；
-//   · 选中文本 → 复制 / 全选；
-//   · 其余页面区域 → 后退/前进/重新加载（浏览器同款导航段）。
-// 页面自绘右键交互（DOM contextmenu 已处理并 preventDefault 时，
-// params 仍会派发）—— Web UI 目前未使用原生右键，无冲突。
-function attachEditContextMenu(wc) {
-  wc.on('context-menu', (_e, params) => {
-    const flags = params.editFlags || {};
-    const win = BrowserWindow.fromWebContents(wc);
-    if (!win || win.isDestroyed()) return;
-    let template = null;
-    if (params.isEditable) {
-      template = [
-        { label: '撤销', role: 'undo', accelerator: 'Ctrl+Z', enabled: flags.canUndo !== false },
-        { label: '重做', role: 'redo', accelerator: 'Ctrl+Y', enabled: flags.canRedo !== false },
-        { type: 'separator' },
-        { label: '剪切', role: 'cut', accelerator: 'Ctrl+X', enabled: flags.canCut !== false },
-        { label: '复制', role: 'copy', accelerator: 'Ctrl+C', enabled: flags.canCopy !== false },
-        { label: '粘贴', role: 'paste', accelerator: 'Ctrl+V', enabled: flags.canPaste !== false },
-        { label: '删除', role: 'delete', enabled: flags.canDelete !== false },
-        { type: 'separator' },
-        { label: '全选', role: 'selectAll', accelerator: 'Ctrl+A' },
-      ];
-    } else if (params.mediaType === 'image' && params.srcURL) {
-      template = [
-        { label: '复制图片', click: () => { try { wc.copyImageAt(params.x, params.y); } catch {} } },
-        { label: '图片另存为…', click: () => { try { wc.downloadURL(params.srcURL); } catch {} } },
-      ];
-      if (flags.canCopy) {
-        template.push({ type: 'separator' }, { label: '复制', role: 'copy', accelerator: 'Ctrl+C' });
-      }
-    } else if (flags.canCopy) {
-      template = [
-        { label: '后退', role: 'back', enabled: wc.navigationHistory.canGoBack?.() ?? wc.canGoBack() },
-        { label: '前进', role: 'forward', enabled: wc.navigationHistory.canGoForward?.() ?? wc.canGoForward() },
-        { label: '重新加载', role: 'reload', accelerator: 'Ctrl+R' },
-        { type: 'separator' },
-        { label: '复制', role: 'copy', accelerator: 'Ctrl+C' },
-        { label: '全选', role: 'selectAll', accelerator: 'Ctrl+A' },
-      ];
-    } else {
-      template = [
-        { label: '后退', role: 'back', enabled: wc.navigationHistory.canGoBack?.() ?? wc.canGoBack() },
-        { label: '前进', role: 'forward', enabled: wc.navigationHistory.canGoForward?.() ?? wc.canGoForward() },
-        { label: '重新加载', role: 'reload', accelerator: 'Ctrl+R' },
-      ];
-    }
-    if (template && template.length) {
-      Menu.buildFromTemplate(template).popup({ window: win, x: params.x, y: params.y });
-    }
-  });
-}
 
 
 // ---------------------------------------------------------------------------
@@ -358,196 +289,6 @@ function scheduleClientUpdateRescue() {
 // Window
 // ---------------------------------------------------------------------------
 
-function createWindow({ startHidden = false } = {}) {
-  state.mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 960,
-    minHeight: 640,
-    show: false,
-    title: 'Deepseek Harness EAC',
-    backgroundColor: '#0b1220',
-    icon: path.join(__dirname, 'assets', 'icon.png'),
-    // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-    },
-  });
-
-  state.mainWindow.loadFile(path.join(__dirname, 'assets', 'loading.html'));
-  state.mainWindow.once('ready-to-show', () => { if (!startHidden) state.mainWindow.show(); });
-  // Keep the app brand in the OS title bar (the web UI sets its own <title>).
-  state.mainWindow.on('page-title-updated', (event) => {
-    event.preventDefault();
-    state.mainWindow.setTitle('Deepseek Harness EAC');
-  });
-
-  // Open target=_blank / window.open in the system browser.
-  state.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-
-  // Keep the app pinned to the local web UI; send external links out.
-  // H1 修复：origin 精确比较（protocol+host+port），杜绝前缀/异域/userinfo 逃逸；
-  // file: 一律拦截（同 webContents 下 file 页面仍持有 preload 桥）；will-redirect 同规则。
-  const guardNavigation = (event, url) => {
-    if (isAllowedWebUrl(url)) return;
-    event.preventDefault();
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-  };
-  state.mainWindow.webContents.on('will-navigate', guardNavigation);
-  state.mainWindow.webContents.on('will-redirect', guardNavigation);
-
-  // 渲染进程错误捕获：插件/页面异常统一落到 desktop.log，便于排查空白视图。
-  state.mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-    if (level === 'error' || level === 'warning') {
-      log('page', `[${level}] ${message} (${sourceId || 'unknown'}:${line})`);
-    }
-  });
-  // V4：浏览器风格右键菜单（编辑/图片/选区/导航四类场景）。
-  attachEditContextMenu(state.mainWindow.webContents);
-  state.mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    log('page', `渲染进程异常退出: ${details.reason} (exitCode=${details.exitCode})`);
-  });
-
-  // 移除菜单栏后仍保留的键盘快捷键。
-  state.mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    const key = String(input.key || '').toLowerCase();
-    if (input.key === 'F11') { state.mainWindow.setFullScreen(!state.mainWindow.isFullScreen()); event.preventDefault(); }
-    else if (input.key === 'F12') { state.mainWindow.webContents.toggleDevTools(); event.preventDefault(); }
-    else if (input.control && input.shift && key === 'i') { state.mainWindow.webContents.toggleDevTools(); event.preventDefault(); }
-    else if (input.control && key === 'r') { reloadMainWindow(); event.preventDefault(); }
-    else if (input.alt && key === 'f4') { state.mainWindow.close(); event.preventDefault(); }
-  });
-
-  // 自绘最大化/还原按钮需要感知窗口状态。
-  const sendMaxState = () => {
-    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-      state.mainWindow.webContents.send('chrome:maximized', state.mainWindow.isMaximized());
-    }
-  };
-  state.mainWindow.on('maximize', sendMaxState);
-  state.mainWindow.on('unmaximize', sendMaxState);
-  state.mainWindow.on('enter-full-screen', sendMaxState);
-  state.mainWindow.on('leave-full-screen', sendMaxState);
-
-  // 关闭 → 按退出行为设置处理：ask 弹窗询问 / minimize 隐藏到托盘 / quit 退出。
-  state.mainWindow.on('close', async (event) => {
-    if (state.forceQuit || !IS_WIN || !state.tray) return;
-    event.preventDefault();
-    const action = getExitAction();
-    let choice = action;
-    if (action === 'ask') {
-      choice = await askExitAction();
-      // 弹窗期间用户可能已通过菜单真正退出（quitting/forceQuit 置位）。
-      if (state.forceQuit || state.quitting) return;
-    }
-    if (choice === 'minimize') {
-      state.mainWindow.hide();
-      trayHintOnce();
-    } else {
-      state.forceQuit = true;
-      app.quit();
-    }
-  });
-
-  state.mainWindow.on('closed', () => { state.mainWindow = null; });
-
-  // 渲染进程崩溃/挂起的自恢复由 renderer-recovery.js 统一接管（保留上方
-  // render-process-gone 的日志 handler，二者互补：一个记录、一个恢复）。
-  wireWindowRecovery();
-}
-
-// ---------------------------------------------------------------------------
-// 会话浮窗（V4 多窗口，移植自上游 dsh_desktop）：把某个会话弹出到独立
-// 窗口实现分屏多任务。同一会话只保留一个浮窗，全局上限 FLOAT_MAX；浮窗
-// 与主窗使用独立 partition（localStorage 隔离，避免互相覆盖当前会话选中
-// 态）；preload 以 --dsh-float=<sessionId> 识别浮窗模式，注入更细的拖拽条。
-// ---------------------------------------------------------------------------
-
-function guardFloatWebContents(wc) {
-  wc.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  const guardNavigation = (event, url) => {
-    if (isAllowedWebUrl(url)) return;
-    event.preventDefault();
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
-  };
-  wc.on('will-navigate', guardNavigation);
-  wc.on('will-redirect', guardNavigation);
-  wc.on('console-message', (details, level, message, line, sourceId) => {
-    const text = (details && details.message) || message || '';
-    const lvl = (details && details.level) || level;
-    const src = (details && details.sourceId) || sourceId || 'unknown';
-    const lineNo = (details && details.lineNumber) ?? line;
-    if (lvl === 'error' || lvl === 3 || lvl === 'warning' || lvl === 2 || /\[dsh-float-window\]/.test(text)) {
-      log('float-page', `[${lvl}] ${text} (${src}:${lineNo})`);
-    }
-  });
-}
-
-// 创建并登记一个会话浮窗。返回 BrowserWindow；失败返回 null。
-function createFloatWindow(sessionId, { title } = {}) {
-  if (!state.webUrl || state.floatWindows.size >= FLOAT_MAX) return null;
-  const win = new BrowserWindow({
-    width: 900,
-    height: 640,
-    minWidth: 480,
-    minHeight: 360,
-    show: false,
-    title: title || 'DSH 会话',
-    backgroundColor: '#0b1220',
-    icon: path.join(__dirname, 'assets', 'icon.png'),
-    // 与主窗一致的无边框；浮窗 preload 注入一条更细的纯拖拽条。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-      // 独立分区：浮窗与主窗隔离 localStorage，避免互相覆盖 dsh.sessions.current。
-      // 会话数据在服务端（~/.dsh），localStorage 仅存 UI 选中态，无 cookie 认证。
-      partition: 'persist:dsh-float',
-      // 用 additionalArguments 而非 URL 参数，避免污染 Web UI 见到的地址；
-      // preload 从 process.argv 读取 --dsh-float=<sessionId>。
-      additionalArguments: ['--dsh-float=' + sessionId],
-    },
-  });
-  state.floatWindows.add(win);
-  state.floatBySession.set(sessionId, win);
-  win.loadURL(state.webUrl).catch((err) => log('float', '浮窗加载失败: ' + ((err && err.message) || err)));
-
-  // 窗口标题跟随会话（去掉通用前缀，保留会话相关标题）。
-  win.on('page-title-updated', (event) => {
-    event.preventDefault();
-    const raw = String(event.title || win.getTitle() || '');
-    const cleaned = raw.replace(/^(DSH|Deepseek Harness EAC)[·\-—\s:]*/i, '').trim();
-    win.setTitle(cleaned || 'DSH 会话');
-  });
-
-  win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
-  win.on('closed', () => {
-    state.floatWindows.delete(win);
-    for (const [sid, w] of state.floatBySession) {
-      if (w === win) { state.floatBySession.delete(sid); break; }
-    }
-  });
-  guardFloatWebContents(win.webContents);
-  attachEditContextMenu(win.webContents);
-  if (state.recovery) state.recovery.attach(win, 'float');
-  log('float', '已创建会话浮窗 sessionId=' + sessionId);
-  return win;
-}
 
 // ---------------------------------------------------------------------------
 // 内置插件选择向导（首次启动 first 模式 / 设置页二次打开 rerun 模式）
@@ -664,83 +405,7 @@ async function runPluginOnboardingIfNeeded(onboardingNeeded) {
   return { ran: true, ...result };
 }
 
-// 关闭全部浮窗（应用退出时调用）。
-function closeAllFloatWindows() {
-  for (const win of state.floatWindows) {
-    if (!win.isDestroyed()) win.destroy();
-  }
-  state.floatWindows.clear();
-  state.floatBySession.clear();
-}
 
-// ---------------------------------------------------------------------------
-// 渲染进程自恢复：装配 renderer-recovery 状态机（上游 Issue #9 根治修复）
-// ---------------------------------------------------------------------------
-
-function initRendererRecovery() {
-  if (state.recovery) return state.recovery;
-  const opts = {
-    log: (msg) => log('recovery', msg),
-    isQuitting: () => state.quitting,
-    isServerAlive: () => !!state.serverProc && state.serverProc.exitCode === null && !state.serverProc.killed,
-    getTarget: () => (state.webUrl ? { kind: 'url', url: state.webUrl } : null),
-    loadingPage: path.join(__dirname, 'assets', 'loading.html'),
-    recoveryPage: path.join(__dirname, 'assets', 'recovery.html'),
-    rebuildMainWindow: ({ startHidden } = {}) => {
-      if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.destroy();
-      createWindow({ startHidden: !!startHidden });
-      return state.mainWindow;
-    },
-    waitServerUp: (maxMs) => {
-      if (!state.webUrl) return Promise.reject(new Error('webUrl 未知'));
-      return waitUntilUp(state.webUrl, maxMs);
-    },
-    onGaveUp: (lastFailure) => {
-      writeRunState({ renderer: { state: 'gave-up', lastFailure, at: new Date().toISOString() } });
-    },
-    onStable: () => {
-      writeRunState({ renderer: { state: 'healthy', at: new Date().toISOString() } });
-    },
-    notify: (title, body) => {
-      try {
-        const n = new Notification({
-          title,
-          body,
-          icon: path.join(__dirname, 'assets', 'icon.png'),
-        });
-        n.on('click', () => showMainWindow());
-        n.show();
-      } catch (err) {
-        log('recovery', '通知发送失败: ' + err.message);
-      }
-    },
-  };
-  state.recovery = new RendererRecovery(opts);
-  return state.recovery;
-}
-
-function wireWindowRecovery() {
-  if (state.recovery && state.mainWindow && !state.mainWindow.isDestroyed()) state.recovery.attach(state.mainWindow, 'main');
-}
-
-function startHeartbeatLoop() {
-  // renderer 心跳由 preload 每 5s 上报；这里周期性判定「可见窗口」是否失联
-  // （窗口不可见时页面定时器被节流，判定只针对可见窗口）。
-  setInterval(() => { if (state.recovery) state.recovery.checkHeartbeats(); }, 15000).unref();
-}
-
-// 统一的「重新加载」入口：处于恢复页（已放弃自动恢复）时走恢复流程，
-// 否则普通 reload。菜单与 Ctrl+R 共用。
-function reloadMainWindow() {
-  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-  const st = state.recovery ? state.recovery.stateOf(state.mainWindow) : null;
-  if (st && st.gaveUp) {
-    log('recovery', '用户在恢复页触发重新加载');
-    state.recovery.retryNow(state.mainWindow);
-    return;
-  }
-  state.mainWindow.reload();
-}
 
 function fatal(title, err) {
   log('fatal', title + ': ' + ((err && (err.stack || err.message)) || err));
@@ -1052,78 +717,6 @@ function onSessionTurnEnd(info) {
 // Chrome（自绘标题栏）IPC、托盘、余额、快捷方式
 // ---------------------------------------------------------------------------
 
-function closeToTrayEnabled() {
-  const s = updater.loadSettings(updCtx());
-  return s.closeToTray !== false;
-}
-
-function setCloseToTray(v) {
-  const s = updater.loadSettings(updCtx());
-  s.closeToTray = !!v;
-  updater.saveSettings(updCtx(), s);
-}
-
-// 退出行为三档：ask（每次询问）/ minimize（后台运行）/ quit（直接退出）。
-// 旧版本只有 closeToTray 布尔开关，这里做迁移：closeToTray === false → quit，
-// 显式 true → minimize（保持旧默认行为），未设置（新安装）→ ask。
-function getExitAction() {
-  const s = updater.loadSettings(updCtx());
-  if (s.exitAction === 'ask' || s.exitAction === 'minimize' || s.exitAction === 'quit') return s.exitAction;
-  if (s.closeToTray === false) return 'quit';
-  if (s.closeToTray === true) return 'minimize';
-  return 'ask';
-}
-
-function setExitAction(v) {
-  if (v !== 'ask' && v !== 'minimize' && v !== 'quit') return;
-  const s = updater.loadSettings(updCtx());
-  s.exitAction = v;
-  // 同步旧字段，避免降级回旧版本时行为回退。
-  s.closeToTray = v !== 'quit';
-  updater.saveSettings(updCtx(), s);
-}
-
-// 退出确认弹窗（exitAction === "ask"）。带「记住我的选择」勾选框。
-async function askExitAction() {
-  const { response, checkboxChecked } = await showBox({
-    type: 'question',
-    title: '退出 Deepseek Harness',
-    message: '要退出程序，还是在后台运行？',
-    detail: '后台运行时窗口会隐藏到系统托盘，任务完成后会发通知。',
-    buttons: ['最小化到后台', '退出程序'],
-    defaultId: 0,
-    cancelId: -1,
-    checkboxLabel: '记住我的选择，不再询问',
-    checkboxChecked: false,
-    noLink: true,
-  });
-  const choice = response === 1 ? 'quit' : 'minimize';
-  if (checkboxChecked) setExitAction(choice);
-  return choice;
-}
-
-function repoUrls() {
-  const repos = clientUpdater.resolveRepos();
-  return {
-    github: 'https://github.com/' + repos.github,
-    gitee: 'https://gitee.com/' + repos.gitee,
-  };
-}
-
-async function showAbout() {
-  const urls = repoUrls();
-  const { response } = await showBox({
-    type: 'info',
-    title: '关于 Deepseek Harness EAC',
-    message: 'Deepseek Harness EAC（封装版本 ' + APP_VERSION + '）',
-    detail: 'DeepSeek Harness 桌面客户端\n\nagent 版本：' + dshVersion() + '（' + dshVersionSource() + '）\n数据目录：' + state.userDataDir + '\nDSH_HOME：' + (state.dshHome || '（dsh 默认）') +
-      '\n\n项目仓库：\n  GitHub: ' + urls.github + '\n  Gitee:  ' + urls.gitee +
-      '\n\n交流群：EAC 交流群（群号 523412163）\n反馈问题：⋯ 菜单 → 反馈建议',
-    buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
-  });
-  if (response === 0) clipboard.writeText(urls.github);
-  else if (response === 1) clipboard.writeText(urls.gitee);
-}
 
 
 function registerChromeIpc() {
@@ -1690,67 +1283,6 @@ function registerChromeIpc() {
   });
 }
 
-function trayHintOnce() {
-  if (state.trayHintShown || !state.tray) return;
-  state.trayHintShown = true;
-  try {
-    state.tray.displayBalloon({
-      title: 'Deepseek Harness EAC 仍在运行',
-      content: '窗口已隐藏到系统托盘，点击托盘图标可重新打开。',
-      iconType: 'info',
-    });
-  } catch {}
-}
-
-function showMainWindow() {
-  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-  if (state.mainWindow.isMinimized()) state.mainWindow.restore();
-  state.mainWindow.show();
-  state.mainWindow.focus();
-}
-
-function createTray() {
-  if (!IS_WIN) return;
-  try {
-    const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
-    if (!fs.existsSync(iconPath)) return;
-    state.tray = new Tray(iconPath);
-    state.tray.setToolTip('Deepseek Harness EAC');
-    const menu = Menu.buildFromTemplate([
-      { label: '显示 Deepseek Harness EAC', click: () => showMainWindow() },
-      { type: 'separator' },
-      { label: '检查 dsh 更新…', click: () => { showMainWindow(); runUpdateFlow(true); } },
-      { label: '检查客户端更新…', click: () => { showMainWindow(); runClientUpdateFlow(true); } },
-      {
-        label: '会话完成通知',
-        type: 'checkbox',
-        checked: state.notifyOnTurnEnd,
-        click: (item) => {
-          state.notifyOnTurnEnd = item.checked;
-          const s = updater.loadSettings(updCtx());
-          s.notifyOnTurnEnd = item.checked;
-          updater.saveSettings(updCtx(), s);
-        },
-      },
-      { type: 'separator' },
-      // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
-      { label: '重启 Web 服务', click: () => { showMainWindow(); restartWebServiceCore(); } },
-      { type: 'separator' },
-      { label: '反馈建议…', click: () => { showMainWindow(); shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
-      { type: 'separator' },
-      { label: '退出', click: () => { state.forceQuit = true; app.quit(); } },
-    ]);
-    state.tray.setContextMenu(menu);
-    state.tray.on('click', () => {
-      if (state.mainWindow && state.mainWindow.isVisible()) state.mainWindow.hide();
-      else showMainWindow();
-    });
-    state.tray.on('double-click', () => showMainWindow());
-    log('boot', '系统托盘已就绪');
-  } catch (err) {
-    log('boot', '创建系统托盘失败: ' + err.message);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // DeepSeek 余额（推送到 Web UI 的 dsh-balance 插件）

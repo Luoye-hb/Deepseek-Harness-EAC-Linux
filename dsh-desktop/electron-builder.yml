@@ -37,6 +37,8 @@ files:
   - lib/terminal.js
   - lib/preview.js
   - lib/market-modules.js
+  - lib/window.js
+  - lib/tray.js
   - updater.js
   - client-updater.js
   - logger.js

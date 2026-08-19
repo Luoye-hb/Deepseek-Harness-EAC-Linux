@@ -12,15 +12,19 @@ import { join } from 'node:path';
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 const mainSrc = readFileSync(join(ROOT, 'main.js'), 'utf8');
 const preloadSrc = readFileSync(join(ROOT, 'preload.js'), 'utf8');
+// Task 3：渲染自恢复装配（initRendererRecovery/wireWindowRecovery/心跳轮询）
+// 迁 lib/window.ts。
+const windowSrc = readFileSync(join(ROOT, 'lib', 'window.ts'), 'utf8');
 
 test('main.js requires the renderer-recovery module', () => {
-  assert.ok(/require\('\.\/renderer-recovery'\)/.test(mainSrc), "main.js must require('./renderer-recovery')");
+  // Task 3：lib/window.ts 以 ESM import 引 renderer-recovery.js（编译为 require）。
+  assert.ok(/from '\.\.\/renderer-recovery\.js'/.test(windowSrc), "lib/window.ts must import '../renderer-recovery.js'");
 });
 
 test('main.js builds the recovery state machine and attaches the main window', () => {
-  assert.ok(/function initRendererRecovery\(\)/.test(mainSrc), 'initRendererRecovery() missing');
+  assert.ok(/export function initRendererRecovery\(\)/.test(windowSrc), 'initRendererRecovery() missing');
   // Task 1.1：顶层状态迁 lib/state.ts 单例后，引用统一为 state.recovery / state.mainWindow。
-  assert.ok(/state\.recovery\.attach\(state\.mainWindow,\s*'main'\)/.test(mainSrc), 'main window attach missing');
+  assert.ok(/state\.recovery\.attach\(state\.mainWindow,\s*'main'\)/.test(windowSrc), 'main window attach missing');
 });
 
 test('main.js runs the watchdog lifecycle: run-state write, spawn, clean-exit mark', () => {
@@ -37,7 +41,8 @@ test('main.js runs the watchdog lifecycle: run-state write, spawn, clean-exit ma
 
 test('main.js registers the heartbeat IPC and polls heartbeats', () => {
   assert.ok(mainSrc.includes("'dsh:renderer-heartbeat'"), 'heartbeat IPC channel missing');
-  assert.ok(/checkHeartbeats\(\)/.test(mainSrc), 'checkHeartbeats() loop missing');
+  // Task 3：心跳轮询迁 lib/window.ts 的 startHeartbeatLoop。
+  assert.ok(/checkHeartbeats\(\)/.test(windowSrc), 'checkHeartbeats() loop missing');
 });
 
 test('main.js serves the local recovery page IPC endpoints', () => {

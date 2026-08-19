@@ -7,12 +7,15 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const main = readFileSync(join(root, 'main.js'), 'utf8');
+// Task 3：attachEditContextMenu 与 createWindow/createFloatWindow 迁
+// lib/window.ts；main.js 经 require 接线。
+const windowSrc = readFileSync(join(root, 'lib', 'window.ts'), 'utf8');
+const mainSrc = readFileSync(join(root, 'main.js'), 'utf8');
 
 test('attachEditContextMenu 定义完整：编辑/图片/选区/导航四类场景', () => {
-  const i = main.indexOf('function attachEditContextMenu');
-  assert.ok(i > 0, 'attachEditContextMenu 应存在');
-  const body = main.slice(i, main.indexOf('\n}', i) + 2);
+  const i = windowSrc.indexOf('export function attachEditContextMenu');
+  assert.ok(i > 0, 'attachEditContextMenu 应存在于 lib/window.ts');
+  const body = windowSrc.slice(i, windowSrc.indexOf('\n}', i) + 2);
   // 编辑菜单七项 + 分隔（用户反馈截图中的完整列表）
   for (const [label, role] of [
     ['撤销', 'undo'], ['重做', 'redo'], ['剪切', 'cut'], ['复制', 'copy'],
@@ -25,18 +28,21 @@ test('attachEditContextMenu 定义完整：编辑/图片/选区/导航四类场�
   assert.match(body, /mediaType === 'image'/);
   assert.match(body, /copyImageAt/);
   assert.match(body, /downloadURL/);
-  // 导航场景
-  assert.match(body, /role: 'back'/);
-  assert.match(body, /role: 'forward'/);
+  // 导航场景（Task 3 TS 化：新版 Electron 类型移除 role:'back'/'forward'，
+  // 改为等价的显式 goBack/goForward click；语义不变。）
+  assert.match(body, /goBack/);
+  assert.match(body, /goForward/);
   assert.match(body, /role: 'reload'/);
   // 弹窗定位到事件坐标
   assert.match(body, /popup\(\{ window: win, x: params\.x, y: params\.y \}\)/);
 });
 
 test('主窗与浮窗都挂接右键菜单', () => {
-  const occurrences = main.match(/attachEditContextMenu\(/g) || [];
+  const occurrences = windowSrc.match(/attachEditContextMenu\(/g) || [];
   assert.ok(occurrences.length >= 3, '定义 + 主窗 + 浮窗至少 3 处引用，实际 ' + occurrences.length);
   // Task 1.1：顶层状态迁 lib/state.ts 单例后，主窗引用统一为 state.mainWindow。
-  assert.match(main, /attachEditContextMenu\(state\.mainWindow\.webContents\)/, '主窗挂接');
-  assert.match(main, /attachEditContextMenu\(win\.webContents\)/, '浮窗挂接');
+  assert.match(windowSrc, /attachEditContextMenu\(state\.mainWindow\.webContents\)/, '主窗挂接');
+  assert.match(windowSrc, /attachEditContextMenu\(win\.webContents\)/, '浮窗挂接');
+  // Task 3：main.js 经 lib/window.js 接线（打包产物存在性由 bundled-files 守护）。
+  assert.ok(mainSrc.includes("require('./lib/window.js')"), 'main.js must require lib/window.js');
 });

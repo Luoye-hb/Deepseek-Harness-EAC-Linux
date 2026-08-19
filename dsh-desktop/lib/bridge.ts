@@ -83,4 +83,28 @@ export const bridge = {
     log('bridge', 'restoreKeptArtifacts 未装配');
     return Promise.resolve();
   },
+  /** 退出行为读取（tray 域，Task 3 起 window 域的 close handler 消费）。 */
+  getExitAction: (): string => {
+    log('bridge', 'getExitAction 未装配');
+    return 'ask';
+  },
+  /** 退出确认弹窗（tray 域）。 */
+  askExitAction: (): Promise<string> => {
+    log('bridge', 'askExitAction 未装配');
+    return Promise.resolve('quit');
+  },
+  /** 托盘气泡提示（tray 域）。 */
+  trayHintOnce: (): void => {
+    log('bridge', 'trayHintOnce 未装配');
+  },
+  /** agent 更新流（更新域，Task 5 提取；托盘/菜单消费）。 */
+  runUpdateFlow: (manual: boolean): Promise<void> => {
+    log('bridge', 'runUpdateFlow 未装配');
+    return Promise.resolve();
+  },
+  /** 客户端更新流（更新域，Task 5 提取；托盘/菜单消费）。 */
+  runClientUpdateFlow: (manual: boolean): Promise<void> => {
+    log('bridge', 'runClientUpdateFlow 未装配');
+    return Promise.resolve();
+  },
 };
