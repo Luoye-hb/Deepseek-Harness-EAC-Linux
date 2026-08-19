@@ -60,6 +60,8 @@ files:
   - lib/ipc/onboard.js
   - lib/ipc/session.js
   - lib/boot.js
+  - lib/supervisor/registry.js
+  - lib/recovery-center/register.js
   - updater.js
   - client-updater.js
   - logger.js

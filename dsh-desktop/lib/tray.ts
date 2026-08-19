@@ -17,6 +17,7 @@ import { log } from './log.js';
 import { IS_WIN, updCtx, dshVersion, dshVersionSource } from './proc.js';
 import { restartWebServiceCore } from './server.js';
 import { showBox } from './window.js';
+import { openRecoveryCenter } from './recovery-center/register.js';
 import { bridge } from './bridge.js';
 
 /** 读取 closeToTray（默认 true：关闭主窗驻留托盘）。 */
@@ -142,6 +143,8 @@ export function createTray(): void {
     state.tray.setToolTip('Deepseek Harness EAC');
     const menu = Menu.buildFromTemplate([
       { label: '显示 Deepseek Harness EAC', click: () => showMainWindow() },
+      // VNext Phase 0：恢复中心常驻入口（不依赖 Web UI，插件故障时可达）。
+      { label: '恢复中心…', click: () => openRecoveryCenter() },
       { type: 'separator' },
       { label: '检查 dsh 更新…', click: () => { showMainWindow(); void bridge.runUpdateFlow(true); } },
       { label: '检查客户端更新…', click: () => { showMainWindow(); void bridge.runClientUpdateFlow(true); } },

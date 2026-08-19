@@ -53,6 +53,10 @@ import {
   offerPendingClientUpdate, scheduleClientUpdateRescue,
 } from './update-flow.js';
 import { registerIpc } from './ipc/index.js';
+import {
+  openRecoveryCenter, archivePluginProfiles,
+} from './recovery-center/register.js';
+import { recordStartFailure } from './supervisor/registry.js';
 
 /** 更新定时器间隔：agent 6 小时 / 插件 6 小时 / 客户端 12 小时。 */
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -85,6 +89,8 @@ export function handleBootFailure(err: unknown): void {
         } catch {
           blameRow = null;
         }
+        // Phase 0.3：启动失败归因落扩展注册表（恢复中心展示 + Agent 诊断）。
+        recordStartFailure(blame.rowId, String((err as Error)?.message || err));
       }
     } catch {
       /* 归因失败走通用按钮链 */
@@ -99,6 +105,8 @@ export function handleBootFailure(err: unknown): void {
     const btnDisable = blameRow && blameRow.toggleable ? '停用插件 ' + blameRow.name + ' 并重试' : null;
     const btnRollback = lastGood ? '回滚到最后良好快照并重试' : null;
     const buttons = [
+      // VNext Phase 0：启动失败必定可达恢复中心（架构文档 §9 交付标准）。
+      '打开恢复中心',
       ...(btnDisable ? [btnDisable] : []),
       ...(btnRollback ? [btnRollback] : []),
       ...(prev
@@ -125,6 +133,11 @@ export function handleBootFailure(err: unknown): void {
     }).then(({ response }) => {
       let i = 0;
       const take = (): number => i++;
+      // 恢复中心优先：停用/回滚/重试在中心里都有，且能看档案与日志。
+      if (response === take()) {
+        openRecoveryCenter();
+        return;
+      }
       // 归因到插件时，优先给「停用插件」——
       if (btnDisable && blameRow && response === take()) {
         try {
@@ -176,13 +189,18 @@ export function fatal(title: string, err: unknown): void {
         title,
         message: title,
         detail,
-        buttons: ['复制日志', '退出'],
+        buttons: ['打开恢复中心', '复制日志', '退出'],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 2,
         noLink: true,
       })
       .then(({ response }) => {
-        if (response === 0) clipboard.writeText(detail);
+        if (response === 0) {
+          // 恢复中心不依赖 Web UI/主窗 —— 终态失败下仍可处置插件。
+          openRecoveryCenter();
+          return;
+        }
+        if (response === 1) clipboard.writeText(detail);
         markCleanExit(); // 启动失败属已知退出：避免看门狗反复拉起反复失败
         app.exit(1);
       });
@@ -193,13 +211,17 @@ export function fatal(title: string, err: unknown): void {
     title,
     message: title,
     detail,
-    buttons: ['复制日志', '重试', '退出'],
+    buttons: ['打开恢复中心', '复制日志', '重试', '退出'],
     defaultId: 0,
-    cancelId: 2,
+    cancelId: 3,
     noLink: true,
   }).then(({ response }) => {
-    if (response === 0) clipboard.writeText(detail);
-    else if (response === 1) void startAndShow().catch((err2) => handleBootFailure(err2));
+    if (response === 0) {
+      openRecoveryCenter();
+      return;
+    }
+    if (response === 1) clipboard.writeText(detail);
+    else if (response === 2) void startAndShow().catch((err2) => handleBootFailure(err2));
     else app.quit();
   });
 }
@@ -282,6 +304,14 @@ export async function boot(): Promise<void> {
   startPreviewStaticServer();
   registerIpc();
   createTray();
+  // VNext Phase 0 入口③：DSH_DESKTOP_RECOVERY=1 直开恢复中心（跳过常规
+  // boot 链 —— 不迁移、不同步插件、不拉 Web 服务；处置完成后可在中心内
+  // 重试启动或安全模式重启）。
+  if (process.env.DSH_DESKTOP_RECOVERY === '1') {
+    log('boot', '恢复中心直达模式（DSH_DESKTOP_RECOVERY=1），跳过常规启动链');
+    openRecoveryCenter();
+    return;
+  }
   // 新老用户判定必须在任何写盘之前：run-state / migrate 标记 / 稳定端口
   // 都会在启动早期创建 settings.json，事后无法区分全新安装与升级。
   const onboardingNeeded = computeOnboardingNeed();
@@ -305,6 +335,8 @@ export async function boot(): Promise<void> {
   syncCompanionPlugins();
   syncBundledSkills();
   healProfileModules();
+  // VNext Phase 0.3：插件档案（来源/风险等级/失败归因）落扩展注册表。
+  archivePluginProfiles();
   createWindow();
   // koffi FFI 预检（koffi-preflight.js，V4 改异步：同步 spawnSync 会把主
   // 进程事件循环卡住最长 20 秒）：失败则注入目录选择器降级 overlay，

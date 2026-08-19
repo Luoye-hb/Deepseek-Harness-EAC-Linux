@@ -56,16 +56,16 @@ export interface ExtensionRecord {
   readonly rollbackVersions: readonly { version: string; packageSha256: string }[];
 }
 
-/** 注册表中单个插件条目的动态状态。 */
+/** 注册表中单个插件条目的动态状态（Supervisor 运行期可变字段）。 */
 export interface ExtensionRuntimeState {
-  readonly state: ExtensionState;
-  readonly enabled: boolean;
+  state: ExtensionState;
+  enabled: boolean;
   /** 连续崩溃次数（成功运行达到稳定期后清零）。 */
   crashStreak: number;
   /** 最近一次错误摘要（恢复中心展示）。 */
   lastError?: string;
-  readonly lastErrorAt?: string;
-  readonly lastHealthyAt?: string;
+  lastErrorAt?: string;
+  lastHealthyAt?: string;
   /** 退避重试的下次允许启动时间（ISO 时间戳）。 */
   nextRetryAt?: string;
 }

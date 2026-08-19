@@ -16,7 +16,8 @@ import {
   configLinesFor, healSoulMdPatchRow, healRowConfig,
   removeBundledRowDuplicates, collectBundleEntryIds,
 } from '../patch-row-heal.js';
-import { hasEntryId } from '../scripts/plugin-manager-patch.js';
+import { hasEntryId, togglePluginInPatch } from '../scripts/plugin-manager-patch.js';
+import { CORE_PLUGIN_IDS } from '../scripts/onboarding.js';
 import { healProfileModuleShadowing } from '../profile-module-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
@@ -113,6 +114,11 @@ export function syncBundledSkills(): void {
 /** 配套插件/皮肤同步主流程（Windows；启动/服务重启/agent 更新后重放）。 */
 export function syncCompanionPlugins(): void {
   if (!IS_WIN) return;
+  // VNext Phase 0 安全模式（DSH_DESKTOP_SAFE_MODE=1，由恢复中心注入）：
+  // 全部非核心配套插件按 disabled 写行 —— 核心 Agent/会话/基础 Web UI
+  // 保持可用，坏插件被整体隔离出本轮启动（架构文档 §3.4）。
+  const safeMode = process.env.DSH_DESKTOP_SAFE_MODE === '1';
+  if (safeMode) log('boot', '安全模式：非核心外置插件将以禁用行登记');
   try {
     const home = state.dshHome || path.join(os.homedir(), '.dsh');
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
@@ -184,8 +190,14 @@ export function syncCompanionPlugins(): void {
         log('boot', `内置插件同名迁移失败(${p.id}): ${String((err as Error).message)}`);
       }
       copyPluginPackage(profileDirP, src, p.name);
-      // p.disabled: true 的配套插件默认以禁用行注册；已有行不重写，用户选择优先。
-      pending.push({ id: p.id, name: p.name, disabled: p.disabled === true, config: p.config });
+      // p.disabled: true 的配套插件默认以禁用行注册；已有行不重写，用户选择
+      // 优先。安全模式例外：非核心插件一律按禁用登记（本轮启动整体隔离）。
+      const disabledBySafeMode = safeMode && !CORE_PLUGIN_IDS.has(p.id);
+      pending.push({
+        id: p.id, name: p.name,
+        disabled: p.disabled === true || disabledBySafeMode,
+        config: p.config,
+      });
     }
     if (migratedBuiltins.length) {
       try {
@@ -272,7 +284,19 @@ export function syncCompanionPlugins(): void {
       log('boot', '已移除与 bundle 登记重复的 patch 行: ' + deduped.removed.join(', '));
     }
     for (const p of pending) {
-      if (hasEntryId(patch, p.id)) continue;
+      if (hasEntryId(patch, p.id)) {
+        // 安全模式：既有启用行也强制压成禁用（否则用户上次启用的坏插件
+        // 仍在加载路径上，安全模式名存实亡）。
+        if (safeMode && p.disabled && !CORE_PLUGIN_IDS.has(p.id)) {
+          const rewritten = togglePluginInPatch(patch, p.id, false, p.name);
+          if (rewritten !== patch) {
+            patch = rewritten;
+            changed = true;
+            log('boot', `安全模式：已禁用插件 ${p.id} 的既有启用行`);
+          }
+        }
+        continue;
+      }
       // 已在 bundle 列表里的插件由其包内 patch 挂载，overlay 不能再写行。
       if (bundled.includes(p.name) || declaredBundleIds.has(p.id)) continue;
       let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
