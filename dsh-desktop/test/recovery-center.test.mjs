@@ -49,9 +49,11 @@ test('扩展注册表：档案登记/失败归因/隔离标记（Phase 0 行为�
     process.env.DSH_HOME = join(dir, 'home');
     delete require.cache[require.resolve(join(root, 'lib', 'state.js'))];
     delete require.cache[require.resolve(join(root, 'lib', 'supervisor', 'registry.js'))];
+    const stateMod = require(join(root, 'lib', 'state.js'));
+    stateMod.state.dshHome = process.env.DSH_HOME;
     const reg = require(join(root, 'lib', 'supervisor', 'registry.js'));
-    const state = require(join(root, 'lib', 'state.js'));
-    state.dshHome = process.env.DSH_HOME;
+    // 防呆：受控 home 未生效时宁可失败，也不得读写真实 ~/.dsh。
+    assert.ok(reg.registryPath().startsWith(process.env.DSH_HOME), `受控 DSH_HOME 未生效: ${reg.registryPath()}`);
 
     reg.upsertLegacyPlugin({ id: 'dsh-pet', source: 'builtin' });
     reg.upsertLegacyPlugin({ id: 'cool-tool', source: 'market', enabled: true });

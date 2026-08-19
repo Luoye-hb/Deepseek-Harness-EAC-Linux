@@ -61,6 +61,10 @@ files:
   - lib/ipc/session.js
   - lib/boot.js
   - lib/supervisor/registry.js
+  - lib/supervisor/state-machine.js
+  - lib/supervisor/incidents.js
+  - lib/supervisor/permissions.js
+  - lib/supervisor/installer.js
   - lib/recovery-center/register.js
   - updater.js
   - client-updater.js
