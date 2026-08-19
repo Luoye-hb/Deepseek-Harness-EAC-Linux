@@ -49,6 +49,7 @@ files:
   - shortcut-maintenance.js
   - profile-closure-extras.js
   - window-frame.js
+  - linux-update-guidance.js
   - preload.js
   - assets/**/*
   # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
