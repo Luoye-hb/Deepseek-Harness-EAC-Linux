@@ -24,22 +24,13 @@ interface SessionWatcherLike {
   stop(): void;
 }
 
-/** TODO(后续 Task): renderer-recovery.js 迁 TS 后替换为真实类型。 */
-interface RendererRecoveryLike {
-  attach(win: BrowserWindow, kind: string): unknown;
-  stateOf(win: BrowserWindow | null): unknown;
-  retryNow(win: BrowserWindow | null): unknown;
-  checkHeartbeats(): void;
-  noteHeartbeat(webContentsId: number): void;
-}
+/** 渲染进程自恢复状态机（renderer-recovery.ts；Task 7 起真实类型）。 */
+import type { RendererRecovery } from '../renderer-recovery.js';
+type RendererRecoveryLike = RendererRecovery;
 
-/** TODO(后续 Task): plugin-guard.js 迁 TS 后替换为真实类型。 */
-interface PluginGuardLike {
-  snapshot(reason: string): unknown;
-  restore(id: unknown): unknown;
-  lastGoodSnapshot(): unknown;
-  repairJunctions(): unknown;
-}
+/** 插件保护中心（plugin-guard.ts；Task 6 起真实类型）。 */
+import type { GuardInstance } from '../plugin-guard.js';
+type PluginGuardLike = GuardInstance;
 
 /** TODO(后续 Task): balance.js 的查询结果结构迁 TS 后替换为真实类型。 */
 interface BalanceResultLike {

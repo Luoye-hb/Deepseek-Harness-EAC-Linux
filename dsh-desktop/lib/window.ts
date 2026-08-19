@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { app, BrowserWindow, Menu, shell, dialog, Notification } from 'electron';
 import type { WebContents } from 'electron';
 import { RendererRecovery } from '../renderer-recovery.js';
+import type { FailureRecord, RecoveryWindow } from '../renderer-recovery.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { IS_WIN } from './proc.js';
@@ -354,7 +355,7 @@ export function initRendererRecovery(): unknown {
       state.webUrl ? { kind: 'url', url: state.webUrl } : null,
     loadingPage: path.join(__dirname, '..', 'assets', 'loading.html'),
     recoveryPage: path.join(__dirname, '..', 'assets', 'recovery.html'),
-    rebuildMainWindow: ({ startHidden }: { startHidden?: boolean } = {}): unknown => {
+    rebuildMainWindow: ({ startHidden }: { startHidden?: boolean } = {}): RecoveryWindow | null => {
       if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.destroy();
       createWindow({ startHidden: !!startHidden });
       return state.mainWindow;
@@ -363,8 +364,14 @@ export function initRendererRecovery(): unknown {
       if (!state.webUrl) return Promise.reject(new Error('webUrl 未知'));
       return waitUntilUp(state.webUrl, maxMs);
     },
-    onGaveUp: (lastFailure: string): void => {
-      writeRunState({ renderer: { state: 'gave-up', lastFailure, at: new Date().toISOString() } });
+    onGaveUp: (lastFailure: FailureRecord | null): void => {
+      writeRunState({
+        renderer: {
+          state: 'gave-up',
+          lastFailure: lastFailure ? `${lastFailure.reason}（exitCode=${lastFailure.exitCode}）` : 'unknown',
+          at: new Date().toISOString(),
+        },
+      });
     },
     onStable: (): void => {
       writeRunState({ renderer: { state: 'healthy', at: new Date().toISOString() } });

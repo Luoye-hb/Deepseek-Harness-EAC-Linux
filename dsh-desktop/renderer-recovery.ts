@@ -1,38 +1,53 @@
-'use strict';
+/**
+ * renderer-recovery.ts — 渲染进程崩溃/挂起自恢复状态机（Issue #9 根治修复
+ * 核心模块）（Task 7.1 自 renderer-recovery.js 迁 TS）。
+ *
+ * 背景：renderer 以 0xC0000005（ACCESS_VIOLATION）等异常退出后，旧实现只在
+ * 三处 render-process-gone 处理器里记录日志、没有任何恢复动作，窗口永久
+ * 黑屏/白屏，用户只能强制退出。本模块为「主窗 + 会话浮窗」提供统一自恢复：
+ *
+ *   · render-process-gone（crashed / killed / oom / …）→ 指数退避重新加载
+ *   · 连续失败第 3 次 → 主窗销毁重建 BrowserWindow；浮窗直接关闭
+ *   · 失败超过上限 → 主窗切到本地错误页（重载/重启/看日志按钮）+ 系统通知；
+ *     绝不允许无限崩溃循环
+ *   · unresponsive / 心跳丢失（AppHangB1 挂起）→ 宽限期后强制终结 renderer，
+ *     复用同一条恢复路径
+ *   · did-fail-load（连接失败等）→ 服务进程健在时退避重试（覆盖插件市场
+ *     重启服务的间隙）；服务进程已退出时不动作，交给既有
+ *     「DSH 服务已停止」对话框接管，避免双弹窗
+ *   · 只有页面加载成功后「稳定存活 30 秒」才清零故障计数 —— 防止
+ *     「加载即崩溃」的场景每次加载成功都重置计数造成无限快速循环
+ *   · clean-exit / 退出中 / 窗口已销毁 一律不触发恢复
+ *
+ * 设计约束：本模块不 require('electron')，全部副作用经注入回调完成，
+ * 状态机决策函数纯函数化导出，便于 node:test 单元测试与
+ * DSH_DESKTOP_TEST 集成测试直接验证。
+ */
 
-// ============================================================================
-// DSH Desktop — 渲染进程崩溃/挂起自恢复状态机（Issue #9 根治修复核心模块）
-//
-// 背景：renderer 以 0xC0000005（ACCESS_VIOLATION）等异常退出后，旧实现只在
-// 三处 render-process-gone 处理器里记录日志、没有任何恢复动作，窗口永久
-// 黑屏/白屏，用户只能强制退出。本模块为「主窗 + 会话浮窗」提供统一自恢复：
-//
-//   · render-process-gone（crashed / killed / oom / …）→ 指数退避重新加载
-//   · 连续失败第 3 次 → 主窗销毁重建 BrowserWindow；浮窗直接关闭
-//   · 失败超过上限 → 主窗切到本地错误页（重载/重启/看日志按钮）+ 系统通知；
-//     绝不允许无限崩溃循环
-//   · unresponsive / 心跳丢失（AppHangB1 挂起）→ 宽限期后强制终结 renderer，
-//     复用同一条恢复路径
-//   · did-fail-load（连接失败等）→ 服务进程健在时退避重试（覆盖插件市场
-//     重启服务的间隙）；服务进程已退出时不动作，交给既有
-//     「DSH 服务已停止」对话框接管，避免双弹窗
-//   · 只有页面加载成功后「稳定存活 30 秒」才清零故障计数 —— 防止
-//     「加载即崩溃」的场景每次加载成功都重置计数造成无限快速循环
-//   · clean-exit / 退出中 / 窗口已销毁 一律不触发恢复
-//
-// 设计约束：本模块不 require('electron')，全部副作用经注入回调完成，
-// 状态机决策函数纯函数化导出，便于 node:test 单元测试与
-// DSH_DESKTOP_TEST 集成测试直接验证。
-// ============================================================================
+import { pathToFileURL } from 'node:url';
 
-const { pathToFileURL } = require('node:url');
+/** 恢复策略参数（测试可注入覆盖）。 */
+export interface RecoveryOpts {
+  /** 一个「故障窗口」内允许的自动恢复动作总数（含重建主窗）。 */
+  MAX_ATTEMPTS: number;
+  /** 故障窗口时长：超过此时长无新故障（或已稳定）才清零计数。 */
+  ATTEMPT_WINDOW_MS: number;
+  /** 加载成功后需要稳定存活这么久才清零故障计数。 */
+  STABILITY_MS: number;
+  FIRST_DELAY_MS: number;
+  BACKOFF_BASE_MS: number;
+  BACKOFF_MAX_MS: number;
+  LOAD_TIMEOUT_MS: number;
+  UNRESPONSIVE_GRACE_MS: number;
+  HEARTBEAT_MISS_MS: number;
+  SERVER_WAIT_MAX_MS: number;
+  ERROR_PAGE_RELOAD_MIN_INTERVAL_MS: number;
+  HANG_PENDING_TOLERANCE_MS: number;
+}
 
-const DEFAULT_OPTS = {
-  // 一个「故障窗口」内允许的自动恢复动作总数（含重建主窗）。
+export const DEFAULT_OPTS: RecoveryOpts = {
   MAX_ATTEMPTS: 4,
-  // 故障窗口时长：超过此时长无新故障（或已稳定）才清零计数。
   ATTEMPT_WINDOW_MS: 90 * 1000,
-  // 加载成功后需要稳定存活这么久才清零故障计数。
   STABILITY_MS: 30 * 1000,
   FIRST_DELAY_MS: 800,
   BACKOFF_BASE_MS: 2000,
@@ -45,8 +60,78 @@ const DEFAULT_OPTS = {
   HANG_PENDING_TOLERANCE_MS: 10 * 1000,
 };
 
-// 纯函数：按故障次数计算退避延迟（指数退避 + 抖动，避免雷击效应）。
-function computeBackoff(failureCount, opts) {
+/** 窗口类型：主窗 / 会话浮窗。 */
+export type WindowKind = 'main' | 'float';
+
+/** 恢复动作档位。 */
+export type RecoveryAction = 'reload' | 'rebuild' | 'give-up';
+
+/** 加载目标页。 */
+export type LoadTarget = { kind: 'url'; url: string } | { kind: 'file'; path: string } | null;
+
+/** 单次故障记录（错误页 / 状态查询展示）。 */
+export interface FailureRecord {
+  reason: string;
+  exitCode: number | null;
+  at: string;
+}
+
+/** 窗口的最小结构类型（不依赖 electron）。 */
+export interface RecoveryWindow {
+  readonly id: number;
+  isDestroyed(): boolean;
+  destroy(): void;
+  on(ev: 'show', cb: () => void): unknown;
+  on(ev: 'hide', cb: () => void): unknown;
+  readonly webContents: {
+    readonly id: number;
+    on(ev: string, cb: (...args: unknown[]) => void): unknown;
+    getURL(): string;
+    loadURL(url: string): Promise<void>;
+    loadFile(path: string): Promise<void>;
+    forcefullyCrashRenderer?(): void;
+  };
+}
+
+/** RendererRecovery 的注入依赖（全部由 lib/window.ts 提供）。 */
+export interface RendererRecoveryDeps extends Partial<RecoveryOpts> {
+  log(msg: string): void;
+  isQuitting(): boolean;
+  isServerAlive(): boolean;
+  getTarget(win: RecoveryWindow): LoadTarget;
+  loadingPage: string;
+  recoveryPage: string;
+  rebuildMainWindow(opts: { startHidden: boolean }): RecoveryWindow | null;
+  waitServerUp(maxMs: number): Promise<unknown>;
+  onGaveUp?(lastFailure: FailureRecord | null): void;
+  onRecovered?(): void;
+  onStable?(): void;
+  notify?(title: string, body: string): void;
+}
+
+/** 单窗口恢复状态。 */
+interface WindowState {
+  kind: WindowKind;
+  failures: number;
+  windowStart: number;
+  gaveUp: boolean;
+  expectingWeb: boolean;
+  userHidden: boolean; // 窗口创建时是隐藏的；show 事件后置 false
+  attemptTimer: NodeJS.Timeout | null;
+  stabilityTimer: NodeJS.Timeout | null;
+  hangGrace: NodeJS.Timeout | null;
+  hangDetectedAt: number;
+  gen: number;
+  rebuiltInBurst: boolean;
+  failuresAtLoad: number;
+  loadFlight: { active: boolean } | null; // 在途加载：active 时 did-fail-load 由加载调用方处理
+  lastFailure: FailureRecord | null;
+  lastErrorPageAt: number;
+  pendingHangCrash: number;
+}
+
+/** 纯函数：按故障次数计算退避延迟（指数退避 + 抖动，避免雷击效应）。 */
+export function computeBackoff(failureCount: number, opts?: Partial<RecoveryOpts>): number {
   const o = { ...DEFAULT_OPTS, ...(opts || {}) };
   if (failureCount <= 1) return o.FIRST_DELAY_MS;
   const cap = Math.min(o.BACKOFF_MAX_MS, o.BACKOFF_BASE_MS * 2 ** (failureCount - 1));
@@ -54,43 +139,43 @@ function computeBackoff(failureCount, opts) {
   return Math.round(cap + jitter);
 }
 
-// 纯函数：由当前故障计数决定下一步动作。
-//   failures 1~2 → reload；3（主窗且本窗口未重建过）→ rebuild；>MAX → give-up。
-function nextAction(failures, kind, rebuiltInBurst) {
+/** 纯函数：由当前故障计数决定下一步动作。
+ *  failures 1~2 → reload；3（主窗且本窗口未重建过）→ rebuild；>MAX → give-up。 */
+export function nextAction(failures: number, kind: WindowKind, rebuiltInBurst: boolean): RecoveryAction {
   if (failures > DEFAULT_OPTS.MAX_ATTEMPTS) return 'give-up';
   if (kind === 'main' && failures === 3 && !rebuiltInBurst) return 'rebuild';
   return 'reload';
 }
 
-function sameOrigin(a, b) {
-  try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
 }
 
-class RendererRecovery {
-  // opts 注入（全部由 main.js 提供）：
-  //   log(msg)                      写日志
-  //   isQuitting() -> bool          应用是否正在退出
-  //   isServerAlive() -> bool       dsh web 服务进程是否健在
-  //   getTarget(win) -> {kind:'url',url}|{kind:'file',path}|null   当前目标页
-  //   loadingPage / recoveryPage    加载页 / 错误页绝对路径
-  //   rebuildMainWindow({startHidden}) -> BrowserWindow   销毁并重建主窗
-  //   waitServerUp(maxMs) -> Promise  等待 dsh web 服务可访问
-  //   onGaveUp(lastFailure) / onRecovered() / onStable()   事件回调（日志/状态）
-  //   notify(title, body)           系统通知
-  constructor(opts) {
-    this.opts = { ...DEFAULT_OPTS, ...opts };
-    this._states = new Map(); // winId -> state
-    this._wins = new Set(); // BrowserWindow
-    this._heartbeats = new Map(); // webContentsId -> lastBeatAt
+export class RendererRecovery {
+  private opts: RendererRecoveryDeps & RecoveryOpts;
+  private _states = new Map<number, WindowState>(); // winId -> state
+  private _wins = new Set<RecoveryWindow>();
+  private _heartbeats = new Map<number, number>(); // webContentsId -> lastBeatAt
+
+  constructor(deps: RendererRecoveryDeps) {
+    this.opts = { ...DEFAULT_OPTS, ...deps } as RendererRecoveryDeps & RecoveryOpts;
   }
 
   // ---------------------------------------------------------------- helpers
 
-  _log(msg) {
-    try { this.opts.log(msg); } catch { /* 日志失败不影响恢复 */ }
+  private _log(msg: string): void {
+    try {
+      this.opts.log(msg);
+    } catch {
+      /* 日志失败不影响恢复 */
+    }
   }
 
-  _state(win) {
+  private _state(win: RecoveryWindow): WindowState {
     let s = this._states.get(win.id);
     if (!s) {
       s = {
@@ -99,7 +184,7 @@ class RendererRecovery {
         windowStart: 0,
         gaveUp: false,
         expectingWeb: false,
-        userHidden: true, // 窗口创建时是隐藏的；show 事件后置 false
+        userHidden: true,
         attemptTimer: null,
         stabilityTimer: null,
         hangGrace: null,
@@ -107,7 +192,7 @@ class RendererRecovery {
         gen: 0,
         rebuiltInBurst: false,
         failuresAtLoad: 0,
-        loadFlight: null, // 在途加载标记：{active}；active=true 时 did-fail-load 由加载调用方处理
+        loadFlight: null,
         lastFailure: null,
         lastErrorPageAt: 0,
         pendingHangCrash: 0,
@@ -117,13 +202,22 @@ class RendererRecovery {
     return s;
   }
 
-  _clearTimers(s) {
-    if (s.attemptTimer) { clearTimeout(s.attemptTimer); s.attemptTimer = null; }
-    if (s.stabilityTimer) { clearTimeout(s.stabilityTimer); s.stabilityTimer = null; }
-    if (s.hangGrace) { clearTimeout(s.hangGrace); s.hangGrace = null; }
+  private _clearTimers(s: WindowState): void {
+    if (s.attemptTimer) {
+      clearTimeout(s.attemptTimer);
+      s.attemptTimer = null;
+    }
+    if (s.stabilityTimer) {
+      clearTimeout(s.stabilityTimer);
+      s.stabilityTimer = null;
+    }
+    if (s.hangGrace) {
+      clearTimeout(s.hangGrace);
+      s.hangGrace = null;
+    }
   }
 
-  _resetBurst(s) {
+  private _resetBurst(s: WindowState): void {
     this._clearTimers(s);
     s.failures = 0;
     s.failuresAtLoad = 0;
@@ -135,7 +229,7 @@ class RendererRecovery {
     s.hangDetectedAt = 0;
   }
 
-  _countFailure(win, s) {
+  private _countFailure(_win: RecoveryWindow, s: WindowState): void {
     const now = Date.now();
     if (s.windowStart && now - s.windowStart > this.opts.ATTEMPT_WINDOW_MS) {
       // 故障窗口已过：这是一轮新的故障序列。
@@ -147,30 +241,39 @@ class RendererRecovery {
     s.failures += 1;
   }
 
-  _sameTargetUrl(url, target) {
+  private _sameTargetUrl(url: string, target: LoadTarget): boolean {
     if (!target || !url) return false;
     if (target.kind === 'url') return sameOrigin(url, target.url);
     if (target.kind === 'file') {
-      try { return url === pathToFileURL(target.path).href; } catch { return false; }
+      try {
+        return url === pathToFileURL(target.path).href;
+      } catch {
+        return false;
+      }
     }
     return false;
   }
 
   // ---------------------------------------------------------------- 对外 API
 
-  // 把恢复机制挂到窗口上（主窗/浮窗）。重复 attach 同窗口只会追加一次状态。
-  attach(win, kind) {
+  /** 把恢复机制挂到窗口上（主窗/浮窗）。重复 attach 同窗口只追加一次状态。 */
+  attach(win: RecoveryWindow, kind: WindowKind): void {
     if (!win || win.isDestroyed()) return;
     const s = this._state(win);
     s.kind = kind;
     const wc = win.webContents;
 
-    wc.on('render-process-gone', (_e, details) => this._onGone(win, details));
+    wc.on('render-process-gone', (...args: unknown[]) => this._onGone(win, args[1] as { reason?: string; exitCode?: number } | undefined));
     wc.on('unresponsive', () => this._onUnresponsive(win));
     wc.on('responsive', () => this._onResponsive(win));
     wc.on('did-finish-load', () => this._onFinishLoad(win));
-    wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
-      if (isMainFrame) this._onFailLoad(win, { code, desc, url });
+    wc.on('did-fail-load', (...args: unknown[]) => {
+      // (_e, code, desc, url, isMainFrame)
+      const code = args[1] as number | undefined;
+      const desc = args[2] as string | undefined;
+      const url = args[3] as string | undefined;
+      const isMainFrame = args[4] as boolean | undefined;
+      if (isMainFrame) this._onFailLoad(win, { code: code ?? 0, desc: desc ?? '', url: url ?? '' });
     });
     wc.on('destroyed', () => {
       this._states.delete(win.id);
@@ -193,14 +296,14 @@ class RendererRecovery {
     this._wins.add(win);
   }
 
-  // preload 每 5s 上报一次心跳。
-  noteHeartbeat(wcId) {
+  /** preload 每 5s 上报一次心跳。 */
+  noteHeartbeat(wcId: number): void {
     this._heartbeats.set(wcId, Date.now());
   }
 
-  // 由 main.js 的定时器周期调用；只对「可见（未被用户隐藏）且应显示
-  // Web UI」的窗口判定。可见性来自 show/hide 事件追踪。
-  checkHeartbeats() {
+  /** 由 window.ts 的定时器周期调用；只对「可见（未被用户隐藏）且应显示
+   *  Web UI」的窗口判定。可见性来自 show/hide 事件追踪。 */
+  checkHeartbeats(): void {
     const now = Date.now();
     for (const win of this._wins) {
       if (!win || win.isDestroyed()) continue;
@@ -215,8 +318,8 @@ class RendererRecovery {
     }
   }
 
-  // 错误页「重新加载」按钮：清零状态并立即重新加载目标页。
-  retryNow(win) {
+  /** 错误页「重新加载」按钮：清零状态并立即重新加载目标页。 */
+  retryNow(win: RecoveryWindow): boolean {
     if (!win || win.isDestroyed()) return false;
     const s = this._state(win);
     this._resetBurst(s);
@@ -226,8 +329,14 @@ class RendererRecovery {
     return true;
   }
 
-  // 错误页展示用状态。
-  stateOf(win) {
+  /** 错误页展示用状态。 */
+  stateOf(win: RecoveryWindow): {
+    kind: WindowKind;
+    failures: number;
+    gaveUp: boolean;
+    expectingWeb: boolean;
+    lastFailure: FailureRecord | null;
+  } | null {
     if (!win || win.isDestroyed()) return null;
     const s = this._state(win);
     return {
@@ -239,7 +348,7 @@ class RendererRecovery {
     };
   }
 
-  dispose() {
+  dispose(): void {
     for (const s of this._states.values()) this._clearTimers(s);
     this._states.clear();
     this._wins.clear();
@@ -248,7 +357,7 @@ class RendererRecovery {
 
   // ---------------------------------------------------------------- 事件入口
 
-  _onGone(win, details) {
+  private _onGone(win: RecoveryWindow, details: { reason?: string; exitCode?: number } | undefined): void {
     if (this.opts.isQuitting() || win.isDestroyed()) return;
     const s = this._state(win);
     const reason = details && details.reason;
@@ -274,7 +383,7 @@ class RendererRecovery {
     s.gen += 1;
     this._log(
       `渲染进程异常退出: reason=${s.lastFailure.reason} exitCode=${s.lastFailure.exitCode} ` +
-      `kind=${s.kind} failures=${s.failures}${s.gaveUp ? ' (已放弃自动恢复)' : ''}`
+        `kind=${s.kind} failures=${s.failures}${s.gaveUp ? ' (已放弃自动恢复)' : ''}`,
     );
     if (s.gaveUp) {
       // 错误页自身崩溃：限频地重新加载错误页；浮窗直接关闭。
@@ -285,7 +394,7 @@ class RendererRecovery {
     this._schedule(win, s);
   }
 
-  _onUnresponsive(win) {
+  private _onUnresponsive(win: RecoveryWindow): void {
     if (this.opts.isQuitting() || win.isDestroyed()) return;
     const s = this._state(win);
     if (s.gaveUp || !s.expectingWeb || s.hangGrace) return;
@@ -312,14 +421,14 @@ class RendererRecovery {
           forced = true;
         }
       } catch (err) {
-        this._log('强制终结渲染进程失败: ' + err.message);
+        this._log('强制终结渲染进程失败: ' + String((err as Error).message));
       }
       if (!forced) this._schedule(win, s);
     }, this.opts.UNRESPONSIVE_GRACE_MS);
     if (s.hangGrace && typeof s.hangGrace.unref === 'function') s.hangGrace.unref();
   }
 
-  _onResponsive(win) {
+  private _onResponsive(win: RecoveryWindow): void {
     const s = this._state(win);
     if (s.hangGrace) {
       clearTimeout(s.hangGrace);
@@ -328,7 +437,7 @@ class RendererRecovery {
     }
   }
 
-  _onFinishLoad(win) {
+  private _onFinishLoad(win: RecoveryWindow): void {
     if (win.isDestroyed()) return;
     const s = this._state(win);
     const target = this.opts.getTarget(win);
@@ -354,7 +463,11 @@ class RendererRecovery {
         if (s.failures === (s.failuresAtLoad || 0)) {
           // 本轮加载后没有新故障：完全康复，清零计数并上报健康状态。
           this._log(`界面已稳定（failures=${s.failures}），清零故障计数`);
-          try { this.opts.onStable && this.opts.onStable(); } catch {}
+          try {
+            this.opts.onStable && this.opts.onStable();
+          } catch {
+            /* 回调异常不影响恢复 */
+          }
           this._resetBurst(s);
         } else {
           this._log(`界面已稳定，但故障窗口内又发生故障（failures=${s.failures}），保留计数防止循环`);
@@ -368,9 +481,9 @@ class RendererRecovery {
     }
   }
 
-  _onFailLoad(win, { code, desc, url }) {
+  private _onFailLoad(win: RecoveryWindow, info: { code: number; desc: string; url: string }): void {
     if (this.opts.isQuitting() || win.isDestroyed()) return;
-    if (code === -3) return; // ERR_ABORTED：重载/跳转的正常中断
+    if (info.code === -3) return; // ERR_ABORTED：重载/跳转的正常中断
     const s = this._state(win);
     if (s.gaveUp) return; // 错误页自身的加载失败无须处理
     if (s.loadFlight && s.loadFlight.active) {
@@ -379,8 +492,8 @@ class RendererRecovery {
       return;
     }
     const target = this.opts.getTarget(win);
-    if (!this._sameTargetUrl(url, target)) return; // 只关心目标页主框架
-    this._log(`目标页加载失败: code=${code} desc=${desc || ''} url=${url}`);
+    if (!this._sameTargetUrl(info.url, target)) return; // 只关心目标页主框架
+    this._log(`目标页加载失败: code=${info.code} desc=${info.desc || ''} url=${info.url}`);
     if (!this.opts.isServerAlive()) {
       // 服务进程已退出：既有「DSH 服务已停止」对话框接管交互；
       // 浮窗留在原地是死屏，直接关闭。
@@ -394,7 +507,7 @@ class RendererRecovery {
 
   // ---------------------------------------------------------------- 恢复流程
 
-  _schedule(win, s) {
+  private _schedule(win: RecoveryWindow, s: WindowState): void {
     if (s.attemptTimer) {
       // 新故障到来时取消排队中的恢复动作，按最新计数重新决策：
       // 否则单飞机制会让「重建 / 放弃」分级被快速故障潮跳过
@@ -404,44 +517,57 @@ class RendererRecovery {
       s.gen += 1; // 同时放弃可能在途的加载尝试，其结果不再被信任
     }
     const action = nextAction(s.failures, s.kind, s.rebuiltInBurst);
-    if (action === 'give-up') { this._giveUp(win, s); return; }
-    if (action === 'rebuild') { this._rebuildNow(win, s); return; }
+    if (action === 'give-up') {
+      this._giveUp(win, s);
+      return;
+    }
+    if (action === 'rebuild') {
+      this._rebuildNow(win, s);
+      return;
+    }
     const delay = computeBackoff(s.failures, this.opts);
     this._log(`安排恢复: kind=${s.kind} failures=${s.failures} 延迟=${delay}ms 动作=reload`);
     s.attemptTimer = setTimeout(() => {
       s.attemptTimer = null;
-      this._attempt(win, s, ++s.gen);
+      s.gen += 1;
+      void this._attempt(win, s, s.gen);
     }, delay);
     if (s.attemptTimer && typeof s.attemptTimer.unref === 'function') s.attemptTimer.unref();
   }
 
-  async _attempt(win, s, gen) {
+  private async _attempt(win: RecoveryWindow, s: WindowState, gen: number): Promise<void> {
     if (this.opts.isQuitting() || win.isDestroyed() || gen !== s.gen) return;
     let target = this.opts.getTarget(win);
     if (!target) {
       // 尚未拿到 webUrl（启动早期崩溃）：主窗回加载页，boot 流程会继续接管；
       // 浮窗此时不存在，防御性关闭。
-      if (s.kind === 'float') { this._closeFloat(win); return; }
+      if (s.kind === 'float') {
+        this._closeFloat(win);
+        return;
+      }
       target = { kind: 'file', path: this.opts.loadingPage };
     }
+    const tgt: NonNullable<LoadTarget> = target;
     try {
-      await this._loadTracked(win, s, target, gen);
+      await this._loadTracked(win, s, tgt, gen);
       return; // 成功：由 did-finish-load 进入稳定期判定
     } catch (err) {
       if (this.opts.isQuitting() || win.isDestroyed() || gen !== s.gen) return;
-      if (/ERR_ABORTED/.test(String((err && err.message) || err))) {
+      if (/ERR_ABORTED/.test(String((err as Error)?.message || err))) {
         // 被更新的加载（用户 Ctrl+R / 新恢复动作）取代：不视为失败。
         return;
       }
-      this._log(`恢复加载失败: ${((err && err.message) || err)}`);
+      this._log(`恢复加载失败: ${String((err as Error)?.message || err)}`);
       // 1) 服务进程健在但连不上：多为插件市场原地重启的间隙，
       //    等待服务恢复后用「最新」webUrl 重试一次，不计入崩溃失败。
-      if (target.kind === 'url' && this.opts.isServerAlive()) {
+      if (tgt.kind === 'url' && this.opts.isServerAlive()) {
         let waited = false;
         try {
           await this.opts.waitServerUp(this.opts.SERVER_WAIT_MAX_MS);
           waited = true;
-        } catch { waited = false; }
+        } catch {
+          waited = false;
+        }
         if (this.opts.isQuitting() || win.isDestroyed() || gen !== s.gen) return;
         const fresh = this.opts.getTarget(win);
         if (waited && fresh && fresh.kind === 'url') {
@@ -449,13 +575,13 @@ class RendererRecovery {
             await this._loadTracked(win, s, fresh, gen);
             return;
           } catch (err2) {
-            if (gen !== s.gen || /ERR_ABORTED/.test(String((err2 && err2.message) || err2))) return;
-            this._log(`服务恢复后重试加载仍失败: ${((err2 && err2.message) || err2)}`);
+            if (gen !== s.gen || /ERR_ABORTED/.test(String((err2 as Error)?.message || err2))) return;
+            this._log(`服务恢复后重试加载仍失败: ${String((err2 as Error)?.message || err2)}`);
           }
         }
       }
       // 2) 服务进程已退出：既有对话框接管，不循环、不弹窗。
-      if (target.kind === 'url' && !this.opts.isServerAlive()) {
+      if (tgt.kind === 'url' && !this.opts.isServerAlive()) {
         this._log('服务进程已退出，交由既有重启对话框处理');
         if (s.kind === 'float') this._closeFloat(win);
         return;
@@ -466,9 +592,9 @@ class RendererRecovery {
     }
   }
 
-  // 带「在途标记」的加载：did-fail-load 事件与该加载属于同一动作，
-  // 由本函数的 Promise 结果统一处理，避免事件与拒绝路径重复计数。
-  async _loadTracked(win, s, target, gen) {
+  /** 带「在途标记」的加载：did-fail-load 事件与该加载属于同一动作，
+   *  由本函数的 Promise 结果统一处理，避免事件与拒绝路径重复计数。 */
+  private async _loadTracked(win: RecoveryWindow, s: WindowState, target: NonNullable<LoadTarget>, gen: number): Promise<void> {
     const flight = { active: true };
     s.loadFlight = flight;
     try {
@@ -479,46 +605,60 @@ class RendererRecovery {
     }
   }
 
-  _loadWithTimeout(win, target, gen) {
-    return new Promise((resolve, reject) => {
-      if (win.isDestroyed()) return reject(new Error('window destroyed'));
+  private _loadWithTimeout(win: RecoveryWindow, target: NonNullable<LoadTarget>, _gen: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (win.isDestroyed()) {
+        reject(new Error('window destroyed'));
+        return;
+      }
       let settled = false;
-      let timer = null;
-      const done = (fn, v) => {
+      let timer: NodeJS.Timeout | null = null;
+      /** 一次性落定（成功/失败共用；先到者生效）。 */
+      const settle = (): void => {
         if (settled) return;
         settled = true;
-        if (timer) { clearTimeout(timer); timer = null; }
-        fn(v);
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
       };
-      const p = target.kind === 'url'
-        ? win.webContents.loadURL(target.url)
-        : win.webContents.loadFile(target.path);
+      const ok = (): void => {
+        if (settled) return;
+        settle();
+        resolve();
+      };
+      const fail = (err: unknown): void => {
+        if (settled) return;
+        settle();
+        reject(err instanceof Error ? err : new Error(String(err)));
+      };
+      const p = target.kind === 'url' ? win.webContents.loadURL(target.url) : win.webContents.loadFile(target.path);
       p.then(
-        (v) => done(resolve, v),
-        (err) => done(reject, err)
+        () => ok(),
+        (err) => fail(err),
       );
       timer = setTimeout(() => {
         // 超时只放弃本次等待，绝不 kill webContents：慢加载（首次启动等）
         // 是合法场景；后续故障事件或下一次调度会继续处理。
-        done(reject, new Error('load timeout'));
+        fail(new Error('load timeout'));
       }, this.opts.LOAD_TIMEOUT_MS);
       if (timer && typeof timer.unref === 'function') timer.unref();
     });
   }
 
-  _rebuildNow(win, s) {
+  private _rebuildNow(win: RecoveryWindow, s: WindowState): void {
     this._log(`连续失败达到重建阈值（failures=${s.failures}），重建主窗口`);
-    const carried = {
+    const carried: Partial<WindowState> = {
       failures: s.failures,
       windowStart: s.windowStart,
       rebuiltInBurst: true,
       lastFailure: s.lastFailure,
     };
-    let newWin = null;
+    let newWin: RecoveryWindow | null = null;
     try {
       newWin = this.opts.rebuildMainWindow({ startHidden: s.userHidden });
     } catch (err) {
-      this._log(`重建主窗口异常: ${((err && err.message) || err)}`);
+      this._log(`重建主窗口异常: ${String((err as Error)?.message || err)}`);
       this._countFailure(win, s);
       this._schedule(win, s);
       return;
@@ -534,7 +674,7 @@ class RendererRecovery {
     this._schedule(newWin, ns);
   }
 
-  _giveUp(win, s) {
+  private _giveUp(win: RecoveryWindow, s: WindowState): void {
     if (s.gaveUp) return;
     s.gaveUp = true;
     this._clearTimers(s);
@@ -542,19 +682,26 @@ class RendererRecovery {
     this._log(`自动恢复失败达到上限，kind=${s.kind} failures=${s.failures}，停止自动恢复`);
     if (s.kind === 'main') {
       this._showErrorPage(win, s, true);
-      try { this.opts.onGaveUp && this.opts.onGaveUp(s.lastFailure); } catch {}
       try {
-        this.opts.notify && this.opts.notify(
-          'DSH Desktop 界面多次异常退出',
-          '已暂停自动恢复并显示恢复页面。你的数据与后台任务不受影响，仍在继续运行。'
-        );
-      } catch {}
+        this.opts.onGaveUp && this.opts.onGaveUp(s.lastFailure);
+      } catch {
+        /* 回调异常不影响恢复 */
+      }
+      try {
+        this.opts.notify &&
+          this.opts.notify(
+            'DSH Desktop 界面多次异常退出',
+            '已暂停自动恢复并显示恢复页面。你的数据与后台任务不受影响，仍在继续运行。',
+          );
+      } catch {
+        /* 通知失败静默 */
+      }
     } else {
       this._closeFloat(win);
     }
   }
 
-  _showErrorPage(win, s, force = false) {
+  private _showErrorPage(win: RecoveryWindow, s: WindowState, force = false): void {
     if (win.isDestroyed()) return;
     const now = Date.now();
     if (!force && now - s.lastErrorPageAt < this.opts.ERROR_PAGE_RELOAD_MIN_INTERVAL_MS) return;
@@ -565,10 +712,12 @@ class RendererRecovery {
     }
   }
 
-  _closeFloat(win) {
+  private _closeFloat(win: RecoveryWindow): void {
     this._log('关闭无法恢复的浮窗');
-    try { if (!win.isDestroyed()) win.destroy(); } catch {}
+    try {
+      if (!win.isDestroyed()) win.destroy();
+    } catch {
+      /* destroy 失败静默 */
+    }
   }
 }
-
-module.exports = { RendererRecovery, computeBackoff, nextAction, DEFAULT_OPTS };
