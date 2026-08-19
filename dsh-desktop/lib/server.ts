@@ -53,6 +53,12 @@ export function childEnv(): NodeJS.ProcessEnv {
   env.DSH_DESKTOP = '1';
   env.DSH_DESKTOP_PROFILE = desktopProfile();
   env.NO_COLOR = '1';
+  // VNext Phase 2：Core Bridge 回环端点（受信组件据此回调 Supervisor 调用
+  // 隔离插件工具/收集上下文；仅回环 + 每会话一次性 token）。
+  if (state.eacBridge) {
+    env.DSH_EAC_BRIDGE_URL = state.eacBridge.url;
+    env.DSH_EAC_BRIDGE_TOKEN = state.eacBridge.token;
+  }
   return env;
 }
 

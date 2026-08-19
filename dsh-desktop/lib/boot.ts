@@ -57,7 +57,10 @@ import {
   openRecoveryCenter, archivePluginProfiles,
 } from './recovery-center/register.js';
 import { recordStartFailure } from './supervisor/registry.js';
-import { startEnabledExtensionHosts } from './extension-host/manager.js';
+import {
+  getExtensionHostManager, startEnabledExtensionHosts, ensureBundledSdkPlugins,
+} from './extension-host/manager.js';
+import { startExtensionBridgeServer } from './extension-host/bridge-server.js';
 
 /** 更新定时器间隔：agent 6 小时 / 插件 6 小时 / 客户端 12 小时。 */
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -365,14 +368,25 @@ export async function boot(): Promise<void> {
       await restoreKeptArtifacts(desktopProfile());
     })
     .then(() => verifyBundledModules())
+    .then(async () => {
+      // VNext Phase 2：Core Bridge 回环端点必须在 dsh web 拉起之前就绪
+      // （childEnv 会把 URL/token 注入其子进程环境；失败不阻断核心启动，
+      // 仅隔离插件工具不可用）。
+      try {
+        state.eacBridge = await startExtensionBridgeServer(getExtensionHostManager());
+      } catch (err) {
+        log('ext-host', 'Core Bridge 端点启动失败（隔离插件工具不可用）: ' + String((err as Error).message));
+      }
+    })
     .then(() => startAndShowGuarded())
     .then(() => {
       // V4.1 更新保障②/③：新版健康启动 —— 清理官方 dsh 上一版本备份与
       // 便携版客户端旧 exe 备份（崩溃自回退的保险丝就此解除）。
       updater.confirmPreviousAgentHealthy(updCtx());
       cleanupClientBackupIfHealthy();
-      // VNext Phase 2：核心 Web 服务健康后并行拉起全部启用的 SDK 插件
-      // Host（进程隔离 + Job 围栏；无 SDK 插件时为空操作，失败不影响核心）。
+      // VNext Phase 2：核心 Web 服务健康后安装随包示例插件并并行拉起全部
+      // 启用的 SDK 插件 Host（进程隔离 + Job 围栏；失败不影响核心）。
+      ensureBundledSdkPlugins();
       void startEnabledExtensionHosts();
       // V4.3 PR（独有价值）：客户端更新成功后 24h 内非阻塞询问是否清理 4 目录备份
       // （超 24h 自动登记 pendingBackupCleanup；确认删时保留 manifest.json 诊断副本）。
@@ -385,7 +399,15 @@ export async function boot(): Promise<void> {
       state.sessionWatcher = new SessionWatcher({
         sessionsDir: path.join(home, 'sessions'),
         log,
-        onTurnEnd: (info) => onSessionTurnEnd(info),
+        onTurnEnd: (info) => {
+          onSessionTurnEnd(info);
+          // VNext Phase 2：回合结束广播给全部隔离插件（SDK ctx.on('turn-end')）。
+          try {
+            getExtensionHostManager().broadcastEvent('turn-end', info);
+          } catch {
+            /* 无宿主时忽略 */
+          }
+        },
       });
       state.sessionWatcher.start();
       maintainShortcuts();

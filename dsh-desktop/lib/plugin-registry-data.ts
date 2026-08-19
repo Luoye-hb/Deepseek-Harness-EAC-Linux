@@ -23,6 +23,10 @@ export interface CompanionPlugin {
 }
 
 export const COMPANION_PLUGINS: CompanionPlugin[] = [
+  // VNext Phase 2 Core Bridge（受信组件）：把隔离 SDK 插件的工具/上下文
+  // 桥接进 dsh Agent（回环端点见 lib/extension-host/bridge-server.ts）。
+  // 必须先于其余伴生插件同步（它们不依赖它，但保持 bridge 常驻可用）。
+  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge' },
   { id: 'balance', name: '@deepseek-ai/dsh-balance' },
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },

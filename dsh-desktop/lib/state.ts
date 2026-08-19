@@ -137,6 +137,8 @@ export interface AppState {
   dshYamlTried: boolean;
   /** 预览静态文件服务端口（0 = 未启动）。 */
   previewStaticPort: number;
+  /** VNext Phase 2：Core Bridge 回环端点（URL + 一次性 token；null = 未启动）。 */
+  eacBridge: { url: string; token: string; close(): void } | null;
 }
 
 /** 全局共享可变状态单例：初值与原 main.js 顶层声明一一对应。 */
@@ -176,4 +178,5 @@ export const state: AppState = {
   dshYamlDialect: null,
   dshYamlTried: false,
   previewStaticPort: 0,
+  eacBridge: null,
 };

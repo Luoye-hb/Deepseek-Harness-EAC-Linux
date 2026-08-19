@@ -144,9 +144,17 @@ export interface HostInitParams {
   permissions: ExtensionPermissions;
 }
 
-/** Host init 应答：插件声明的工具名列表（Core Bridge 桥接用）。 */
+/** SDK 工具元数据（Core Bridge 据此向 Agent 注册工具）。 */
+export interface HostToolMeta {
+  name: string;
+  description?: string;
+  /** dsh 风格参数描述符（{key: {type, required?, description?}}）。 */
+  parameters?: Record<string, { type?: string; required?: boolean; description?: string }>;
+}
+
+/** Host init 应答：插件声明的工具元数据列表（Core Bridge 桥接用）。 */
 export interface HostInitResult {
-  tools: string[];
+  tools: HostToolMeta[];
 }
 
 /** Supervisor → Host 工具调用参数。 */
@@ -159,4 +167,22 @@ export interface HostInvokeParams {
 export interface HostLogParams {
   level: 'debug' | 'info' | 'warn' | 'error';
   msg: string;
+}
+
+/** Supervisor → Host 事件通知参数（只读事件订阅，SDK ctx.on 分发）。 */
+export interface SdkEventParams {
+  name: string;
+  payload?: unknown;
+}
+
+/** Supervisor → Host 上下文收集请求（system-prompt/assemble 前触发）。 */
+export interface CollectContextParams {
+  sessionId: string;
+}
+
+/** 上下文贡献（assembly.contexts 追加项）。 */
+export interface ContextContribution {
+  name: string;
+  order: number;
+  text: string;
 }

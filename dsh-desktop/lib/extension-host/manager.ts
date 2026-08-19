@@ -21,10 +21,15 @@ import { createFence, fenceMode, type FenceHandle } from './job-fence.js';
 import { RpcPeer } from './rpc.js';
 import { readRegistry, writeRegistry } from '../supervisor/registry.js';
 import type { RegistryEntry } from '../supervisor/registry.js';
-import { extensionsRoot } from '../supervisor/installer.js';
+import { extensionsRoot, installSdkPlugin } from '../supervisor/installer.js';
 import { applyTransition, noteStableRunning, STABLE_MS } from '../supervisor/state-machine.js';
+import { state } from '../state.js';
 import { log } from '../log.js';
-import type { HostInitParams, HostInitResult, HostInvokeParams, HostLogParams, PingParams } from '../../shared/protocol.js';
+import { toContributions } from './sdk/index.js';
+import type {
+  CollectContextParams, ContextContribution, HostInitParams, HostInitResult,
+  HostInvokeParams, HostLogParams, HostToolMeta, PingParams, SdkEventParams,
+} from '../../shared/protocol.js';
 
 /** Manager 可调参数（生产默认值适合常驻；测试注入短周期）。 */
 export interface ExtensionHostManagerOpts {
@@ -58,8 +63,8 @@ interface HostRuntime {
   /** init 握手是否已完成（未完成时退出归 start-failed，不作 crash）。 */
   initDone: boolean;
   heartbeat?: NodeJS.Timeout;
-  /** init 应答的工具清单（Core Bridge / 恢复中心展示用）。 */
-  tools: string[];
+  /** init 应答的工具元数据（Core Bridge 据此向 Agent 注册工具）。 */
+  tools: HostToolMeta[];
   /** 稳定清零是否已生效（每次成功启动重置一次）。 */
   stableNoted: boolean;
   /** 主动停止中：不触发 crash 转移。 */
@@ -96,9 +101,45 @@ export class ExtensionHostManager {
     return [...this.hosts.keys()];
   }
 
-  /** 插件已注册的工具清单（未运行返回空）。 */
-  toolsOf(id: string): string[] {
+  /** 插件已注册的工具元数据（未运行返回空）。 */
+  toolMetas(id: string): HostToolMeta[] {
     return [...(this.hosts.get(id)?.tools ?? [])];
+  }
+
+  /** 全部运行中插件的工具元数据（Core Bridge /tools 端点用）。 */
+  allToolMetas(): Array<HostToolMeta & { pluginId: string }> {
+    const out: Array<HostToolMeta & { pluginId: string }> = [];
+    for (const [id, rt] of this.hosts) {
+      for (const t of rt.tools) out.push({ ...t, pluginId: id });
+    }
+    return out;
+  }
+
+  /** 广播只读事件到全部运行中的 Host（SDK ctx.on 分发）。 */
+  broadcastEvent(name: string, payload?: unknown): void {
+    const p: SdkEventParams = { name, payload };
+    for (const [, rt] of this.hosts) {
+      rt.peer.notify('event', p);
+    }
+  }
+
+  /**
+   * 收集回合上下文贡献（Core Bridge /context 端点用）：
+   * 每个 Host 单独限时，超时/异常即丢弃该插件本回合的贡献 —— 扩展卡死
+   * 绝不阻塞核心回合（架构文档 §5 Core Bridge 语义）。
+   */
+  async collectContexts(sessionId: string, perHostTimeoutMs = 800): Promise<ContextContribution[]> {
+    const jobs: Promise<ContextContribution[]>[] = [];
+    for (const [id, rt] of this.hosts) {
+      jobs.push(
+        rt.peer
+          .request<string[]>('collect-context', { sessionId } satisfies CollectContextParams, perHostTimeoutMs)
+          .then((texts) => toContributions(id, Array.isArray(texts) ? texts : []))
+          .catch(() => [] as ContextContribution[]),
+      );
+    }
+    const all = await Promise.all(jobs);
+    return all.flat();
   }
 
   /** Host 围栏档位（win32-job / taskkill-fallback，恢复中心展示用）。 */
@@ -212,7 +253,7 @@ export class ExtensionHostManager {
       rt.heartbeat = setInterval(() => void this.heartbeatTick(id), this.o.heartbeatIntervalMs);
       rt.heartbeat.unref();
       applyTransition(id, { type: 'started', stableForMs: 0 });
-      log('ext-host', `${id}: Host 已运行（pid=${handle.pid}，tools=[${rt.tools.join(',')}]，围栏=${handle.mode}）`);
+      log('ext-host', `${id}: Host 已运行（pid=${handle.pid}，tools=[${rt.tools.map((t) => t.name).join(',')}]，围栏=${handle.mode}）`);
       return true;
     } catch (err) {
       // 握手失败：Host 可能活着但不可用 —— 杀掉再走 start-failed。
@@ -399,8 +440,34 @@ export async function startEnabledExtensionHosts(): Promise<void> {
   }
 }
 
-/** 退出链入口：树杀全部 Host（before-quit 调用；幂等）。 */
+/**
+ * 首启安装随包分发的 SDK 示例插件（幂等：注册表已有档案即跳过——包括
+ * 用户主动卸载后的 uninstalled 态，绝不擅自重装）。
+ */
+export function ensureBundledSdkPlugins(): void {
+  try {
+    const id = 'sample-sdk-plugin';
+    if (readRegistry().plugins[id]) return;
+    const srcDir = path.join(__dirname, '..', '..', 'assets', 'sdk-plugins', 'sample-sdk-plugin');
+    if (!fs.existsSync(srcDir)) return;
+    const r = installSdkPlugin(id, { srcDir });
+    if (r.ok) log('ext-host', `示例 SDK 插件已安装（sha256=${(r.packageSha256 ?? '').slice(0, 12)}…）`);
+    else log('warn', `示例 SDK 插件安装失败: ${r.error ?? ''}`);
+  } catch (err) {
+    log('warn', '示例 SDK 插件安装异常: ' + String((err as Error).message));
+  }
+}
+
+/** 退出链入口：树杀全部 Host + 关闭 Core Bridge 端点（before-quit 调用；幂等）。 */
 export async function shutdownExtensionHosts(): Promise<void> {
+  try {
+    if (state.eacBridge) {
+      state.eacBridge.close();
+      state.eacBridge = null;
+    }
+  } catch {
+    /* 端点已关 */
+  }
   if (!defaultManager) return;
   try {
     await defaultManager.shutdownAll();

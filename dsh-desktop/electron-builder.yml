@@ -68,6 +68,8 @@ files:
   - lib/extension-host/rpc.js
   - lib/extension-host/job-fence.js
   - lib/extension-host/manager.js
+  - lib/extension-host/bridge-server.js
+  - lib/extension-host/sdk/index.js
   - lib/recovery-center/register.js
   - shared/protocol.js
   # VNext Phase 2：Host 进程入口（内置 node.exe 拉起）与 Rust 围栏预编译产物

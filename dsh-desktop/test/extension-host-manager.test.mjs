@@ -99,7 +99,10 @@ test('Manager：init 握手 + 工具调用往返 + 状态机 running', async () 
   try {
     assert.equal(await mgr.startPlugin('healthy'), true);
     assert.equal(entryOf('healthy').state, 'running', 'init 成功后注册表应为 running');
-    assert.deepEqual(mgr.toolsOf('healthy').sort(), ['echo', 'getpid']);
+    assert.deepEqual(
+      mgr.toolMetas('healthy').map((t) => t.name).sort(),
+      ['echo', 'getpid'],
+    );
     const r = await mgr.invoke('healthy', 'echo', { msg: '你好' });
     assert.deepEqual(r, { echo: '你好' });
     const pid = await mgr.invoke('healthy', 'getpid');
