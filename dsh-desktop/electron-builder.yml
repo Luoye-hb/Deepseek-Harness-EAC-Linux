@@ -96,6 +96,8 @@ files:
   - renderer-recovery.js
   - watchdog.js
   - preload.js
+  - preload/api.js
+  - preload/chrome.js
   - assets/**/*
   # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
   # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。

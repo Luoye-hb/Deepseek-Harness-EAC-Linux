@@ -14,7 +14,9 @@ import { join } from 'node:path';
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
 const mainSrc = readFileSync(join(ROOT, 'main.js'), 'utf8');
-const preloadSrc = readFileSync(join(ROOT, 'preload.js'), 'utf8');
+// Task 6.4：桥接面实现自 preload.js 迁至 preload/api.ts（门面拆分），
+// 断言语义等价（心跳发送 + 恢复页通道）。
+const preloadSrc = readFileSync(join(ROOT, 'preload', 'api.ts'), 'utf8');
 const windowSrc = readFileSync(join(ROOT, 'lib', 'window.ts'), 'utf8');
 const runStateSrc = readFileSync(join(ROOT, 'lib', 'run-state.ts'), 'utf8');
 const watchdogSrc = readFileSync(join(ROOT, 'lib', 'watchdog-boot.ts'), 'utf8');

@@ -468,7 +468,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
       // 主进程退出后不会执行，node.exe+conhost.exe 成对残留）。
       await killTreeAndWait(state.serverProc);
       state.serverProc = null;
-      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate, clientUpdateOpts(release.version));
+      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate as { path: string; version?: string }, clientUpdateOpts(release.version));
       setTimeout(() => app.exit(0), 400);
     }
   } catch (err) {

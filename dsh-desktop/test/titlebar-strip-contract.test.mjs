@@ -9,15 +9,18 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const preload = readFileSync(join(root, 'preload.js'), 'utf8');
+// Task 6.4：自绘标题栏实现自 preload.js 迁至 preload/chrome.js（门面拆分），
+// 断言语义等价 —— BAR_HEIGHT 与声明属性同源。
+const preload = readFileSync(join(root, 'preload', 'chrome.js'), 'utf8');
 
 test('preload declares its titlebar height on <html> for client plugins', () => {
-  // BAR_HEIGHT 与声明的属性值必须同源（同一常量插值），不能硬编码两份
-  const barHeight = Number(preload.match(/const BAR_HEIGHT = (\d+)/)?.[1]);
+  // BAR_HEIGHT 与声明的属性值必须同源（同一常量插值），不能硬编码两份。
+  // （TS 编译产物形态：exports.BAR_HEIGHT = 36）
+  const barHeight = Number(preload.match(/exports\.BAR_HEIGHT = (\d+)/)?.[1]);
   assert.ok(barHeight > 0, 'BAR_HEIGHT must be defined');
   assert.match(
     preload,
-    new RegExp(`setAttribute\\('data-dsh-title-bar-height', String\\(BAR_HEIGHT\\)\\)`),
+    new RegExp(`setAttribute\\('data-dsh-title-bar-height', String\\(exports\\.BAR_HEIGHT\\)\\)`),
     'injectChrome must set data-dsh-title-bar-height from BAR_HEIGHT (better-sidebar reads it once at mount to auto-shift its fixed panel/toggle cluster)',
   );
 });

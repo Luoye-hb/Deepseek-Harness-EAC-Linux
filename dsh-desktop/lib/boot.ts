@@ -78,7 +78,7 @@ export function handleBootFailure(err: unknown): void {
     // V4.2 插件即时提醒：报错文案归因到 profile 里的插件时，提供
     // 「停用插件 X 并重试」（写盘停用，重启不还原）；另有最后良好快照时
     // 提供「回滚到最后良好快照并重试」。两项都失败才轮到版本级回退。
-    let blame: { name: string; rowId: string; kind: string } | null = null;
+    let blame: { name: string; rowId: string | null; kind: string } | null = null;
     let blameRow: { id: string; name: string; toggleable?: boolean } | null = null;
     try {
       const g = ensureGuard();
@@ -94,7 +94,7 @@ export function handleBootFailure(err: unknown): void {
           blameRow = null;
         }
         // Phase 0.3：启动失败归因落扩展注册表（恢复中心展示 + Agent 诊断）。
-        recordStartFailure(blame.rowId, String((err as Error)?.message || err));
+        if (blame.rowId) recordStartFailure(blame.rowId, String((err as Error)?.message || err));
       }
     } catch {
       /* 归因失败走通用按钮链 */

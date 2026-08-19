@@ -10,6 +10,7 @@ data/
 /*.js
 /lib/**/*.js
 /shared/**/*.js
+/preload/*.js
 /preload-lib/**/*.js
 /scripts/patch-session-manage.js
 /scripts/plugin-manager-patch.js
