@@ -24,6 +24,7 @@ const entryFiles = [
   'session-encoding-heal.js',
   'renderer-recovery.js',
   'watchdog.js',
+  'shortcut-maintenance.js',
   'stable-port.js',
   'koffi-preflight.js',
   'profile-module-heal.js',
