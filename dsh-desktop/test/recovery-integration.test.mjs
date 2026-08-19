@@ -35,7 +35,7 @@ test('main.js registers the heartbeat IPC and polls heartbeats', () => {
 });
 
 test('main.js serves the local recovery page IPC endpoints', () => {
-  for (const ch of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:recovery-open-logs']) {
+  for (const ch of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:export-logs']) {
     assert.ok(mainSrc.includes(`'${ch}'`), `IPC handler ${ch} missing`);
   }
   assert.ok(existsSync(join(ROOT, 'assets', 'recovery.html')), 'assets/recovery.html missing');
@@ -46,9 +46,32 @@ test('every quit path marks a clean exit for the watchdog', () => {
   assert.ok(marks.length >= 3, `expected markCleanExit() on before-quit + restart + app.exit paths, found ${marks.length}`);
 });
 
+test('quit cannot write to a closed desktop log from an async onboarding callback', () => {
+  assert.match(
+    mainSrc,
+    /desktopLog\s*&&\s*!desktopLog\.writableEnded\s*&&\s*!desktopLog\.destroyed/,
+    'log() must write only to an open desktop log stream',
+  );
+  assert.match(
+    mainSrc,
+    /const closingDesktopLog = desktopLog;\s*desktopLog = null;\s*try \{ if \(closingDesktopLog\) closingDesktopLog\.end\(\); \} catch \{\}/s,
+    'shutdown must clear the global log stream reference before ending it',
+  );
+  assert.match(
+    mainSrc,
+    /const result = await openPluginWizard\(\{ mode: 'first' \}\);\s*if \(quitting\) return/s,
+    'onboarding must stop when quit begins while its wizard is open',
+  );
+  assert.match(
+    mainSrc,
+    /await runPluginOnboardingIfNeeded\(onboardingNeeded\);\s*\/\/[^\n]*\n[\s\S]*?if \(quitting\) return;\s*syncCompanionPlugins\(\);/,
+    'boot must not continue after asynchronous onboarding is interrupted by quit',
+  );
+});
+
 test('preload sends renderer heartbeats and exposes the recovery bridge', () => {
   assert.ok(preloadSrc.includes("'dsh:renderer-heartbeat'"), 'preload heartbeat sender missing');
-  for (const ch of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:recovery-open-logs']) {
+  for (const ch of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:export-logs']) {
     assert.ok(preloadSrc.includes(`'${ch}'`), `preload bridge for ${ch} missing`);
   }
 });

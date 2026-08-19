@@ -28,13 +28,19 @@ files:
   - updater.js
   - settings.js
   - client-updater.js
+  - logger.js
+  - plugin-updater.js
   - balance.js
   - dsh-home.js
   - session-watcher.js
+  - session-encoding-heal.js
   - profile-module-heal.js
   - patch-row-heal.js
+  - builtin-collision.js
+  - plugin-manager-state.js
   - plugin-guard.js
   - preset-sync.js
+  - error-detail.js
   - bundle-integrity.js
   - stable-port.js
   - koffi-preflight.js
@@ -47,6 +53,7 @@ files:
   - scripts/koffi-preflight.cjs
   - scripts/patch-session-manage.js
   - scripts/plugin-manager-patch.js
+  - scripts/onboarding.js
   - scripts/make-release-hashes.js
   - package.json
   - "!**/*.md"

@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const candidates = [
+  path.resolve(__dirname, '..', 'vendor', 'node', 'lib', 'node_modules', 'npm'),
   path.join(path.dirname(process.execPath), 'node_modules', 'npm'),
   path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm'),
 ];

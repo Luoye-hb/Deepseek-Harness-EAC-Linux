@@ -21,6 +21,7 @@ const entryFiles = [
   'balance.js',
   'dsh-home.js',
   'session-watcher.js',
+  'session-encoding-heal.js',
   'renderer-recovery.js',
   'watchdog.js',
   'stable-port.js',
