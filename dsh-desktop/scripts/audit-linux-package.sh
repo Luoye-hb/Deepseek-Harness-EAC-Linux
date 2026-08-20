@@ -111,6 +111,15 @@ for package in "${packages[@]}"; do
     'import {createRequire} from "node:module";const require=createRequire(import.meta.url);const root=process.argv[1];require(root+"/node_modules/@node-rs/jieba-linux-x64-gnu");require(root+"/node_modules/sqlite-vec");await import(root+"/index.js");' \
     "$memory_root"
 
+  picturereader_root="$app_root/assets/plugins/picturereader"
+  [[ -f "$picturereader_root/package.json" ]] || fail "picturereader manifest is missing"
+  "$node_bin" --input-type=module -e \
+    'const root=process.argv[1];const mod=await import(root+"/src/index.js");if(mod.name!=="picturereader"||typeof mod.apply!=="function")process.exit(2)' \
+    "$picturereader_root"
+  "$node_bin" -e \
+    'const registry=require(process.argv[1]);const plugins=registry.COMPANION_PLUGINS;if(!plugins.some(p=>p.id==="picturereader"&&p.name==="picturereader")||plugins.some(p=>p.id==="tool-vision")||registry.PLUGIN_UPDATE_SOURCES.picturereader?.npm!=="picturereader")process.exit(2)' \
+    "$app_root/lib/plugin-registry-data.js"
+
   mapfile -t native_payloads < <(find "$extract_dir" -type f \( -name '*.node' -o -name '*.so' -o -path '*/resources/node/node' \) | sort)
   [[ ${#native_payloads[@]} -gt 0 ]] || fail "no native payloads found"
   for required in node-pty sharp-linux-x64 koffi-linux-x64 jieba-linux-x64-gnu sqlite-vec-linux-x64; do

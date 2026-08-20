@@ -86,6 +86,10 @@ test('archive auditor rejects missing packages and unsupported formats', () => {
   const script = join(root, 'scripts', 'audit-linux-package.sh');
   const source = readFileSync(script, 'utf8');
   assert.match(source, /rpm --dbpath "\$rpm_db" -qp/);
+  assert.match(source, /assets\/plugins\/picturereader/);
+  assert.match(source, /mod\.name!=="picturereader"\|\|typeof mod\.apply!=="function"/);
+  assert.match(source, /COMPANION_PLUGINS/);
+  assert.match(source, /p\.id==="tool-vision"/);
   const missing = spawnSync('bash', [script, join(root, 'does-not-exist.deb')], { encoding: 'utf8' });
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /package is not a file/);
