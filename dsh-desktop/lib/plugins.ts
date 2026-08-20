@@ -20,7 +20,6 @@ import { CORE_PLUGIN_IDS } from '../scripts/onboarding.js';
 import { healProfileModuleShadowing } from '../profile-module-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
-import { IS_WIN } from './proc.js';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './paths.js';
 import { COMPANION_PLUGINS, builtinPluginSourceDir } from './plugin-registry-data.js';
 import { readJsonFile, copyPluginPackage } from './plugin-copy.js';
@@ -111,9 +110,8 @@ export function syncBundledSkills(): void {
   }
 }
 
-/** 配套插件/皮肤同步主流程（Windows；启动/服务重启/agent 更新后重放）。 */
+/** 配套插件/皮肤同步主流程（启动/服务重启/agent 更新后重放）。 */
 export function syncCompanionPlugins(): void {
-  if (!IS_WIN) return;
   // VNext Phase 0 安全模式（DSH_DESKTOP_SAFE_MODE=1，由恢复中心注入）：
   // 全部非核心配套插件按 disabled 写行 —— 核心 Agent/会话/基础 Web UI
   // 保持可用，坏插件被整体隔离出本轮启动（架构文档 §3.4）。

@@ -99,6 +99,17 @@ test('desktop source keeps Linux frameless, close-to-exit, and tray-free', () =>
   assert.match(mainSource, /if \(!IS_WIN \|\| !state\.tray\) app\.quit\(\)/);
 });
 
+test('Linux startup initializes and syncs the desktop profile before launching dsh web', () => {
+  const pluginsSource = source('lib/plugins.ts');
+  const bootSource = source('lib/boot.ts');
+  assert.doesNotMatch(pluginsSource, /syncCompanionPlugins\(\): void \{\s*if \(!IS_WIN\) return/);
+  assert.match(pluginsSource, /syncCompanionPlugins\(\): void \{[\s\S]*ensureDesktopProfileInit\(\)/);
+  assert.match(
+    bootSource,
+    /await runPluginOnboardingIfNeeded\(onboardingNeeded\);[\s\S]*syncCompanionPlugins\(\);[\s\S]*startAndShowGuarded\(\)/,
+  );
+});
+
 test('Linux client update boundary is guidance-only and disables background/apply/rollback paths', () => {
   const flow = source('lib/update-flow.ts');
   const boot = source('lib/boot.ts');
