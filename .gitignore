@@ -32,5 +32,8 @@ __pycache__/
 *.tmp
 updates/
 
+# bench-boot 基线报告（机器相关数字，本地保留供 --compare 回归对比）
+dsh-desktop/bench-*.json
+
 # Reasonix 工具元数据（勿提交）
 .reasonix/

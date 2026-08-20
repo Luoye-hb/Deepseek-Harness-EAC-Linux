@@ -38,6 +38,15 @@ export interface ScanDomain {
 }
 
 export function createScanDomain(ctx: GuardCtx): ScanDomain {
+  // Task 12.2（spec F2.1）：高危扫描的逐文件结论缓存（随 guard 单例存活）。
+  // 键 = 文件绝对路径，命中条件 = (mtimeMs, size) 与上次扫描一致 —— 任何
+  // 真实写操作都会推进 mtime，故命中即可安全跳过 readFileSync + 正则（单次
+  // healthCheck 文本量上限 32MB，恢复中心/修复流程反复触发放大该成本）。
+  // readdir/stat 走树本身不可省：发现新增/删除文件正是巡检目标。容量上限
+  // 防御性清空（正常 profile 远达不到）。
+  const SCAN_VERDICT_CACHE_MAX = 20_000;
+  const verdictCache = new Map<string, { mtimeMs: number; size: number; finding: Finding | null }>();
+
   /** dshBin() 形如 <closure>/@deepseek-ai/dsh/lib/bin.js → 安装闭包根。 */
   function expectedClosureRoot(): string | null {
     try {
@@ -201,23 +210,33 @@ export function createScanDomain(ctx: GuardCtx): ScanDomain {
             }
             if (st.size > SCAN_MAX_FILE_BYTES || total + st.size > SCAN_MAX_TOTAL_BYTES) continue;
             total += st.size;
-            let text: string;
-            try {
-              text = fs.readFileSync(p, 'utf8');
-            } catch {
-              continue;
-            }
-            for (const { code, re } of TROJAN_PATTERNS) {
-              if (re.test(text)) {
-                out.push({
-                  code,
-                  severity: 'high',
-                  message: `静态扫描命中高危模式（${code}）：${path.relative(modulesDir, p)}`,
-                  fixable: false,
-                });
-                break; // 每文件只报首个模式
+            // 结论缓存命中：内容身份 (mtimeMs, size) 未变 → 免读免正则。
+            const cached = verdictCache.get(p);
+            let finding: Finding | null = null;
+            if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+              finding = cached.finding;
+            } else {
+              let text: string;
+              try {
+                text = fs.readFileSync(p, 'utf8');
+              } catch {
+                continue;
               }
+              for (const { code, re } of TROJAN_PATTERNS) {
+                if (re.test(text)) {
+                  finding = {
+                    code,
+                    severity: 'high',
+                    message: `静态扫描命中高危模式（${code}）：${path.relative(modulesDir, p)}`,
+                    fixable: false,
+                  };
+                  break; // 每文件只报首个模式
+                }
+              }
+              if (verdictCache.size >= SCAN_VERDICT_CACHE_MAX) verdictCache.clear();
+              verdictCache.set(p, { mtimeMs: st.mtimeMs, size: st.size, finding });
             }
+            if (finding) out.push(finding);
           }
         }
       };
