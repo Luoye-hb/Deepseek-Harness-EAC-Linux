@@ -9,8 +9,13 @@ const path = require('node:path');
 (async () => {
   const koffiDir = path.resolve(__dirname, '..', 'node_modules', 'koffi');
   const koffi = (await import(pathToFileURL(path.join(koffiDir, 'index.cjs')))).default;
-  const kernel32 = koffi.load('kernel32.dll');
-  const getCurrentProcessId = kernel32.func('GetCurrentProcessId', 'uint32', []);
+  const isWindows = process.platform === 'win32';
+  const system = koffi.load(isWindows ? 'kernel32.dll' : 'libc.so.6');
+  const getCurrentProcessId = system.func(
+    isWindows ? 'GetCurrentProcessId' : 'getpid',
+    isWindows ? 'uint32' : 'int',
+    [],
+  );
   const pid = getCurrentProcessId();
   if (typeof pid !== 'number' || pid <= 0) throw new Error('unexpected pid: ' + pid);
   console.log('KOFFI_PREFLIGHT_OK pid=' + pid);

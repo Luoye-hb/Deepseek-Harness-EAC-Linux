@@ -53,7 +53,15 @@ interface EntryBlock {
  */
 function findEntryBlock(lines: string[], id: string, indentLo: number, indentHi: number): EntryBlock | null {
   for (let i = 0; i < lines.length; i++) {
-    const ind = entryIndentOf(lines[i] ?? '', id, indentLo, indentHi);
+    let ind = entryIndentOf(lines[i] ?? '', id, indentLo, indentHi);
+    if (ind === null && /^\s*-\s*$/.test(lines[i] ?? '')) {
+      const itemIndent = LEADING.exec(lines[i] ?? '')?.[1]?.length ?? -1;
+      const idLine = lines[i + 1] ?? '';
+      const idIndent = LEADING.exec(idLine)?.[1]?.length ?? -1;
+      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const isTarget = new RegExp('^id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').test(idLine.trimStart());
+      if (isTarget && idIndent > itemIndent && itemIndent >= indentLo && itemIndent <= indentHi) ind = itemIndent;
+    }
     if (ind === null) continue;
     let j = i + 1;
     while (j < lines.length) {
@@ -67,6 +75,26 @@ function findEntryBlock(lines: string[], id: string, indentLo: number, indentHi:
     return { start: i, end: j, indent: ind };
   }
   return null;
+}
+
+/** 清理删除条目后留下的紧凑或官方多行空 insert 块。 */
+function removeEmptyInsertBlocks(lines: string[]): string[] {
+  return lines.filter((line, idx) => {
+    if (/^[ \t]*- insert:\s*$/.test(line)) {
+      let k = idx + 1;
+      while (k < lines.length && (lines[k] ?? '').trim() === '') k += 1;
+      return k < lines.length && /^[ \t]+-/.test(lines[k] ?? '');
+    }
+    if (!/^[ \t]*-\s*$/.test(line) || !/^[ \t]+insert:\s*$/.test(lines[idx + 1] ?? '')) return true;
+    const itemIndent = LEADING.exec(line)?.[1]?.length ?? 0;
+    let k = idx + 2;
+    while (k < lines.length && (lines[k] ?? '').trim() === '') k += 1;
+    const nextIndent = LEADING.exec(lines[k] ?? '')?.[1]?.length ?? -1;
+    return k < lines.length && nextIndent > itemIndent && /^[ \t]+-/.test(lines[k] ?? '');
+  }).filter((line, idx, filtered) => {
+    if (!/^[ \t]+insert:\s*$/.test(line)) return true;
+    return idx > 0 && /^[ \t]*-\s*$/.test(filtered[idx - 1] ?? '');
+  });
 }
 
 /** 块内属性行（缩进 > 条目缩进）里第一个匹配 keyRe 的行下标。 */
@@ -92,19 +120,17 @@ export function togglePluginInPatch(text: string, id: string, enabled: boolean, 
   const disabledPropRe = /^[ \t]*disabled\s*:\s*(?:true|false)\s*(?:#.*)?$/;
   const namePropRe = /^[ \t]*name\s*:/;
 
-  let lines = text.split('\n');
+  // dsh-app-boot initializes a new profile patch as `[]`. Appending a list item
+  // after that scalar-looking document produces invalid YAML (`[]\n- id: ...`).
+  // Treat the standalone empty sequence as an empty editable document first.
+  let lines = /^\s*\[\]\s*$/.test(text) ? [] : text.split('\n');
 
   if (!enabled) {
     // 1) 从 insert 块内移除内层条目（缩进 >= 1 视为内层；同一 id 只留一个登记点）
     const inner = findEntryBlock(lines, id, 1, Infinity);
     if (inner) lines.splice(inner.start, inner.end - inner.start);
     // 1.5) 清理被掏空的孤立 `- insert:` 空块
-    lines = lines.filter((line, idx) => {
-      if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
-      let k = idx + 1;
-      while (k < lines.length && (lines[k] ?? '').trim() === '') k += 1;
-      return k < lines.length && /^[ \t]+- /.test(lines[k] ?? '');
-    });
+    lines = removeEmptyInsertBlocks(lines);
     // 2) 顶层条目（缩进 0-2）：存在则确保 disabled: true；不存在则追加
     const top = findEntryBlock(lines, id, 0, 2);
     if (top) {
@@ -155,12 +181,7 @@ export function removePluginFromPatch(text: string, id: string): string {
       lines.splice(block.start, block.end - block.start);
     }
   }
-  lines = lines.filter((line, idx) => {
-    if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
-    let k = idx + 1;
-    while (k < lines.length && (lines[k] ?? '').trim() === '') k += 1;
-    return k < lines.length && /^[ \t]+- /.test(lines[k] ?? '');
-  });
+  lines = removeEmptyInsertBlocks(lines);
   lines = lines.filter((l) => !new RegExp('# [^\\n]*关闭 ' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_.-])').test(l));
   return lines.join('\n');
 }

@@ -65,6 +65,7 @@ bridge.runClientUpdateFlow = runClientUpdateFlow;
 // App lifecycle（唯一留在入口的职责：单实例锁 + 退出清理）
 // ---------------------------------------------------------------------------
 
+let bootWindowReady = false;
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -139,10 +140,16 @@ if (!gotLock) {
   });
   // 关闭窗口后常驻托盘；托盘不存在时才随窗口退出。
   app.on('window-all-closed', () => {
+    // Linux 首次启动时，向导窗口会先关闭，随后 boot 才创建主窗口。这个短暂
+    // 的零窗口阶段不是用户退出，不能让 window-all-closed 中断启动链。
+    if (!bootWindowReady) return;
     if (!IS_WIN || !state.tray) app.quit();
   });
   app
     .whenReady()
-    .then(boot)
+    .then(async () => {
+      await boot();
+      bootWindowReady = true;
+    })
     .catch((err: unknown) => fatal('应用初始化失败', err));
 }

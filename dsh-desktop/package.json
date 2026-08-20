@@ -13,7 +13,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/bundle-preload.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prestart": "npm run build",
     "start": "electron .",

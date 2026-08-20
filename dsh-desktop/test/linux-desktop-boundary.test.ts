@@ -94,6 +94,8 @@ test('desktop source keeps Linux frameless, close-to-exit, and tray-free', () =>
   assert.match(windowSource, /state\.forceQuit \|\| !IS_WIN \|\| !state\.tray/);
   assert.match(traySource, /createTray\(\): void \{\s*if \(!IS_WIN\) return/);
   assert.match(traySource, /trayHintOnce\(\): void \{\s*if \(!IS_WIN/);
+  assert.match(mainSource, /window-all-closed[\s\S]*if \(!bootWindowReady\) return/);
+  assert.match(mainSource, /await boot\(\);\s*bootWindowReady = true/);
   assert.match(mainSource, /if \(!IS_WIN \|\| !state\.tray\) app\.quit\(\)/);
 });
 

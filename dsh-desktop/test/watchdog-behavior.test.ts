@@ -82,7 +82,7 @@ test('watched pid alive → stays quiet', async () => {
   assert.ok(!log.includes('gone without clean-exit'), 'must not detect death');
 });
 
-test('pid gone without marker → relaunches the exe, then stops at the restart cap', async () => {
+test('pid gone without marker → relaunches the exe, then stops at the restart cap', { skip: process.platform !== 'win32' }, async () => {
   const dir = tmp();
   const state = join(dir, 'run-state.json');
   writeFileSync(state, JSON.stringify({ pid: 999999, cleanExit: false }));

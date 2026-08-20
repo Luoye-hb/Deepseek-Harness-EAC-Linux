@@ -22,6 +22,7 @@ const { ExtensionHostManager } = require(join(root, 'lib', 'extension-host', 'ma
 
 function freshHome() {
   const home = mkdtempSync(join(tmpdir(), 'sdktest-'));
+  process.env.DSH_HOME = home;
   stateMod.state.dshHome = home;
   return home;
 }

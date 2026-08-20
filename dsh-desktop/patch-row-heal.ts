@@ -125,14 +125,34 @@ export function healRowConfig(patch: string, id: string, config: Record<string, 
   if (typeof patch !== 'string' || patch === '' || !id || !config) return { patch, healed };
   const normalized = normalizeRowConfigIndent(patch, id);
   if (normalized !== patch) healed.push(id);
-  const p = normalized;
-  const rowRe = new RegExp(
-    `(^[\\t ]*- id: ${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_.-])[^\\n]*\\n[\\t ]*name: ['"]?[^'"\\n]+['"]?\\n)(?![\\t ]*config:)`,
-    'gm',
-  );
-  const out = p.replace(rowRe, (m) => m + configLinesFor(config, ((m.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length));
-  if (out !== p) healed.push(id);
-  return { patch: out, healed };
+  const escapedId = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rowRe = new RegExp(`^[\\t ]*- id: ${escapedId}(?![A-Za-z0-9_.-])`);
+  const lines = normalized.split(/\r?\n/);
+  let changed = false;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i] as string;
+    if (!rowRe.test(line)) continue;
+    const baseIndent = ((line.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length;
+    let end = i + 1;
+    while (end < lines.length) {
+      const current = lines[end] as string;
+      if (current.trim() === '' || /^\s*#/.test(current)) {
+        end += 1;
+        continue;
+      }
+      const indent = ((current.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length;
+      if (indent <= baseIndent) break;
+      end += 1;
+    }
+    if (lines.slice(i + 1, end).some((current) => /^\s*config\s*:/.test(current))) continue;
+    const nameOffset = lines.slice(i + 1, end).findIndex((current) => /^\s*name\s*:/.test(current));
+    if (nameOffset === -1) continue;
+    const configLines = configLinesFor(config, baseIndent).trimEnd().split('\n');
+    lines.splice(i + 1 + nameOffset + 1, 0, ...configLines);
+    changed = true;
+  }
+  if (changed) healed.push(id);
+  return { patch: changed ? lines.join('\n') : normalized, healed };
 }
 
 /**

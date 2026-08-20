@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { togglePluginInPatch, removePluginFromPatch, hasEntryId } from '../scripts/plugin-manager-patch.js';
 
+test('standalone empty YAML sequence becomes a valid list before disabling a plugin', () => {
+  const result = togglePluginInPatch('[]\n', 'example', false, 'example-package');
+  assert.doesNotMatch(result, /^\s*\[\]/);
+  assert.match(result, /- id: example\n  name: 'example-package'\n  disabled: true/);
+});
+
 // EAC 重写后的回归：上游正则版会吞掉目标条目之后的兄弟条目（数据丢失）。
 test('禁用中位条目不吞兄弟条目（上游 bug 回归）', () => {
   const t = '- insert:\n    - id: first\n      name: a\n    - id: navbar\n      name: n\n    - id: last\n      name: c\n';

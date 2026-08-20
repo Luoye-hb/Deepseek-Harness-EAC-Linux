@@ -61,6 +61,15 @@ test('afterPack is cross-platform and Windows path surgery stays guarded', () =>
   assert.match(source, /mandatory .* is missing/);
 });
 
+test('Koffi runtime probe loads the platform system library', () => {
+  const source = readFileSync(join(root, 'scripts', 'koffi-preflight.cjs'), 'utf8');
+  assert.match(source, /process\.platform === 'win32'/);
+  assert.match(source, /kernel32\.dll/);
+  assert.match(source, /libc\.so\.6/);
+  assert.match(source, /GetCurrentProcessId/);
+  assert.match(source, /getpid/);
+});
+
 test('GLIBC checker parses versions, compares numerically, and fails closed', () => {
   const checker = localRequire(join(root, 'scripts', 'check-glibc.cjs')) as {
     compareVersion(a: number[], b: number[]): number;

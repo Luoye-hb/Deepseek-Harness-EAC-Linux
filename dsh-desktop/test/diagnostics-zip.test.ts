@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -97,9 +97,13 @@ function setupFakeHome() {
   return { fake, logsDir, userData, dshHome, profileDir, backupDir };
 }
 
-// Extract zip via PowerShell + .NET ZipFile (Windows built-in, no extra module)
+// Extract with the platform's packaging prerequisite.
 function extractZip(zipPath, outDir) {
   fs.mkdirSync(outDir, { recursive: true });
+  if (process.platform !== 'win32') {
+    execFileSync('bsdtar', ['-xf', zipPath, '-C', outDir], { stdio: 'pipe', timeout: 60000 });
+    return;
+  }
   const ps = [
     `$ErrorActionPreference = 'Stop'`,
     `Add-Type -AssemblyName System.IO.Compression.FileSystem`,

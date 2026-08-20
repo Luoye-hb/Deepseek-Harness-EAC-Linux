@@ -72,6 +72,17 @@ test('preload.js 必须在打包清单中（窗口上下文桥）', () => {
   assert.ok(patterns.includes('preload.js'));
 });
 
+test('preload.js is bundled for Electron sandbox compatibility', () => {
+  const packageJson = JSON.parse(fs.readFileSync(join(root, 'package.json'), 'utf8'));
+  const preload = fs.readFileSync(join(root, 'preload.js'), 'utf8');
+  assert.match(packageJson.scripts.build, /bundle-preload\.js/);
+  assert.match(preload, /__dshPreloadModules/);
+  assert.match(preload, /specifier === '\.\/preload\/api\.js'/);
+  assert.match(preload, /specifier === '\.\/preload\/chrome\.js'/);
+  const windowSource = fs.readFileSync(join(root, 'lib', 'window.ts'), 'utf8');
+  assert.match(windowSource, /sandbox:\s*true/);
+});
+
 // Task 14：上述两个测试只覆盖 main.js 的「直接」require。Task 6 门面化把
 // logger/client-updater/plugin-guard 拆进了 lib/ 子目录，门面在清单里面、
 // 实现文件却不在 —— 启动照样闪退。本测试从 main.js / host-bootstrap.js /

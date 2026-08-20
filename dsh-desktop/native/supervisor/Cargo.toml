@@ -13,6 +13,9 @@ napi = { version = "3", default-features = false, features = ["napi8"] }
 napi-derive = "3"
 sha2 = "0.10"
 
+[target.'cfg(not(windows))'.dependencies]
+napi = { version = "3", default-features = false, features = ["napi8", "dyn-symbols"] }
+
 [build-dependencies]
 napi-build = "2"
 

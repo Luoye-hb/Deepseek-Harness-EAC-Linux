@@ -30,8 +30,20 @@ export function createSnapshotDomain(ctx: GuardCtx): SnapshotDomain {
       const dir = ctx.profileDir();
       if (!fs.existsSync(dir)) return null;
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
-      const dest = path.join(ctx.rollbacksDir(), stamp);
-      fs.mkdirSync(dest, { recursive: true });
+      const root = ctx.rollbacksDir();
+      fs.mkdirSync(root, { recursive: true });
+      let id = stamp;
+      let dest = path.join(root, id);
+      for (let suffix = 1; ; suffix += 1) {
+        try {
+          fs.mkdirSync(dest);
+          break;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+          id = `${stamp}-${String(suffix).padStart(3, '0')}`;
+          dest = path.join(root, id);
+        }
+      }
       const files: string[] = [];
       const rows: string[] = [];
       for (const name of GUARD_FILES) {
@@ -44,7 +56,7 @@ export function createSnapshotDomain(ctx: GuardCtx): SnapshotDomain {
         }
       }
       const meta: SnapshotMeta = {
-        id: stamp,
+        id,
         reason: String(reason || 'manual'),
         at: new Date().toISOString(),
         files,
@@ -52,7 +64,7 @@ export function createSnapshotDomain(ctx: GuardCtx): SnapshotDomain {
       };
       writeJson(path.join(dest, 'meta.json'), meta);
       pruneSnapshots();
-      ctx.log('guard', `已创建快照 ${stamp}（${reason}，${files.length} 个文件，${rows.length} 个插件行）`);
+      ctx.log('guard', `已创建快照 ${id}（${reason}，${files.length} 个文件，${rows.length} 个插件行）`);
       return meta;
     } catch (err) {
       ctx.log('guard', '创建快照失败: ' + String((err as Error).message));
