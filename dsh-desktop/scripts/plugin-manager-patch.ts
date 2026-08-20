@@ -22,20 +22,28 @@
 const ID_RE = /^[A-Za-z0-9_.-]+$/;
 
 /** YAML 单引号串转义：单引号加倍（''）。 */
-function yamlQuote(s) {
+function yamlQuote(s: string): string {
   return "'" + String(s).replace(/'/g, "''") + "'";
 }
 
 const LEADING = /^([ \t]*)(.*)$/;
 
 /** 行是否是指定 id 的条目起始行；返回缩进宽度，否则 null。indentLo/Hi 限定层级。 */
-function entryIndentOf(line, id, indentLo, indentHi) {
+function entryIndentOf(line: string, id: string, indentLo: number, indentHi: number): number | null {
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const m = new RegExp('^- id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').exec(line.replace(/^[ \t]+/, ''));
   if (!m) return null;
-  const ind = LEADING.exec(line)[1].length;
+  const lead = LEADING.exec(line);
+  const ind = lead?.[1]?.length ?? -1;
   if (ind < indentLo || ind > indentHi) return null;
   return ind;
+}
+
+/** 定位到的条目块（end 为独占下界）。 */
+interface EntryBlock {
+  start: number;
+  end: number;
+  indent: number;
 }
 
 /**
@@ -43,13 +51,15 @@ function entryIndentOf(line, id, indentLo, indentHi) {
  * 返回 { start, end, indent }（end 为独占下界）：块 = 起始行 + 其后所有
  * 缩进比起始行更深的非空行（空行视为块结束，保守不吞）。
  */
-function findEntryBlock(lines, id, indentLo, indentHi) {
+function findEntryBlock(lines: string[], id: string, indentLo: number, indentHi: number): EntryBlock | null {
   for (let i = 0; i < lines.length; i++) {
-    const ind = entryIndentOf(lines[i], id, indentLo, indentHi);
+    const ind = entryIndentOf(lines[i] ?? '', id, indentLo, indentHi);
     if (ind === null) continue;
     let j = i + 1;
     while (j < lines.length) {
-      const [, ws, rest] = LEADING.exec(lines[j]);
+      const m = LEADING.exec(lines[j] ?? '');
+      const ws = m?.[1] ?? '';
+      const rest = m?.[2] ?? '';
       if (!rest) break; // 空行：块结束
       if (ws.length <= ind) break; // 兄弟条目或外层结构：块结束
       j += 1;
@@ -59,22 +69,22 @@ function findEntryBlock(lines, id, indentLo, indentHi) {
   return null;
 }
 
-/** 块内属性行（缩进 > 条目缩进）里第一个匹配 /^[ \t]*key\s*:/ 的行下标。 */
-function findPropLine(lines, block, keyRe) {
+/** 块内属性行（缩进 > 条目缩进）里第一个匹配 keyRe 的行下标。 */
+function findPropLine(lines: string[], block: EntryBlock, keyRe: RegExp): number {
   for (let i = block.start + 1; i < block.end; i++) {
-    if (keyRe.test(lines[i])) return i;
+    if (keyRe.test(lines[i] ?? '')) return i;
   }
   return -1;
 }
 
 /**
- * @param {string} text    patch 文件全文
- * @param {string} id      条目 id（白名单字符集）
- * @param {boolean} enabled true=启用（移除 disabled 覆盖），false=关闭
- * @param {string} [name]  包名（关闭时顶层条目需要）
- * @returns {string} 手术后的全文
+ * 在 patch 文本中切换某插件的用户层 disabled 状态。
+ * @param text    patch 文件全文
+ * @param id      条目 id（白名单字符集）
+ * @param enabled true=启用（移除 disabled 覆盖），false=关闭
+ * @param name    包名（关闭时顶层条目需要；缺省回落 id）
  */
-function togglePluginInPatch(text, id, enabled, name) {
+export function togglePluginInPatch(text: string, id: string, enabled: boolean, name?: string): string {
   if (typeof text !== 'string') throw new TypeError('text must be a string');
   if (typeof id !== 'string' || !id) throw new TypeError('id must be a non-empty string');
   if (!ID_RE.test(id)) throw new TypeError('id 含非法字符（仅允许字母/数字/下划线/点/连字符）: ' + id);
@@ -86,14 +96,14 @@ function togglePluginInPatch(text, id, enabled, name) {
 
   if (!enabled) {
     // 1) 从 insert 块内移除内层条目（缩进 >= 1 视为内层；同一 id 只留一个登记点）
-    let inner = findEntryBlock(lines, id, 1, Infinity);
+    const inner = findEntryBlock(lines, id, 1, Infinity);
     if (inner) lines.splice(inner.start, inner.end - inner.start);
     // 1.5) 清理被掏空的孤立 `- insert:` 空块
     lines = lines.filter((line, idx) => {
       if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
       let k = idx + 1;
-      while (k < lines.length && lines[k].trim() === '') k += 1;
-      return k < lines.length && /^[ \t]+- /.test(lines[k]);
+      while (k < lines.length && (lines[k] ?? '').trim() === '') k += 1;
+      return k < lines.length && /^[ \t]+- /.test(lines[k] ?? '');
     });
     // 2) 顶层条目（缩进 0-2）：存在则确保 disabled: true；不存在则追加
     const top = findEntryBlock(lines, id, 0, 2);
@@ -106,7 +116,7 @@ function togglePluginInPatch(text, id, enabled, name) {
     } else {
       // 追加前先清掉历史遗留的标记注释（避免反复开关时注释堆积）
       lines = lines.filter((l) => !new RegExp('# [^\\n]*关闭 ' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_.-])').test(l));
-      while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+      while (lines.length && (lines[lines.length - 1] ?? '').trim() === '') lines.pop();
       lines.push('', '# 插件管理（设置页「插件」栏）：关闭 ' + id, '- id: ' + id, '  name: ' + yamlQuote(pkgName), '  disabled: true');
     }
     return lines.join('\n');
@@ -114,7 +124,7 @@ function togglePluginInPatch(text, id, enabled, name) {
 
   // 启用：insert 内层条目与顶层条目都移除 disabled 属性行；顶层无 config
   // 时保留裸条目 {id, name}（见文件头说明）；标记注释仍清理。
-  for (const range of [[1, Infinity], [0, 2]]) {
+  for (const range of [[1, Infinity], [0, 2]] as const) {
     for (;;) {
       const block = findEntryBlock(lines, id, range[0], range[1]);
       if (!block) break;
@@ -132,13 +142,13 @@ function togglePluginInPatch(text, id, enabled, name) {
  * 条目（缩进 >=1）+ 关闭标记注释；顺带清理被掏空的孤立 `- insert:` 空块。
  * 用于「移除内置插件」（区别于 toggle 的禁用——移除后 sync 不再写回该行）。
  */
-function removePluginFromPatch(text, id) {
+export function removePluginFromPatch(text: string, id: string): string {
   if (typeof text !== 'string') throw new TypeError('text must be a string');
   if (typeof id !== 'string' || !id) throw new TypeError('id must be a non-empty string');
   if (!ID_RE.test(id)) throw new TypeError('id 含非法字符（仅允许字母/数字/下划线/点/连字符）: ' + id);
   let lines = text.split('\n');
   // 先删内层（insert 块内），再删顶层；同一 id 的所有登记点都移除
-  for (const range of [[1, Infinity], [0, 2]]) {
+  for (const range of [[1, Infinity], [0, 2]] as const) {
     for (;;) {
       const block = findEntryBlock(lines, id, range[0], range[1]);
       if (!block) break;
@@ -148,8 +158,8 @@ function removePluginFromPatch(text, id) {
   lines = lines.filter((line, idx) => {
     if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
     let k = idx + 1;
-    while (k < lines.length && lines[k].trim() === '') k += 1;
-    return k < lines.length && /^[ \t]+- /.test(lines[k]);
+    while (k < lines.length && (lines[k] ?? '').trim() === '') k += 1;
+    return k < lines.length && /^[ \t]+- /.test(lines[k] ?? '');
   });
   lines = lines.filter((l) => !new RegExp('# [^\\n]*关闭 ' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![A-Za-z0-9_.-])').test(l));
   return lines.join('\n');
@@ -161,10 +171,8 @@ function removePluginFromPatch(text, id) {
  * 负向断言 (?![A-Za-z0-9_.-]) 防止前缀误匹配：dsh-pet 不得命中
  * `- id: dsh-pet-settings` 这类兄弟条目（旧 `\b` 词边界会命中）。
  */
-function hasEntryId(text, id) {
+export function hasEntryId(text: string, id: string): boolean {
   if (typeof text !== 'string' || !text || typeof id !== 'string' || !id) return false;
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp('id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').test(text);
 }
-
-module.exports = { togglePluginInPatch, removePluginFromPatch, hasEntryId };

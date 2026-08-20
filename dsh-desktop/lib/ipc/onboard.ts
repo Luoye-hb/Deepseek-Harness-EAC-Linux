@@ -40,13 +40,13 @@ export function registerOnboardIpc(): void {
     // 首次向导时 sync 尚未运行、profile 目录可能还不存在：先按官方模板初始化
     // （package.json / pnpm-workspace.yaml / 空 patch 层），否则写盘 ENOENT。
     ensureDesktopProfileInit();
-    const want = onboardingLogic.sanitizeSelection(ids, COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS) as Set<string>;
+    const want = onboardingLogic.sanitizeSelection(ids, COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS);
     // 首次：patch 行尚未写全，normalize 全部非核心插件（current=null）；
     // 二次：只切换与用户选择不同的插件。
     const current = state.wizardMode === 'rerun' ? pluginCurrentState() : null;
     const ops = onboardingLogic.buildSelectionOps(
       COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS, want, current,
-    ) as { id: string; enable: boolean }[];
+    );
     const errors: string[] = [];
     for (const op of ops) {
       try {

@@ -24,13 +24,13 @@
 //
 // 用法：
 //   node scripts/patch-session-manage.js [<node_modules 根目录>]
-// 同时导出 patchSessionManage(nmRoot, log) 供 main.js 启动补丁与 after-pack.js
+// 同时导出 patchSessionManage(nmRoot, log) 供启动补丁与 after-pack.js
 // 打包补丁复用（覆盖内置副本 / profile fallback / agent overlay / dev）。
 
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const MARKER = 'dsh-desktop patch (session manage)';
+export const MARKER = 'dsh-desktop patch (session manage)';
 
 // ---------------------------------------------------------------------------
 // 1. dsh-workspace：unarchiveSession
@@ -56,7 +56,7 @@ const HOST_IMPORT_JOIN_ANCHOR = 'import { dirname, extname } from "node:path";';
 const HOST_IMPORT_JOIN_NEW = 'import { dirname, extname, join } from "node:path";';
 
 const HOST_API_ANCHOR = 'return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t}';
-const HOST_API_INSERT = 'return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t},\n\t\t\tasync unarchiveSession(request) {\n\t\t\t\tconst { sessionId } = request.payload;\n\t\t\t\tawait ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\t\t\treturn ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t},\n\t\t\tasync deleteSession(request) {\n\t\t\t\tconst { sessionId } = request.payload;\n\t\t\t\t// 拒绝「正在运行」的会话（agent 活跃时写路径会重建目录，删除不安全）。\n\t\t\t\tif (dshSessionRunningState.get(sessionId) === true) {\n\t\t\t\t\treturn err(request, {\n\t\t\t\t\t\tcode: "session-running",\n\t\t\t\t\t\tmessage: "cannot delete a running session: stop it first",\n\t\t\t\t\t\tdetails: { sessionId }\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\ttry {\n\t\t\t\t\t// 会话目录布局（dsh-session-persistence-jsonl 约定，注入时同步复制）：\n\t\t\t\t\t// <sessionsRoot>/<projectKey(cwd)>/<encodeSegment(id)>/ 。\n\t\t\t\t\tconst headers = await ctx.get("sessionPersistence").list();\n\t\t\t\t\tconst header = headers.find((entry) => entry && entry.id === sessionId);\n\t\t\t\t\tif (header !== void 0) {\n\t\t\t\t\t\tconst encodeSeg = (raw) => {\n\t\t\t\t\t\t\tif (raw === ".") return "~002E";\n\t\t\t\t\t\t\tif (raw === "..") return "~002E~002E";\n\t\t\t\t\t\t\tlet out = "";\n\t\t\t\t\t\t\tfor (let i = 0; i < raw.length; i++) {\n\t\t\t\t\t\t\t\tconst code = raw.charCodeAt(i);\n\t\t\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\t\t\tif (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) out += ch;\n\t\t\t\t\t\t\t\telse out += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn out;\n\t\t\t\t\t\t};\n\t\t\t\t\t\tconst projectKeyOf = (cwd) => {\n\t\t\t\t\t\t\tlet readable = "";\n\t\t\t\t\t\t\tlet separatorRun = false;\n\t\t\t\t\t\t\tfor (let i = 0; i < cwd.length; i++) {\n\t\t\t\t\t\t\t\tconst code = cwd.charCodeAt(i);\n\t\t\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\t\t\tif (ch === "/" || ch === "\\\\" || ch === ":") {\n\t\t\t\t\t\t\t\t\tif (!separatorRun) readable += "-";\n\t\t\t\t\t\t\t\t\tseparatorRun = true;\n\t\t\t\t\t\t\t\t} else if (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) {\n\t\t\t\t\t\t\t\t\treadable += ch;\n\t\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\t\t\treadable += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn `--${(readable.replace(/^-+/, "") || "root").slice(0, 251)}--`;\n\t\t\t\t\t\t};\n\t\t\t\t\t\tconst root = dshHomePath("sessions");\n\t\t\t\t\t\tconst dir = join(root, header.cwd === void 0 ? "_no-cwd" : projectKeyOf(header.cwd), encodeSeg(sessionId));\n\t\t\t\t\t\tawait rm(dir, { recursive: true, force: true });\n\t\t\t\t\t}\n\t\t\t\t} catch (error) {\n\t\t\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t\t\t}\n\t\t\t\t// 摘除 live 注册表（优雅 flush + 释放持久化状态 + session/disposed\n\t\t\t\t// 广播 → 客户端实时收到 session-removed）；非 live 则广播合成移除帧。\n\t\t\t\tconst removed = ctx.sessions.remove(sessionId);\n\t\t\t\tif (!removed) ctx.emit("session/disposed", { id: sessionId });\n\t\t\t\t// 清理归档集合（含陈旧归档项）。\n\t\t\t\tawait ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\t\t\treturn ok(request, { deleted: true });\n\t\t\t}';
+const HOST_API_INSERT = 'return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t},\n\t\t\tasync unarchiveSession(request) {\n\t\t\t\tconst { sessionId } = request.payload;\n\t\t\t\tawait ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\t\t\treturn ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t},\n\t\t\tasync deleteSession(request) {\n\t\t\t\tconst { sessionId } = request.payload;\n\t\t\t\t// 拒绝「正在运行」的会话（agent 活跃时写路径会重建目录，删除不安全）。\n\t\t\t\tif (dshSessionRunningState.get(sessionId) === true) {\n\t\t\t\t\treturn err(request, {\n\t\t\t\t\t\tcode: "session-running",\n\t\t\t\t\t\tmessage: "cannot delete a running session: stop it first",\n\t\t\t\t\t\t\tdetails: { sessionId }\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\ttry {\n\t\t\t\t\t// 会话目录布局（dsh-session-persistence-jsonl 约定，注入时同步复制）：\n\t\t\t\t\t// <sessionsRoot>/<projectKey(cwd)>/<encodeSegment(id)>/ 。\n\t\t\t\t\tconst headers = await ctx.get("sessionPersistence").list();\n\t\t\t\t\tconst header = headers.find((entry) => entry && entry.id === sessionId);\n\t\t\t\t\tif (header !== void 0) {\n\t\t\t\t\t\tconst encodeSeg = (raw) => {\n\t\t\t\t\t\t\tif (raw === ".") return "~002E";\n\t\t\t\t\t\t\tif (raw === "..") return "~002E~002E";\n\t\t\t\t\t\t\tlet out = "";\n\t\t\t\t\t\t\tfor (let i = 0; i < raw.length; i++) {\n\t\t\t\t\t\t\t\tconst code = raw.charCodeAt(i);\n\t\t\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\t\t\tif (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) out += ch;\n\t\t\t\t\t\t\t\telse out += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn out;\n\t\t\t\t\t\t};\n\t\t\t\t\t\tconst projectKeyOf = (cwd) => {\n\t\t\t\t\t\t\tlet readable = "";\n\t\t\t\t\t\t\tlet separatorRun = false;\n\t\t\t\t\t\t\tfor (let i = 0; i < cwd.length; i++) {\n\t\t\t\t\t\t\t\tconst code = cwd.charCodeAt(i);\n\t\t\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\t\t\tif (ch === "/" || ch === "\\\\" || ch === ":") {\n\t\t\t\t\t\t\t\t\tif (!separatorRun) readable += "-";\n\t\t\t\t\t\t\t\t\tseparatorRun = true;\n\t\t\t\t\t\t\t\t} else if (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) {\n\t\t\t\t\t\t\t\t\treadable += ch;\n\t\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\t\t\treadable += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn `--${(readable.replace(/^-+/, "") || "root").slice(0, 251)}--`;\n\t\t\t\t\t\t};\n\t\t\t\t\t\tconst root = dshHomePath("sessions");\n\t\t\t\t\t\tconst dir = join(root, header.cwd === void 0 ? "_no-cwd" : projectKeyOf(header.cwd), encodeSeg(sessionId));\n\t\t\t\t\t\tawait rm(dir, { recursive: true, force: true });\n\t\t\t\t\t}\n\t\t\t\t} catch (error) {\n\t\t\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t\t\t}\n\t\t\t\t// 摘除 live 注册表（优雅 flush + 释放持久化状态 + session/disposed\n\t\t\t\t// 广播 → 客户端实时收到 session-removed）；非 live 则广播合成移除帧。\n\t\t\t\tconst removed = ctx.sessions.remove(sessionId);\n\t\t\t\tif (!removed) ctx.emit("session/disposed", { id: sessionId });\n\t\t\t\t// 清理归档集合（含陈旧归档项）。\n\t\t\t\tawait ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\t\t\treturn ok(request, { deleted: true });\n\t\t\t}';
 
 // 模块级：每会话最近一次 agent 运行状态（删除守卫用；agent/status 事件维护）。
 const HOST_MAP_ANCHOR = 'import { release } from "node:os";';
@@ -105,12 +105,23 @@ const UI_EN_INSERT = '"menu.archiveSession": "Archive session",\n\t\t\t"menu.del
 // ---------------------------------------------------------------------------
 // 工具：在文件中做「锚点必须存在 + 标记幂等」的替换
 // ---------------------------------------------------------------------------
-function applyReplacements(file, replacements, upgradeRules, log) {
-  let src;
+interface Replacement {
+  anchor: string;
+  insert: string;
+}
+
+interface PatchTarget {
+  file: string;
+  replacements: Replacement[];
+  upgradeRules?: Replacement[];
+}
+
+function applyReplacements(file: string, replacements: Replacement[], upgradeRules: Replacement[], log: (msg: string) => void): boolean {
+  let src: string;
   try {
     src = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    log('session-manage 补丁: 读取失败 ' + file + ': ' + err.message);
+    log('session-manage 补丁: 读取失败 ' + file + ': ' + String((err as Error).message));
     return false;
   }
   if (src.includes(MARKER)) {
@@ -129,7 +140,7 @@ function applyReplacements(file, replacements, upgradeRules, log) {
         log('session-manage 补丁: 已升级 ' + file);
         return true;
       } catch (err) {
-        log('session-manage 补丁: 升级写入失败 ' + file + ': ' + err.message);
+        log('session-manage 补丁: 升级写入失败 ' + file + ': ' + String((err as Error).message));
         return false;
       }
     }
@@ -149,19 +160,19 @@ function applyReplacements(file, replacements, upgradeRules, log) {
     log('session-manage 补丁: 已应用 ' + file);
     return true;
   } catch (err) {
-    log('session-manage 补丁: 写入失败 ' + file + ': ' + err.message);
+    log('session-manage 补丁: 写入失败 ' + file + ': ' + String((err as Error).message));
     return false;
   }
 }
 
 /**
  * 对某个 node_modules 根目录应用对话删除/归档管理补丁（幂等）。
- * @param {string} nmRoot node_modules 根目录
- * @param {(msg: string) => void} [log]
- * @returns {number} 实际发生修改的文件数
+ * @param nmRoot node_modules 根目录
+ * @param log    日志回调（缺省静默）
+ * @returns 实际发生修改的文件数
  */
-function patchSessionManage(nmRoot, log = () => {}) {
-  const targets = [
+export function patchSessionManage(nmRoot: string, log: (msg: string) => void = () => {}): number {
+  const targets: PatchTarget[] = [
     {
       file: path.join(nmRoot, '@deepseek-ai', 'dsh-workspace', 'lib', 'index.js'),
       replacements: [{ anchor: WS_ANCHOR, insert: WS_ANCHOR + '\n' + WS_INSERT }],
@@ -206,12 +217,10 @@ function patchSessionManage(nmRoot, log = () => {}) {
   let changed = 0;
   for (const t of targets) {
     if (!fs.existsSync(t.file)) continue;
-    if (applyReplacements(t.file, t.replacements, t.upgradeRules || [], log)) changed += 1;
+    if (applyReplacements(t.file, t.replacements, t.upgradeRules ?? [], log)) changed += 1;
   }
   return changed;
 }
-
-module.exports = { patchSessionManage, MARKER };
 
 if (require.main === module) {
   const root = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '..', 'node_modules');

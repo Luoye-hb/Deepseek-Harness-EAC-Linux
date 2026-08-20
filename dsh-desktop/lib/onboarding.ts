@@ -64,7 +64,7 @@ function pluginDirSize(dirName: string): number {
 }
 
 // 向导目录：核心/推荐标记 + 描述 + 包体积（数据来源与 sync 保持一致）。
-export function buildOnboardingCatalog(): unknown {
+export function buildOnboardingCatalog(): onboardingLogic.CatalogEntry[] {
   return onboardingLogic.buildCatalog(COMPANION_PLUGINS, {
     coreIds: onboardingLogic.CORE_PLUGIN_IDS,
     recommendedIds: onboardingLogic.RECOMMENDED_PLUGIN_IDS,
@@ -74,7 +74,7 @@ export function buildOnboardingCatalog(): unknown {
 }
 
 // patch + 注册表 → 各内置插件当前启用状态（rerun 模式预填勾选用）。
-export function pluginCurrentState(): unknown {
+export function pluginCurrentState(): Record<string, boolean> {
   const { entries } = pluginManagerReadPatch();
   return onboardingLogic.pluginCurrentState(entries, COMPANION_PLUGINS);
 }

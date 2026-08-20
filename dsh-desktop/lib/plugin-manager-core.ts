@@ -12,7 +12,7 @@ import * as os from 'node:os';
 import * as updater from '../updater.js';
 import { togglePluginInPatch, removePluginFromPatch, hasEntryId } from '../scripts/plugin-manager-patch.js';
 import { collectPluginRows } from '../plugin-manager-state.js';
-import { CORE_PLUGIN_IDS } from '../scripts/onboarding.js';
+import { CORE_PLUGIN_IDS, type PatchEntry } from '../scripts/onboarding.js';
 import { configLinesFor } from '../patch-row-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
@@ -55,7 +55,7 @@ function loadDshYamlDialect(): { load(content: string): unknown } | null {
 export function pluginManagerReadPatch(): {
   file: string;
   text: string;
-  entries: unknown[];
+  entries: PatchEntry[];
 } {
   const file = path.join(desktopProfileDir(), 'cordis.patch.yml');
   let text = '';
@@ -68,7 +68,7 @@ export function pluginManagerReadPatch(): {
   if (!yaml) return { file, text, entries: [] };
   try {
     const parsed = yaml.load(text);
-    return { file, text, entries: Array.isArray(parsed) ? (parsed as unknown[]) : [] };
+    return { file, text, entries: Array.isArray(parsed) ? (parsed as PatchEntry[]) : [] };
   } catch {
     return { file, text, entries: [] };
   }
