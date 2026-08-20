@@ -8,14 +8,14 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { patchSessionManage } from '../scripts/patch-session-manage.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 
 /** 三个运行副本的 node_modules 根（补丁落点）。 */
 export function runtimePatchRoots(): string[] {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return [
     path.join(home, 'profiles', 'node_modules'),
     path.join(__dirname, '..', 'node_modules'),

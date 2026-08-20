@@ -8,8 +8,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { state } from '../state.js';
+import { dshHomePath } from '../dsh-home.js';
 import { log } from '../log.js';
 
 /** 单条事故记录。 */
@@ -25,7 +25,7 @@ export interface Incident {
 
 /** 事故目录根（<dshHome>/extensions/incidents）。 */
 function incidentsRoot(): string {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return path.join(home, 'extensions', 'incidents');
 }
 

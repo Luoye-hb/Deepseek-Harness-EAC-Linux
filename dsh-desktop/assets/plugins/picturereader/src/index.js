@@ -40,7 +40,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 /** 扫描结果存储路径（独立文件，不干扰 settings.yaml 的用户配置）。 */
-const MODELS_CACHE = join(homedir(), '.dsh', 'picturereader-models.json');
+const DSH_HOME = (process.env.DSH_HOME || '').trim() || join(homedir(), '.dsh');
+const MODELS_CACHE = join(DSH_HOME, 'picturereader-models.json');
 
 export const name = 'picturereader';
 

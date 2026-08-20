@@ -19,6 +19,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { dshHomePath } from '../dsh-home.js';
 import { spawn } from 'node:child_process';
 import { isPortable } from './release.js';
 import type { ClientUpdCtx } from './types.js';
@@ -324,7 +325,7 @@ export function applyUpdate(
   const exeBase = path.basename(oldExe);
   const script = path.join(ctx.userDataDir, 'updates', 'apply-update.cmd');
   const userDataDir = (opts && opts.userDataDir) || ctx.userDataDir || '';
-  const dshHome = (opts && opts.dshHome) || process.env.DSH_HOME || '';
+  const dshHome = (opts && opts.dshHome) || dshHomePath();
   const installDir = (opts && opts.installDir) || path.dirname(oldExe);
   const profileDir = (opts && opts.profileDir) || '';
   const currentVersion = (opts && opts.currentVersion) || '';

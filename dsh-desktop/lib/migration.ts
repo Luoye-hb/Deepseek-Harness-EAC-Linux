@@ -13,6 +13,7 @@ import * as os from 'node:os';
 import { app } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { IS_WIN, updCtx } from './proc.js';
 import { DESKTOP_PROFILE, desktopProfileDir } from './paths.js';
@@ -57,7 +58,7 @@ export function migrateFromSharedWebProfile(): void {
     updater.saveSettings(updCtx(), s); // 先落标记：即使下面失败也不反复折腾
     if (s.shareWebProfile === true) return; // 用户显式选择共享模式
 
-    const home = state.dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     const oldDir = path.join(home, 'profiles', 'web');
     const marker = path.join(oldDir, '.dsh-builtin-plugins.json');
     if (!fs.existsSync(marker)) return; // 旧版本从没在共享 profile 跑过桌面端

@@ -8,19 +8,19 @@
  */
 
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { Notification } from 'electron';
 import * as updater from '../updater.js';
 import * as balance from '../balance.js';
 import type { BalanceResult, PriceEntry, TierPrice } from '../balance.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import type { AppState } from './state.js';
 import { log } from './log.js';
 import { updCtx } from './proc.js';
 
 /** 查询并加工余额/定价，结果推主窗并缓存（state.balanceCache）。 */
 export async function refreshBalance(): Promise<BalanceResult> {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   let result: BalanceResult;
   try {
     result = await balance.queryBalance(home);

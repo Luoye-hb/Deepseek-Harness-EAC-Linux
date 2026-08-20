@@ -13,7 +13,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { dshHomePath } from '../dsh-home.js';
 
 /** 快照覆盖的 profile 配置面：插件树的全部「声明性」状态。 */
 export const GUARD_FILES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'cordis.patch.yml'];
@@ -51,7 +51,7 @@ export function buildCtx(deps: GuardDeps): GuardCtx {
     ...deps,
     log,
     home(): string {
-      return deps.getHome() || path.join(os.homedir(), '.dsh');
+      return deps.getHome() || dshHomePath();
     },
     profileDir(): string {
       return path.join(this.home(), 'profiles', deps.getProfile());

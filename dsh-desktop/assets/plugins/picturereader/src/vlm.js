@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { getRuntimeConfig } from './runtime.js';
 
+const DSH_HOME = (process.env.DSH_HOME || '').trim() || join(homedir(), '.dsh');
+
 // ---------------------------------------------------------------------------
 // Configuration (environment variables first, then DSH settings.yaml fallback)
 // ---------------------------------------------------------------------------
@@ -25,7 +27,7 @@ import { getRuntimeConfig } from './runtime.js';
  */
 async function readDshToolVisionConfig() {
   try {
-    const settingsPath = join(homedir(), '.dsh', 'settings.yaml');
+    const settingsPath = join(DSH_HOME, 'settings.yaml');
     const content = await readFile(settingsPath, 'utf-8');
     // Simple YAML parsing for tool-vision section
     const lines = content.split('\n');
@@ -87,7 +89,7 @@ async function readDshToolVisionConfig() {
  */
 async function readDshPicturereaderConfig() {
   try {
-    const settingsPath = join(homedir(), '.dsh', 'settings.yaml');
+    const settingsPath = join(DSH_HOME, 'settings.yaml');
     const content = await readFile(settingsPath, 'utf-8');
     const lines = content.split('\n');
     let inNs = false;

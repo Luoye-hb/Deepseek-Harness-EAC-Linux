@@ -16,10 +16,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import type { ExtensionRecord } from '../../shared/protocol.js';
 import { state } from '../state.js';
+import { dshHomePath } from '../dsh-home.js';
 import { log } from '../log.js';
 import { readRegistry, writeRegistry } from './registry.js';
 import type { RegistryEntry } from './registry.js';
@@ -27,7 +27,7 @@ import { parsePermissions, requiresUserConsent, setGranted } from './permissions
 
 /** SDK 扩展目录根（<dshHome>/extensions）。 */
 export function extensionsRoot(): string {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return path.join(home, 'extensions');
 }
 

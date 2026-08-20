@@ -11,9 +11,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import type { ExtensionRegistry, ExtensionRecord, ExtensionRuntimeState } from '../../shared/protocol.js';
 import { state } from '../state.js';
+import { dshHomePath } from '../dsh-home.js';
 import { log } from '../log.js';
 
 /** 注册表 schema 版本（结构变更时 +1 并写迁移）。 */
@@ -21,7 +21,7 @@ const SCHEMA_VERSION = 1;
 
 /** 注册表文件路径（<dshHome>/extensions/registry.json）。 */
 export function registryPath(): string {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return path.join(home, 'extensions', 'registry.json');
 }
 

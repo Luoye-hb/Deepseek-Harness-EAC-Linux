@@ -6,9 +6,9 @@
  */
 
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { createGuard } from '../plugin-guard.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { desktopProfile } from './paths.js';
 import { dshBin } from './proc.js';
@@ -17,7 +17,7 @@ import { dshBin } from './proc.js';
 export function ensureGuard(): ReturnType<typeof createGuard> {
   if (!state.guardInstance) {
     state.guardInstance = createGuard({
-      getHome: () => state.dshHome || path.join(os.homedir(), '.dsh'),
+      getHome: dshHomePath,
       getProfile: () => desktopProfile(),
       dshBin: () => dshBin(),
       log,

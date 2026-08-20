@@ -11,7 +11,6 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { app, dialog, clipboard, Menu } from 'electron';
 import * as updater from '../updater.js';
 import * as structuredLogger from '../logger.js';
@@ -20,6 +19,7 @@ import type { BundleManifest } from '../bundle-integrity.js';
 import { SessionWatcher } from '../session-watcher.js';
 import { buildErrorDetail } from '../error-detail.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { updCtx, dshVersion, dshVersionSource } from './proc.js';
 import { desktopProfile } from './paths.js';
@@ -296,11 +296,10 @@ export async function boot(): Promise<void> {
 
   state.userDataDir = app.getPath('userData');
   state.logsDir = path.join(state.userDataDir, 'logs');
-  // DSH_HOME: respect an explicit override; otherwise let dsh use its own
-  // default (~/.dsh), so the desktop app shares config/sessions with the CLI.
-  state.dshHome = process.env.DSH_HOME || '';
+  // Resolve DSH_HOME once and pass the same absolute path to every subsystem.
+  state.dshHome = dshHomePath();
   fs.mkdirSync(state.logsDir, { recursive: true });
-  if (state.dshHome) fs.mkdirSync(state.dshHome, { recursive: true });
+  fs.mkdirSync(state.dshHome, { recursive: true });
   // 日志系统（AC-1：先 init，后 log() 调用，保证结构化 boot 行落到 main.00）
   try {
     structuredLogger.init({
@@ -318,7 +317,7 @@ export async function boot(): Promise<void> {
     }
   }
   state.desktopLog = fs.createWriteStream(path.join(state.logsDir, 'desktop.log'), { flags: 'a' });
-  log('boot', `Deepseek Harness EAC（封装 ${app.getVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
+  log('boot', `Deepseek Harness EAC（封装 ${app.getVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
   Menu.setApplicationMenu(null);
@@ -412,7 +411,7 @@ export async function boot(): Promise<void> {
       // effective DSH_HOME (same config the CLI uses).
       const s = updater.loadSettings(updCtx());
       state.notifyOnTurnEnd = s.notifyOnTurnEnd !== false;
-      const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+      const home = dshHomePath();
       state.sessionWatcher = new SessionWatcher({
         sessionsDir: path.join(home, 'sessions'),
         log,

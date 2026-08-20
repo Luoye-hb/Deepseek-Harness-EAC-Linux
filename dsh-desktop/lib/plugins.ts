@@ -8,7 +8,6 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { Notification } from 'electron';
 import { syncBundledPresets, ensureDefaultAgentPreset } from '../preset-sync.js';
 import { removeMarketDuplicate, patchHasForeignRows } from '../builtin-collision.js';
@@ -31,6 +30,7 @@ import { applyLegacySkinChoice } from './migration.js';
 import { artifactKeep } from './market-modules.js';
 import { profileDirFor, artifactCacheDirFor } from './paths.js';
 import { bridge } from './bridge.js';
+import { dshHomePath } from './dsh-home.js';
 
 /** 皮肤包目录：assets/skins/<id>/（完整 client 插件包，默认 disabled 注册）。 */
 export const SKINS_DIR = path.join(__dirname, '..', 'assets', 'skins');
@@ -40,7 +40,7 @@ export const SKINS_DIR = path.join(__dirname, '..', 'assets', 'skins');
 // 启动时清掉这些遮蔽拷贝，让解析回落到 junction —— 与宿主同源、全局单实例。
 export function healProfileModules(): void {
   try {
-    const home = state.dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     const removed = healProfileModuleShadowing(home, desktopProfile());
     if (removed.length)
       log('boot', '已清理 profile node_modules 中遮蔽安装闭包的包拷贝: ' + removed.join(', '));
@@ -90,7 +90,7 @@ export function syncBundledSkills(): void {
   try {
     const src = BUNDLED_SKILLS_DIR;
     if (!fs.existsSync(src)) return;
-    const destRoot = path.join(state.dshHome || path.join(os.homedir(), '.dsh'), 'skills');
+    const destRoot = path.join(dshHomePath(), 'skills');
     fs.mkdirSync(destRoot, { recursive: true });
     const installed: string[] = [];
     for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -120,7 +120,7 @@ export function syncCompanionPlugins(): void {
   const safeMode = process.env.DSH_DESKTOP_SAFE_MODE === '1';
   if (safeMode) log('boot', '安全模式：非核心外置插件将以禁用行登记');
   try {
-    const home = state.dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
     ensureDesktopProfileInit();
     // V4 运行时补丁（幂等）：对话删除/归档 —— dsh-session-manager 的前置依赖。

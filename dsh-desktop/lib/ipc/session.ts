@@ -14,6 +14,7 @@ import { ipcMain, shell } from 'electron';
 import * as updater from '../../updater.js';
 import * as balance from '../../balance.js';
 import { state } from '../state.js';
+import { dshHomePath } from '../dsh-home.js';
 import { log } from '../log.js';
 import { updCtx } from '../proc.js';
 import { DANGEROUS_EXT, isUnderFileRoots } from '../paths.js';
@@ -189,7 +190,7 @@ export function registerSessionIpc(): void {
     // 「设置 → Skills 与 MCP → 打开目录」需要放行；严格限定为两个根本身及其
     // 子路径（白名单，非任意路径），危险扩展名检查仍生效。
     const skillsRoots = [
-      path.join(state.dshHome || path.join(os.homedir(), '.dsh'), 'skills'),
+      path.join(dshHomePath(), 'skills'),
       path.join(process.env.DSH_AGENTS_HOME || path.join(os.homedir(), '.agents'), 'skills'),
     ];
     const underSkillsRoot = skillsRoots.some((r) => {

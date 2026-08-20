@@ -9,9 +9,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { nodeExe, dshBin } from './proc.js';
 import { desktopProfile, profileDirFor, artifactCacheDirFor } from './paths.js';
@@ -53,7 +53,7 @@ function removeMarkerFile(file: string): boolean {
 function pendingMarketMarkers(): { marker: string; job: MarketJob }[] {
   const out: { marker: string; job: MarketJob }[] = [];
   try {
-    const home = state.dshHome || path.join(os.homedir(), '.dsh');
+    const home = dshHomePath();
     const profilesRoot = path.join(home, 'profiles');
     if (!fs.existsSync(profilesRoot)) return out;
     for (const entry of fs.readdirSync(profilesRoot, { withFileTypes: true })) {

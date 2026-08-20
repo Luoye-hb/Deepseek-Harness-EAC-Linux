@@ -15,7 +15,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as http from 'node:http';
-import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { app, clipboard } from 'electron';
@@ -28,6 +27,7 @@ import {
   healSessionEncodingConflicts,
 } from '../session-encoding-heal.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { killTree, waitForProcExit, nodeExe, updCtx, dshBin } from './proc.js';
 import { desktopProfile, desktopProfileDir } from './paths.js';
@@ -407,7 +407,7 @@ export async function bootRescuePreRetry(
       }
     }
     if (isEncodingMismatch(text)) {
-      const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+      const home = dshHomePath();
       const archived = healSessionEncodingConflicts(path.join(home, 'sessions'), {
         compression: 'zstd',
         log,

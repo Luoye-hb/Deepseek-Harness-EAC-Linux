@@ -21,6 +21,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { dshHomePath } from '../lib/dsh-home.js';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import * as http from 'node:http';
 import * as crypto from 'node:crypto';
@@ -229,7 +230,7 @@ async function main(): Promise<void> {
   const home = path.join(root, 'dsh-home');
   fs.mkdirSync(home, { recursive: true });
   // 老用户数据（含真实凭据）：profiles 去 junction 根 + settings + key
-  const srcHome = path.join(os.homedir(), '.dsh');
+  const srcHome = dshHomePath();
   fs.mkdirSync(path.join(home, 'profiles'), { recursive: true });
   for (const e of fs.readdirSync(path.join(srcHome, 'profiles'), { withFileTypes: true })) {
     if (e.name === 'node_modules' || !e.isDirectory()) continue;

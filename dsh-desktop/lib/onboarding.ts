@@ -10,11 +10,11 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { BrowserWindow } from 'electron';
 import * as updater from '../updater.js';
 import * as onboardingLogic from '../scripts/onboarding.js';
 import { state } from './state.js';
+import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { IS_WIN, updCtx } from './proc.js';
 import { desktopProfileDir } from './paths.js';
@@ -163,7 +163,7 @@ export function computeOnboardingNeed(): boolean {
     settingsFileExists: fs.existsSync(updater.settingsPath(updCtx())),
     profileDirExists: fs.existsSync(path.join(desktopProfileDir(), 'node_modules')),
     sharedProfileExists: fs.existsSync(
-      path.join(state.dshHome || path.join(os.homedir(), '.dsh'), 'profiles', 'web'),
+      path.join(dshHomePath(), 'profiles', 'web'),
     ),
   });
 }

@@ -11,13 +11,13 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import * as zlib from 'node:zlib';
 import { scanZstdFrames } from '../session-watcher.js';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { updCtx } from './proc.js';
+import { dshHomePath } from './dsh-home.js';
 
 /**
  * 危险扩展名围栏：文件视图/还原入口拒绝可执行类文件（H2/H3 安全边界，
@@ -44,7 +44,7 @@ const fileRootsCache: { at: number; roots: string[] } = { at: 0, roots: [] };
  */
 export function fileRoots(): string[] {
   if (Date.now() - fileRootsCache.at < 5 * 60 * 1000) return fileRootsCache.roots;
-  const dshHome = process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh');
+  const dshHome = dshHomePath();
   const roots: string[] = [];
   const walk = (dir: string): void => {
     let entries;
@@ -115,7 +115,7 @@ export function desktopProfile(): string {
 
 /** 当前 profile 的目录（<dshHome>/profiles/<profile>）。 */
 export function desktopProfileDir(): string {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return path.join(home, 'profiles', desktopProfile());
 }
 
@@ -161,12 +161,12 @@ export function ensureDesktopProfileInit(): void {
 
 /** 任意 profile 名 → 其目录（供插件市场/缓存等按 profile 派生路径）。 */
 export function profileDirFor(profile: string): string {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return path.join(home, 'profiles', profile);
 }
 
 /** 任意 profile 名 → 其插件构建产物缓存目录。 */
 export function artifactCacheDirFor(profile: string): string {
-  const home = state.dshHome || path.join(os.homedir(), '.dsh');
+  const home = dshHomePath();
   return path.join(home, 'plugin-artifact-cache', profile);
 }

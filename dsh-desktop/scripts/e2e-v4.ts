@@ -19,6 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { dshHomePath } from '../lib/dsh-home.js';
 import { spawn, execSync } from 'node:child_process';
 import * as http from 'node:http';
 import { WebSocket } from 'ws';
@@ -181,7 +182,7 @@ async function main(): Promise<void> {
     // 老用户：带上本机既有 DSH 数据（profiles / settings / 凭据），会话日志
     // 不拷；profiles/node_modules（junction 根，机器级共享闭包）也不拷 ——
     // dsh-app-boot 启动时自会重建指向当前闭包的 junction。
-    const srcHome = path.join(os.homedir(), '.dsh');
+    const srcHome = dshHomePath();
     try {
       const srcProfiles = path.join(srcHome, 'profiles');
       const dstProfiles = path.join(home, 'profiles');
