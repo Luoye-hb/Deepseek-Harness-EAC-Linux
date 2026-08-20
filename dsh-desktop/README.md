@@ -1,6 +1,6 @@
 # Deepseek Harness EAC（揽尽万象 · Embracing All Creation）
 
-把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows 桌面客户端。
+把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows x64 / Linux x86_64 桌面客户端。macOS 与 ARM 不受支持。
 
 - ✅ **免安装 Node**：内置独立的 Node 运行时与 npm CLI，目标机器无需安装 Node.js
 - ✅ **内置 dsh CLI**：完整打包 `@deepseek-ai/dsh` 及其全部插件，离线可用
@@ -170,7 +170,7 @@
 
 ## 从源码构建
 
-要求：Windows + Node.js（仅构建机需要）+ npm。
+要求：Windows x64 或 Linux x86_64 + Node.js v24.19.0（仅构建机需要）+ npm。
 
 ```powershell
 npm install                    # 安装 dsh / electron / electron-builder
@@ -178,6 +178,8 @@ npm run fetch-runtime          # 内置 node.exe + npm CLI（构建与开发都�
 npm start                      # 开发模式启动（窗口内跑 Web UI）
 npm run dist                   # 构建 portable + NSIS 安装包，输出到 dist/
 ```
+
+Linux 使用 `npm run dist:linux` 构建 pacman / deb / rpm / AppImage，或使用 `dist:arch`、`dist:deb`、`dist:rpm`、`dist:appimage` 分别构建。发布前对每个归档运行 `bash scripts/audit-linux-package.sh <package>`。
 
 > 网络受限时：Electron 二进制镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`（可 `npm run electron:fetch` 手动补拉）；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 >

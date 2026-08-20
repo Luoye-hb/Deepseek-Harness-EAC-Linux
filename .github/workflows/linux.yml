@@ -1,0 +1,129 @@
+name: Linux x86_64
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'dsh-desktop/**'
+      - '.github/workflows/linux.yml'
+  push:
+    branches:
+      - main
+    tags:
+      - '*-linux'
+    paths:
+      - 'dsh-desktop/**'
+      - '.github/workflows/linux.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: ${{ !endsWith(github.ref, '-linux') }}
+
+jobs:
+  build:
+    name: Build and audit four formats on Debian 12
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: debian:12
+    defaults:
+      run:
+        shell: bash
+        working-directory: dsh-desktop
+    steps:
+      - name: Install Debian 12 build and audit tools
+        working-directory: /
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq binutils build-essential ca-certificates cpio curl file git libarchive-tools python3 rpm xz-utils
+
+      - name: Install official Node v24.19.0
+        working-directory: /
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz \
+            -o /tmp/node-v24.19.0-linux-x64.tar.xz
+          curl --fail --silent --show-error --location \
+            https://nodejs.org/dist/v24.19.0/SHASUMS256.txt \
+            -o /tmp/SHASUMS256.txt
+          cd /tmp
+          grep ' node-v24.19.0-linux-x64.tar.xz$' SHASUMS256.txt | sha256sum --check --strict
+          tar -xJf node-v24.19.0-linux-x64.tar.xz -C /usr/local --strip-components=1
+          node --version | grep -Fx v24.19.0
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild node-pty on Debian 12 with official Node 24
+        run: |
+          npm rebuild node-pty --build-from-source
+          test -f node_modules/node-pty/build/Release/pty.node
+          node scripts/check-glibc.cjs node_modules/node-pty/build/Release/pty.node
+          node -e "const pty=require('node-pty'); if(typeof pty.spawn!=='function') process.exit(2)"
+
+      - name: Fetch and verify bundled runtime
+        run: |
+          npm run fetch-runtime
+          test "$(vendor/node/node --version)" = v24.19.0
+          vendor/node/node vendor/npm/bin/npm-cli.js --version
+
+      - name: Set release version from Linux tag
+        if: endsWith(github.ref, '-linux')
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version%-linux}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]
+          npm version "$version" --no-git-tag-version --allow-same-version
+
+      - name: Test
+        run: npm test
+
+      - name: Build pacman, deb, rpm, and AppImage
+        run: npm run dist:linux
+
+      - name: Audit every final archive
+        run: |
+          shopt -s nullglob
+          packages=(dist/*.pacman dist/*.deb dist/*.rpm dist/*.AppImage)
+          test "${#packages[@]}" -eq 4
+          bash scripts/audit-linux-package.sh "${packages[@]}"
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-linux-x86_64-${{ github.run_id }}
+          path: |
+            dsh-desktop/dist/*.pacman
+            dsh-desktop/dist/*.deb
+            dsh-desktop/dist/*.rpm
+            dsh-desktop/dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish isolated Linux release
+    if: endsWith(github.ref, '-linux')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-desktop-linux-x86_64-*
+          merge-multiple: true
+          path: release-artifacts
+
+      - name: Publish Linux release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+          generate_release_notes: true
+          make_latest: false

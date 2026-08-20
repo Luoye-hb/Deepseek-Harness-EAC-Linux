@@ -8,6 +8,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '!*-linux'
   workflow_dispatch:
     inputs:
       version:
@@ -62,7 +63,7 @@ jobs:
       - name: 安装 Node.js（含 npm 缓存）
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 

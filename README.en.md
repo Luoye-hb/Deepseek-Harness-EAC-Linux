@@ -9,11 +9,12 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Linux-x86__64-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
-<p>A ready-to-use <strong>Windows desktop client</strong> wrapping the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
+<p>A ready-to-use <strong>Windows and Linux desktop client</strong> wrapping the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
 On top of the original, EAC embraces the community's creations — skins, plugins, tools, memories — everything installable with one click.</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC UI preview"></a></p>
@@ -37,7 +38,7 @@ On top of the original, EAC embraces the community's creations — skins, plugin
 | Plugin install | Manual npm | Built-in **plugin marketplace** in Settings: search / one-click install / uninstall |
 | Updates | Manual `npm update` | **Dual auto-update**: official agent updates (npm overlay, rollback on failure) + client self-update — both user-consented |
 | Notifications | N/A | **Windows system notification** when an agent task completes, click to bring the window back |
-| Requirements | Node.js environment | Windows 10/11 (x64), **no runtime required** |
+| Requirements | Node.js environment | Windows 10/11 x64 or Linux x86_64, **no runtime required** |
 
 > Zero kernel modification: EAC runs the official `dsh web` as-is, keeping the full "everything is a plugin" architecture,
 > and shares the `DSH_HOME` configuration with the CLI — existing sessions/API keys just work.
@@ -131,7 +132,9 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 
 ## Requirements
 
-- Windows 10/11 (x64)
+- Windows 10/11 x64 or Linux x86_64
+- Linux packages: pacman, deb, rpm, and AppImage
+- macOS and ARM are unsupported; see the [support matrix](docs/support-matrix.md)
 - No pre-installed Node.js or any other runtime
 
 ## Build from source
@@ -139,9 +142,11 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 ```powershell
 cd dsh-desktop
 npm install
-npm run fetch-runtime    # bundle node.exe + npm CLI
+npm run fetch-runtime    # bundle official Node v24.19.0 + npm CLI
 npm run dist             # build portable + NSIS installer -> dist/
 ```
+
+On Linux x86_64, use `npm run dist:linux` for all four formats, or `npm run dist:arch`, `dist:deb`, `dist:rpm`, and `dist:appimage` individually.
 
 > Behind a firewall? Electron mirror: `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`; builder toolchain mirror: `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`.
 

@@ -1,5 +1,12 @@
 # Deepseek Harness EAC VNext 插件隔离架构方案
 
+## 2026-08 Linux 适配复验
+
+- 构建、测试与随包运行时统一到官方 Node v24.19.0；发布目标严格限定为 Windows x64 与 Linux x86_64，macOS 不在支持范围。
+- Windows Extension Host 继续使用 Job Object；Linux 使用独立 POSIX 进程组与经 PID、PGID、`/proc` start time、可执行文件和 bootstrap 命令行共同验证的 `0600` lease。Linux Fence 不承诺 Job Object 级资源配额、cgroup v2 隔离或强杀后的即时自动拉起。
+- `updater.ts` 已拆为类型、网络、release 解析、下载与应用模块并重新通过 strict TypeScript、入口语法、Windows 源码规模和 updater 定向测试。公开的 `loadSettings`、`saveSettings`、`settingsPath` 与 `DshSettings` 兼容导出保持不变。
+- 客户端更新边界重新验收：Windows 保留 portable/NSIS 下载、校验、应用与回滚；Linux 只返回发行版包管理器或 AppImage 手动替换指引，不执行后台下载或 Windows 命令脚本。
+
 ## 1. 目标
 
 为下一个大版本建立一个可长期演进的稳定基座，使外置插件发生崩溃、卡死、依赖冲突或配置错误时：
