@@ -28,8 +28,13 @@ export {
   downloadRelease,
   downloadWithSourceSwitch,
 } from './download.js';
-export { applyUpdate, buildApplyScript, buildSpawnCommandLine } from './apply.js';
-export type { ApplyScriptParams, ApplyUpdateOpts } from './apply.js';
+export {
+  applyUpdate, buildApplyScript, buildInstalledApplyScript,
+  buildInstalledPowerShellArgs, buildSpawnCommandLine,
+} from './apply.js';
+export type {
+  ApplyScriptParams, ApplyUpdateOpts, InstalledPowerShellParams,
+} from './apply.js';
 export type {
   ApiEndpoint,
   AssetSelection,

@@ -111,6 +111,7 @@ export function clientBackupPaths(): { exe: string; bak: string; marker: string 
 
 /** 检测到上次运行崩溃且存在更新备份 → 自动回退到上一版 exe。 */
 export function autoRollbackClientIfCrashed(prevUnclean: Record<string, unknown> | null): boolean {
+  if (!IS_WIN) return false;
   const p = clientBackupPaths();
   if (!p || !prevUnclean) return false;
   if (!fs.existsSync(p.bak) || !fs.existsSync(p.marker)) return false;
@@ -139,6 +140,7 @@ export function autoRollbackClientIfCrashed(prevUnclean: Record<string, unknown>
 
 /** 新版健康启动（boot 成功链）后调用：清理上一版备份与 marker。 */
 export function cleanupClientBackupIfHealthy(): void {
+  if (!IS_WIN) return;
   const p = clientBackupPaths();
   if (!p || !fs.existsSync(p.marker)) return;
   try {

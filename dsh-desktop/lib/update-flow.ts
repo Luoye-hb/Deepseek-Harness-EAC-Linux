@@ -31,6 +31,7 @@ import { ensureGuard } from './guard.js';
 import { pluginUpdateSources } from './plugin-registry-data.js';
 import { copyPluginPackage } from './plugin-copy.js';
 import { removedPluginIds } from './plugin-manager-core.js';
+import { linuxUpdateGuidance } from './linux-update.js';
 
 // ---------------------------------------------------------------------------
 // 进度窗与进度推送（agent / client 共用）
@@ -356,6 +357,19 @@ function clientUpdateOpts(newVersion: string): clientUpdater.ApplyUpdateOpts {
  */
 export async function runClientUpdateFlow(manual: boolean): Promise<void> {
   if (state.quitting) return;
+  if (process.platform !== 'win32') {
+    if (manual) {
+      const guidance = linuxUpdateGuidance();
+      await showBox({
+        type: 'info',
+        title: '客户端更新',
+        message: guidance.message,
+        detail: guidance.detail,
+        buttons: ['确定'],
+      });
+    }
+    return;
+  }
   if (state.clientUpdateBusy) {
     if (manual) await showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
     return;
@@ -512,6 +526,7 @@ interface PendingClientUpdate {
 
 /** 下次启动时提示安装已下载的客户端更新。 */
 export function offerPendingClientUpdate(): void {
+  if (process.platform !== 'win32') return;
   const ctx = updCtx();
   const settings = updater.loadSettings(ctx);
   const pending = settings.pendingClientUpdate as PendingClientUpdate | null | undefined;
@@ -552,6 +567,7 @@ export function offerPendingClientUpdate(): void {
 // 启动失败救援（防重入）：一次会话只主动查一次，避免与用户的重试操作
 // 互相干扰；网络失败不打扰（runClientUpdateFlow 的 manual 弹窗已够）。
 export function scheduleClientUpdateRescue(): void {
+  if (process.platform !== 'win32') return;
   if (state.clientUpdateRescueArmed || process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) return;
   state.clientUpdateRescueArmed = true;
   setTimeout(() => {

@@ -21,7 +21,7 @@ import { buildErrorDetail } from '../error-detail.js';
 import { state } from './state.js';
 import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
-import { updCtx, dshVersion, dshVersionSource } from './proc.js';
+import { IS_WIN, updCtx, dshVersion, dshVersionSource } from './proc.js';
 import { desktopProfile } from './paths.js';
 import {
   writeRunState, markCleanExit, detectUncleanPreviousRun, notifyUncleanRestart,
@@ -436,7 +436,7 @@ export async function boot(): Promise<void> {
         setTimeout(() => void runUpdateFlow(false), 15000).unref();
         setInterval(() => void runUpdateFlow(false), AUTO_UPDATE_INTERVAL_MS).unref();
       }
-      if (!process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) {
+      if (IS_WIN && !process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) {
         // 客户端（封装）更新：启动 60 秒后 + 每 12 小时。
         setTimeout(() => void runClientUpdateFlow(false), 60000).unref();
         setInterval(() => void runClientUpdateFlow(false), 12 * 3600 * 1000).unref();

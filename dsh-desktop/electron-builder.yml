@@ -37,6 +37,8 @@ files:
   - lib/watchdog-boot.js
   - lib/server.js
   - lib/terminal.js
+  - lib/terminal-platform.js
+  - lib/linux-update.js
   - lib/preview.js
   - lib/market-modules.js
   - lib/window.js

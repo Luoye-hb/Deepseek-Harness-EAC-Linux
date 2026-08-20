@@ -19,46 +19,40 @@ import { spawn, spawnSync } from 'node:child_process';
 import { log } from './log.js';
 import { nodeExe, npmCli } from './proc.js';
 import { bridge } from './bridge.js';
+import { state } from './state.js';
+import {
+  createTerminalShims, executableOnPath, selectLinuxTerminal,
+} from './terminal-platform.js';
 
 /** 打开内置终端窗口（找不到内置运行时时弹错误框并返回）。 */
 export function openBuiltinTerminal(): void {
   const nodeExePath = nodeExe();
   const npmCliPath = npmCli();
-  if (!fs.existsSync(nodeExePath)) {
+  if (!fs.existsSync(nodeExePath) || !fs.existsSync(npmCliPath)) {
     void bridge
       .showBox({
         type: 'error',
         title: '内置终端',
-        message: '未找到内置 Node 运行时。',
-        detail: '期望路径：' + nodeExePath,
+        message: '未找到内置 Node/npm 运行时。',
+        detail: `Node：${nodeExePath}\nnpm：${npmCliPath}`,
         buttons: ['确定'],
       })
       .catch(() => {});
     return;
   }
-  const nodeDir = path.dirname(nodeExePath);
-  const npxCliPath = path.join(path.dirname(npmCliPath), 'npx-cli.js');
-
-  // npm.cmd / npx.cmd 垫片写到「安装后的内置环境位置」（node.exe 同目录），
-  // 使内置 node + npm + npx 全部就近解析、自包含于安装目录。本应用为
-  // per-user 安装（perMachine:false）与便携包，安装目录用户可写；若遇极
-  // 少数只读安装，回退到临时目录。
-  const shim = (cliPath: string): string =>
-    '@echo off\r\n"' + nodeExePath + '" "' + cliPath + '" %*\r\n';
-  const writeShims = (dir: string): boolean => {
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, 'npm.cmd'), shim(npmCliPath));
-      fs.writeFileSync(path.join(dir, 'npx.cmd'), shim(npxCliPath));
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  let binDir = nodeDir;
-  if (!writeShims(binDir)) {
-    binDir = path.join(os.tmpdir(), 'dsh-builtin-bin');
-    writeShims(binDir);
+  let binDir: string;
+  try {
+    binDir = createTerminalShims(state.userDataDir, nodeExePath, npmCliPath).binDir;
+  } catch (err) {
+    log('terminal', '创建内置终端垫片失败: ' + String((err as Error).message));
+    void bridge.showBox({
+      type: 'error',
+      title: '内置终端',
+      message: '无法创建内置 Node/npm 命令。',
+      detail: String((err as Error).message),
+      buttons: ['确定'],
+    }).catch(() => {});
+    return;
   }
 
   // 读取内置 node 版本用于标题/横幅，失败则留空。
@@ -71,10 +65,10 @@ export function openBuiltinTerminal(): void {
     /* 版本读取失败不阻塞终端 */
   }
 
-  // 垫片落到 nodeDir 时，PATH 仅前置 nodeDir 即可（node/npm/npx 都在那）；
-  // 回退到临时目录时需把临时目录也前置。
-  const pathPrefix = binDir === nodeDir ? nodeDir : binDir + ';' + nodeDir;
-  const env = { ...process.env, PATH: pathPrefix + ';' + (process.env.PATH || '') };
+  const env = {
+    ...process.env,
+    PATH: [binDir, path.dirname(nodeExePath), process.env.PATH || ''].filter(Boolean).join(path.delimiter),
+  };
   const title =
     'Deepseek Harness EAC - 内置终端' + (nodeVer ? ' (Node ' + nodeVer + ')' : '');
   const banner =
@@ -82,8 +76,23 @@ export function openBuiltinTerminal(): void {
     (nodeVer ? 'Node ' + nodeVer + ' + ' : '') +
     'npm 已就绪，可直接使用 node / npm / npx 命令。';
   try {
-    // detached + stdio:ignore：GUI 进程无控制台，Windows 会为新生的 cmd
-    // 进程分配一个独立控制台窗口；unref 让其与主进程解耦，关闭应用不连坐。
+    if (process.platform !== 'win32') {
+      const selected = selectLinuxTerminal(env.PATH);
+      if (!selected) throw new Error('未找到 x-terminal-emulator、GNOME Terminal、Konsole 或 Xfce Terminal');
+      const configuredShell = process.env.SHELL || '';
+      const shellPath = configuredShell && fs.existsSync(configuredShell)
+        ? configuredShell
+        : executableOnPath('bash', env.PATH) ?? '/bin/sh';
+      spawn(selected.executable, selected.adapter.args(shellPath), {
+        cwd: os.homedir(),
+        env,
+        detached: true,
+        stdio: 'ignore',
+      }).unref();
+      log('terminal', `已启动内置终端 adapter=${selected.adapter.command} binDir=${binDir} nodeVer=${nodeVer || '?'}`);
+      return;
+    }
+    // GUI 进程无控制台；cmd.exe 创建独立窗口并与主进程解耦。
     spawn('cmd.exe', ['/K', 'title ' + title + ' & echo ' + banner], {
       cwd: os.homedir(),
       env,
@@ -91,7 +100,7 @@ export function openBuiltinTerminal(): void {
       stdio: 'ignore',
       windowsHide: false,
     }).unref();
-    log('terminal', '已启动内置终端 binDir=' + binDir + ' nodeVer=' + (nodeVer || '?'));
+    log('terminal', '已启动内置终端 adapter=cmd.exe binDir=' + binDir + ' nodeVer=' + (nodeVer || '?'));
   } catch (err) {
     log('terminal', '启动内置终端失败: ' + String((err && (err as Error).message) || err));
     void bridge

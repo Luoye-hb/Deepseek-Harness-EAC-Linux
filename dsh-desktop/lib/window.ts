@@ -130,7 +130,8 @@ export function createWindow(opts: CreateWindowOpts = {}): void {
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    frame: false,
+    ...(IS_WIN ? { roundedCorners: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,
@@ -290,7 +291,8 @@ export function createFloatWindow(
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     // 与主窗一致的无边框；浮窗 preload 注入一条更细的纯拖拽条。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    frame: false,
+    ...(IS_WIN ? { roundedCorners: true } : {}),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,

@@ -112,7 +112,7 @@ export async function showAbout(): Promise<void> {
 
 /** 首次驻留托盘时气泡提示一次。 */
 export function trayHintOnce(): void {
-  if (state.trayHintShown || !state.tray) return;
+  if (!IS_WIN || state.trayHintShown || !state.tray) return;
   state.trayHintShown = true;
   try {
     state.tray.displayBalloon({
