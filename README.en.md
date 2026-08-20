@@ -206,23 +206,21 @@ research/                     # Third-party WeChat / bridge protocol research
 Thanks to every contributor:
 
 <p align="center">
-  <a href="https://github.com/zouyuxuan122"><img src="https://avatars.githubusercontent.com/u/245557608?size=64" width="64" height="64" style="border-radius:50%" alt="zouyuxuan122" title="zouyuxuan122 · 27 commits"></a>
-  <a href="https://github.com/jiang8297"><img src="https://avatars.githubusercontent.com/u/242639667?size=64" width="64" height="64" style="border-radius:50%" alt="jiang8297" title="jiang8297 · 6 commits"></a>
-  <a href="https://github.com/zixin947"><img src="https://avatars.githubusercontent.com/u/318131693?size=64" width="64" height="64" style="border-radius:50%" alt="zixin947" title="zixin947 · 5 commits"></a>
-  <a href="https://github.com/dtyg123"><img src="https://avatars.githubusercontent.com/u/171705219?size=64" width="64" height="64" style="border-radius:50%" alt="dtyg123" title="dtyg123 · 3 commits"></a>
-  <a href="https://github.com/jing-hy"><img src="https://avatars.githubusercontent.com/u/281396152?size=64" width="64" height="64" style="border-radius:50%" alt="jing-hy" title="jing-hy · 2 commits"></a>
-  <a href="https://github.com/Luoye-hb"><img src="https://avatars.githubusercontent.com/u/238787898?size=64" width="64" height="64" style="border-radius:50%" alt="Luoye-hb" title="Luoye-hb · 1 commit"></a>
-  <a href="https://github.com/lanyun077"><img src="https://avatars.githubusercontent.com/u/186024291?size=64" width="64" height="64" style="border-radius:50%" alt="lanyun077" title="lanyun077 · 1 commit"></a>
-  <a href="https://github.com/lbn2011"><img src="https://avatars.githubusercontent.com/u/89037561?size=64" width="64" height="64" style="border-radius:50%" alt="lbn2011" title="lbn2011 · 1 commit"></a>
+  <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
+  </a>
 </p>
+
 
 ## Star History
 
-<p align="center">
-  <a href="https://star-history.com/#zouyuxuan122/Deepseek-Harness-EAC&Date">
-    <img src="https://api.star-history.com/svg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date" alt="Star History Chart">
-  </a>
-</p>
+<a href="https://www.star-history.com/?repos=zouyuxuan122%2FDeepseek-Harness-EAC&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&theme=dark&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+ </picture>
+</a>
 
 ## License
 
