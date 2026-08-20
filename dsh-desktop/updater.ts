@@ -48,6 +48,7 @@ export interface UpdCtx {
 
 /** settings.json 的形状（仅声明桌面壳读写的字段，其余视为未知扩展）。 */
 export interface DshSettings {
+  schemaVersion?: number;
   shareWebProfile?: boolean;
   closeToTray?: boolean;
   shortcutPolicy?: string;
@@ -72,19 +73,97 @@ export function settingsPath(ctx: UpdCtx): string {
   return path.join(ctx.userDataDir, 'settings.json');
 }
 
+const CURRENT_SCHEMA_VERSION = 1;
+const BOOLEAN_KEYS = [
+  'notifyOnTurnEnd', 'closeToTray', 'shareWebProfile', 'pluginAutoUpdate',
+  'pluginOnboardingDone', 'autoUpdate', 'clientAutoUpdate',
+] as const;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function evidencePath(file: string, suffix: string): string {
+  const base = `${file}.${suffix}-${Date.now()}`;
+  let candidate = base;
+  for (let i = 1; fs.existsSync(candidate); i++) candidate = `${base}-${i}`;
+  return candidate;
+}
+
+function recoverInterruptedWrite(file: string, ctx: UpdCtx): void {
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  const temps = entries
+    .filter((e) => e.isFile() && e.name.startsWith(`${base}.tmp-`))
+    .map((e) => path.join(dir, e.name))
+    .sort((a, b) => {
+      try { return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs; } catch { return 0; }
+    });
+  if (!temps.length) return;
+  if (!fs.existsSync(file)) {
+    try { fs.renameSync(temps[0] as string, file); ctx.log('settings', '恢复中断写入的 settings.json 临时文件'); } catch { /* 下次启动再尝试 */ }
+  }
+  for (const temp of temps) {
+    try { fs.rmSync(temp, { force: true }); } catch { /* evidence is best effort */ }
+  }
+}
+
+function normalizeSettings(value: unknown, ctx: UpdCtx): DshSettings {
+  if (!isPlainObject(value)) {
+    ctx.log('settings', 'settings.json 顶层不是对象，使用空设置');
+    return { schemaVersion: CURRENT_SCHEMA_VERSION };
+  }
+  const out: Record<string, unknown> = { ...value, schemaVersion: CURRENT_SCHEMA_VERSION };
+  for (const key of BOOLEAN_KEYS) {
+    if (key in out && typeof out[key] !== 'boolean') delete out[key];
+  }
+  if ('webPort' in out && (!Number.isInteger(out.webPort) || Number(out.webPort) < 0 || Number(out.webPort) > 65535)) delete out.webPort;
+  if ('shortcutPolicy' in out && !['auto', 'never'].includes(String(out.shortcutPolicy))) delete out.shortcutPolicy;
+  if ('exitAction' in out && !['ask', 'minimize', 'quit'].includes(String(out.exitAction))) delete out.exitAction;
+  for (const key of ['removedPlugins', 'builtinPluginSelection']) {
+    if (key in out) {
+      if (!Array.isArray(out[key])) delete out[key];
+      else out[key] = (out[key] as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0);
+    }
+  }
+  return out as DshSettings;
+}
+
 export function loadSettings(ctx: UpdCtx): DshSettings {
+  const file = settingsPath(ctx);
+  recoverInterruptedWrite(file, ctx);
   try {
-    return JSON.parse(fs.readFileSync(settingsPath(ctx), 'utf8')) as DshSettings;
-  } catch {
+    return normalizeSettings(JSON.parse(fs.readFileSync(file, 'utf8')) as unknown, ctx);
+  } catch (err) {
+    if (fs.existsSync(file)) {
+      const evidence = evidencePath(file, 'corrupt');
+      try { fs.renameSync(file, evidence); } catch { try { fs.copyFileSync(file, evidence); } catch { /* ignore */ } }
+      ctx.log('settings', `settings.json 损坏，已保留证据 ${evidence}: ${String((err as Error).message)}`);
+    }
     return {};
   }
 }
 
 export function saveSettings(ctx: UpdCtx, s: DshSettings): void {
+  const file = settingsPath(ctx);
+  const temp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   try {
-    fs.writeFileSync(settingsPath(ctx), JSON.stringify(s, null, 2) + '\n');
+    const value = normalizeSettings(isPlainObject(s) ? s : {}, ctx);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+    try {
+      fs.renameSync(temp, file);
+    } catch (err) {
+      if (!['EEXIST', 'EPERM', 'ENOTEMPTY'].includes(String((err as NodeJS.ErrnoException).code))) throw err;
+      fs.rmSync(file, { force: true, maxRetries: 3 });
+      fs.renameSync(temp, file);
+    }
   } catch (err) {
     ctx.log('update', '保存 settings 失败: ' + String((err as Error).message));
+  } finally {
+    try { fs.rmSync(temp, { force: true }); } catch { /* ignore */ }
   }
 }
 
@@ -206,6 +285,7 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
         NPM_CONFIG_FUND: 'false',
         NPM_CONFIG_AUDIT: 'false',
       },
+      detached: process.platform !== 'win32',
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

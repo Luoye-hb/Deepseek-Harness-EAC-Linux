@@ -125,6 +125,7 @@ export async function startServer(
       {
         cwd: state.userDataDir,
         env: childEnv(),
+        detached: process.platform !== 'win32',
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       },

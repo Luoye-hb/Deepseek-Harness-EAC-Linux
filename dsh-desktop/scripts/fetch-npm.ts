@@ -11,11 +11,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const src = path.join(path.dirname(process.execPath), 'node_modules', 'npm');
+const candidates = [
+  path.resolve(__dirname, '..', 'vendor', 'node', 'lib', 'node_modules', 'npm'),
+  path.join(path.dirname(process.execPath), 'node_modules', 'npm'),
+  path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm'),
+];
+const src = candidates.find((p) => fs.existsSync(path.join(p, 'bin', 'npm-cli.js'))) || candidates[0];
 const dest = path.resolve(__dirname, '..', 'vendor', 'npm');
 
 if (!fs.existsSync(path.join(src, 'bin', 'npm-cli.js'))) {
-  console.error('找不到随 Node 分发的 npm：' + src);
+  console.error('找不到随 Node 分发的 npm，已检查：\n' + candidates.join('\n'));
   process.exit(1);
 }
 

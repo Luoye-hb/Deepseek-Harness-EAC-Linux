@@ -26,6 +26,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable, Readable } from 'node:stream';
 import { log } from '../log.js';
 
+export type FenceMode = 'win32-job' | 'posix-process-group' | 'taskkill-fallback';
+
 /** Rust 原生模块的最小类型面（与 native/supervisor/src/job.rs 对应）。 */
 interface NativeSupervisor {
   createJob(opts?: {
@@ -44,7 +46,7 @@ interface NativeSupervisor {
 
 /** 围栏单进程句柄：stdio 流 + 树级强杀。 */
 export interface FenceHandle {
-  readonly mode: 'win32-job' | 'taskkill-fallback';
+  readonly mode: FenceMode;
   readonly pid: number;
   readonly stdin: Writable;
   readonly stdout: Readable;
@@ -61,7 +63,7 @@ export interface FenceHandle {
 
 /** 围栏实例：一个 Job（或降级通道）可容纳一次宿主启动。 */
 export interface Fence {
-  readonly mode: 'win32-job' | 'taskkill-fallback';
+  readonly mode: FenceMode;
   /** 在围栏内拉起进程（stdio 即 RPC 传输层）。 */
   launch(exe: string, args: string[], cwd?: string): FenceHandle;
   /** 释放围栏资源（launch 失败/未用时的 Job 句柄回收）。 */
@@ -79,6 +81,7 @@ let forceUnavailableForTest = false;
 /** 加载 Rust 围栏模块；缺失/失败返回 null（缓存，只警告一次）。 */
 export function loadNativeSupervisor(): NativeSupervisor | null {
   if (forceUnavailableForTest) return null;
+  if (process.platform !== 'win32') return null;
   if (nativeCache !== undefined) return nativeCache;
   const file = path.join(__dirname, '..', '..', 'native', 'supervisor', 'index.node');
   try {
@@ -223,11 +226,17 @@ function taskkillTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
       try {
-        process.kill(pid, 'SIGKILL');
+        process.kill(-pid, 'SIGTERM');
       } catch {
-        // 已退出
+        try { process.kill(pid, 'SIGTERM'); } catch { /* 已退出 */ }
       }
-      resolve();
+      const timer = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch {
+          try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ }
+        }
+        resolve();
+      }, 500);
+      timer.unref();
       return;
     }
     const tk = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
@@ -237,7 +246,7 @@ function taskkillTree(pid: number): Promise<void> {
 }
 
 class FallbackFenceHandle implements FenceHandle {
-  readonly mode = 'taskkill-fallback' as const;
+  readonly mode: FenceMode = process.platform === 'win32' ? 'taskkill-fallback' : 'posix-process-group';
   readonly pid: number;
   readonly stdin: Writable;
   readonly stdout: Readable;
@@ -275,10 +284,15 @@ class FallbackFenceHandle implements FenceHandle {
 }
 
 class FallbackFence implements Fence {
-  readonly mode = 'taskkill-fallback' as const;
+  readonly mode: FenceMode = process.platform === 'win32' ? 'taskkill-fallback' : 'posix-process-group';
 
   launch(exe: string, args: string[], cwd?: string): FenceHandle {
-    const child = spawn(exe, args, { cwd, stdio: 'pipe', windowsHide: true });
+    const child = spawn(exe, args, {
+      cwd,
+      stdio: 'pipe',
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+    });
     if (child.pid === undefined) {
       child.kill();
       throw new Error(`围栏 spawn 失败: ${exe}`);
@@ -302,7 +316,7 @@ export interface FenceOptions {
   cpuRatePercent?: number;
 }
 
-/** 创建围栏：优先 Rust Job Object，不可用则降级 taskkill 并告警。 */
+/** 创建围栏：Windows 优先 Job Object，POSIX 使用独立进程组。 */
 export function createFence(opts: FenceOptions = {}): Fence {
   const native = loadNativeSupervisor();
   if (native) {
@@ -316,6 +330,7 @@ export function createFence(opts: FenceOptions = {}): Fence {
 }
 
 /** 原生模块是否可用（恢复中心展示围栏档位用）。 */
-export function fenceMode(): 'win32-job' | 'taskkill-fallback' {
-  return loadNativeSupervisor() ? 'win32-job' : 'taskkill-fallback';
+export function fenceMode(): FenceMode {
+  if (loadNativeSupervisor()) return 'win32-job';
+  return process.platform === 'win32' ? 'taskkill-fallback' : 'posix-process-group';
 }

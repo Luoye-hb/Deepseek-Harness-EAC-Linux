@@ -22,11 +22,15 @@ import { log } from './log.js';
 
 /** 是否运行在 Windows（进程回收策略分支依据）。 */
 export const IS_WIN = process.platform === 'win32';
+export const IS_POSIX = !IS_WIN;
 
-/** 内置 node.exe：打包后在 resources/node/，开发态在 vendor/node/。 */
+/** 平台对应的捆绑 Node 文件名。 */
+export const bundledNodeName = IS_WIN ? 'node.exe' : 'node';
+
+/** 内置 Node：打包后在 resources/node/，开发态在 vendor/node/。 */
 export function nodeExe(): string {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'node', 'node.exe');
-  return path.resolve(__dirname, '..', 'vendor', 'node', 'node.exe');
+  if (app.isPackaged) return path.join(process.resourcesPath, 'node', bundledNodeName);
+  return path.resolve(__dirname, '..', 'vendor', 'node', bundledNodeName);
 }
 
 /** 内置 npm CLI 入口：与 node.exe 同源的 vendor npm 分发。 */
