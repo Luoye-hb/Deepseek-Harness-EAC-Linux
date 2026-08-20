@@ -84,6 +84,8 @@ test('GLIBC checker parses versions, compares numerically, and fails closed', ()
 
 test('archive auditor rejects missing packages and unsupported formats', () => {
   const script = join(root, 'scripts', 'audit-linux-package.sh');
+  const source = readFileSync(script, 'utf8');
+  assert.match(source, /rpm --dbpath "\$rpm_db" -qp/);
   const missing = spawnSync('bash', [script, join(root, 'does-not-exist.deb')], { encoding: 'utf8' });
   assert.equal(missing.status, 1);
   assert.match(missing.stderr, /package is not a file/);

@@ -48,8 +48,10 @@ extract_package() {
       need rpm
       need rpm2cpio
       need cpio
-      [[ "$(rpm -qp --qf '%{ARCH}' "$package")" == "x86_64" ]] || fail "rpm package is not x86_64"
-      [[ -n "$(rpm -qp --qf '%{NAME}' "$package")" ]] || fail "rpm Name metadata is missing"
+      local rpm_db="$audit_tmp/rpmdb"
+      mkdir -p "$rpm_db"
+      [[ "$(rpm --dbpath "$rpm_db" -qp --qf '%{ARCH}' "$package")" == "x86_64" ]] || fail "rpm package is not x86_64"
+      [[ -n "$(rpm --dbpath "$rpm_db" -qp --qf '%{NAME}' "$package")" ]] || fail "rpm Name metadata is missing"
       (cd "$destination" && rpm2cpio "$package" | cpio -idm --quiet)
       ;;
     *.appimage)
