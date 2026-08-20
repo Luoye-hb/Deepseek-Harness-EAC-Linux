@@ -11,7 +11,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import {
+  existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { copyPluginPackage, pluginStampOfUncached, invalidatePluginStampCache } from '../lib/plugin-copy.js';
@@ -54,10 +56,15 @@ test('same-size in-place source edit changes stamp (h hash) and forces re-copy',
     mkdirSync(profile, { recursive: true });
     copyPluginPackage(profile, src, 'eac-test-pkg');
     // 就地改写为同字节数内容：size/文件数/版本全不变，只有 mtime 变。
-    writeFileSync(join(src, 'lib', 'a.js'), 'BBB');
+    const sourceFile = join(src, 'lib', 'a.js');
+    const firstMtime = new Date(Date.now() - 2_000);
+    writeFileSync(sourceFile, 'BBB');
+    utimesSync(sourceFile, firstMtime, firstMtime);
     // 戳记 h 必须感知到变化（mtime 维度）。
     const stampOld = pluginStampOfUncached(src);
-    writeFileSync(join(src, 'lib', 'a.js'), 'CCC');
+    const secondMtime = new Date(firstMtime.getTime() + 1_000);
+    writeFileSync(sourceFile, 'CCC');
+    utimesSync(sourceFile, secondMtime, secondMtime);
     const stampNew = pluginStampOfUncached(src);
     assert.notEqual(stampOld, stampNew, 'same-size edit must change stamp (h hash)');
     // 缓存清理后重拷：dest 得到新内容（覆盖旧 {v,f,b} 戳记漏判的缺口）。
