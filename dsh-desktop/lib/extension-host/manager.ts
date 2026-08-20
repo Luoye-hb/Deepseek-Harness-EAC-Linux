@@ -343,7 +343,14 @@ export class ExtensionHostManager {
     } catch (err) {
       // 判死 = 崩溃的一种：kill（摘表，exit 事件随之 no-op）→ crash 转移。
       log('ext-host', `${id}: 心跳超时/失败（${String((err as Error).message)}），判死`);
+      // 先记「是否仍在表」：killHost 的 peer.close 会拒绝在途 ping —— 若本次
+      // 失败源于主动停止（stopPlugin/shutdownAll 已摘表）或 exit 事件已并发
+      // 处置，则不是崩溃，绝不能再做 crash 转移/排期重启；否则会在
+      // shutdownAll 之后复活一个永不回收的 Host（测试进程被挂死；降级围栏
+      // 模式下生产亦会泄漏孤儿进程）。
+      const stillTracked = this.hosts.has(id);
       await this.killHost(id);
+      if (rt.stopping || !stillTracked) return;
       applyTransition(id, { type: 'crash', reason: `心跳超时（${String((err as Error).message).slice(0, 120)}）` });
       this.scheduleRestart(id);
     }
@@ -377,6 +384,9 @@ export class ExtensionHostManager {
     }
     const delay = this.restartDelay(e);
     log('ext-host', `${id}: ${delay}ms 后重试拉起（state=${e.state}）`);
+    // 防双拉起：exit 事件与心跳判死可能并发触发两次排期，旧定时器若不清
+    // 会照常触发（Map.set 只覆盖引用不取消定时器），导致重启风暴。
+    this.cancelPendingRestart(id);
     const timer = setTimeout(() => {
       this.pendingRestarts.delete(id);
       void this.startPlugin(id);
