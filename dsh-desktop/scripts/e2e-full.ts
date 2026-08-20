@@ -379,22 +379,10 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── 3) 真实对话 + 识图工具注册（消耗真实 token，约几分钱）──
+  // ── 3) 识图工具注册 ──
   if (SKIP_CHAT) {
     console.log('[full] 跳过真实对话步骤（--skip-chat=1）');
   } else if (hasKey) {
-    const chat = async (content: string): Promise<{ ok: boolean; text: string }> => {
-      const r = await pageFetch(page, '/openclaw-bridge/v1/chat/completions', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content }], stream: false }),
-      });
-      if (r.status !== 200 || !r.json) return { ok: false, text: r.body.slice(0, 300) };
-      const j = r.json as { choices?: Array<{ message?: { content?: string } }> };
-      const text = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-      return { ok: true, text };
-    };
-    const r1 = await chat('这是一条连通性测试。请只回复两个字：好的');
-    check('真实对话：模型回复正常', r1.ok && /好的/.test(r1.text), r1.text || '');
     // 识图链路验证用结构化证据而非模型自由文本（v4.4 实测模型对“列出工具”
     // 请求两轮均回复“好的”——上下文粘滞，自由文本断言不稳定）：
     // dsh-tool-vision 已内置分发，验证 profile patch 注册行 + node_modules 落盘。

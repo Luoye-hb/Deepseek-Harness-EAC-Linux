@@ -345,7 +345,6 @@ async function main(): Promise<void> {
   for (const [label, p] of [
     ['dsh-change-review（AI 变更审核）', nm('dsh-change-review')],
     ['dsh-undo-savepoint（崩溃急救）', nm('dsh-undo-savepoint')],
-    ['@deepseek-ai/dsh-openclaw-bridge（微信桥）', nm('@deepseek-ai/dsh-openclaw-bridge')],
     ['dsh-float-window（多窗口）', nm('@deepseek-ai/dsh-float-window')],
     ['dsh-session-manager（会话删除）', nm('dsh-session-manager')],
     ['@vlln/dsh-navbar（导航条）', nm('@vlln/dsh-navbar')],
@@ -359,8 +358,8 @@ async function main(): Promise<void> {
   try {
     patch = fs.readFileSync(path.join(profDir, 'cordis.patch.yml'), 'utf8');
   } catch { /* 尚未创建 */ }
-  check('patch 行: change-review / dsh-undo / openclaw-bridge 已注册',
-    /id:\s*change-review\b/.test(patch) && /id:\s*dsh-undo\b/.test(patch) && /id:\s*openclaw-bridge\b/.test(patch));
+  check('patch 行: change-review / dsh-undo 已注册',
+    /id:\s*change-review\b/.test(patch) && /id:\s*dsh-undo\b/.test(patch));
   const dafeiyuBlock = (patch.match(/- id:\s*dsh-dafeiyu\n(?:[ \t]+[^\n]*\n)*/) || [''])[0];
   // v4.3+ dafeiyu 注册表默认启用（裸 insert 行）；fresh 向导未勾选它 → 顶层
   // disabled 行（插件管理/向导写形）。upgrade 老用户 profile 无向导 → 启用。
@@ -371,9 +370,8 @@ async function main(): Promise<void> {
 
   // 6) 运行时补丁断言：会话删除补丁在构建时已烘焙进内置闭包（运行时幂等
   // 重放为 no-op、无日志），因此接受「日志行」或「闭包文件已带补丁标记」任一。
-  // ClawBot 设置命名空间不再需要补丁：上游 dsh-host-apiproxy rc.7 已移除
-  // WEB_SETTINGS_NAMESPACES 白名单（settings.describe 全量暴露）——断言闭包
-  // 里确实已无该白名单，openclaw-bridge 设置页天然可读写。
+  // 上游 dsh-host-apiproxy rc.7 已移除 WEB_SETTINGS_NAMESPACES 白名单；
+  // 断言闭包里确实已无该旧限制。
   const log1 = readLog();
   const junctionNm = path.join(home, 'profiles', 'node_modules');
   const hasBakedSessionPatch = (() => {

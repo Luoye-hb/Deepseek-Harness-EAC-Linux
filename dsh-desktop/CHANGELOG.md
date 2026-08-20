@@ -301,16 +301,6 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
   附带的 SHA256SUMS.txt（`npm run dist` 自动生成，发布时随资产上传；Gitee 分片
   合并后同样适用）→ 都没有时记录告警并放行（老 release 兼容）。
 
-### 新增：微信 ClawBot / OpenClaw 桥（自上游 dsh_desktop 移植，v0.7.0）
-- 设置页新增「ClawBot」栏：扫码绑定微信官方 ClawBot 小程序（腾讯 iLink 协议、
-  仅出站长轮询，无需公网 IP），每个微信用户映射独立 DSH 会话与工作区；
-  `/help` `/list` `/attach` `/new` 指令；微信用户白名单。
-- OpenAI 兼容端点 `/openclaw-bridge/v1/chat/completions`（stream/非 stream），
-  OpenClaw 等网关可直接驱动常驻 DSH 会话；回环免 token、非回环强制 Bearer。
-- 第三方模型：ClawBot 栏可填 baseURL/key/model 走别家 OpenAI 兼容模型。
-- 壳层补丁：dsh-host-apiproxy 设置命名空间白名单加 `openclaw-bridge`（随启动
-  幂等应用、覆盖 agent overlay，官方更新后自动重放）。
-
 ### 新增：多窗口（会话浮窗，自上游移植）
 - 会话头部「弹出到独立窗口」：独立无边框窗口打开该会话（同会话去重、全局上限
   8 个）；浮窗与主窗 localStorage 隔离（独立 partition），标题跟随会话；配套

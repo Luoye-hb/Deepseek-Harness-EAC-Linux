@@ -60,7 +60,6 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
   { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
-  { id: 'openclaw-bridge', name: '@deepseek-ai/dsh-openclaw-bridge', dir: 'dsh-openclaw-bridge' },
   { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
   { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },

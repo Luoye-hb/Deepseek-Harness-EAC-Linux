@@ -1,5 +1,3 @@
-'use strict';
-
 // rescue-agent.js — 崩溃救援代理（纯函数核心，零 electron 依赖）
 //
 // 背景：dsh web 服务器把插件跑在同一个进程里，插件崩溃 = 整个 agent 停摆。
@@ -32,7 +30,10 @@ const https = require('node:https');
 const yaml = require('js-yaml');
 const { removePluginFromPatch } = require('./scripts/plugin-manager-patch');
 
-const DEFAULT_OPTS = {
+type DynamicRecord = Record<string, any>;
+type DynamicFn = (...args: any[]) => any;
+
+export const DEFAULT_OPTS = {
   // 每个日志文件最多读尾部这么多字节（大日志文件不整读）。
   LOG_TAIL_BYTES: 48 * 1024,
   // profile 配置面（package.json / cordis.patch.yml 等）单文件读取上限。
@@ -55,7 +56,7 @@ const DEFAULT_OPTS = {
 
 // ── 尾部读取（大文件安全）────────────────────────────────────────────
 // open + fstat + seek 到末尾附近再读，绝不对大文件 readFileSync 全量加载。
-function readTail(file, maxBytes) {
+export function readTail(file: string, maxBytes: number): string {
   try {
     if (!maxBytes || maxBytes <= 0) return '';
     const fd = fs.openSync(file, 'r');
@@ -93,14 +94,14 @@ function readTail(file, maxBytes) {
 //   attribution: () => object|null                         —— 启动失败归因
 //   lastErrText: () => string|null                         —— 最近一次启动失败文案
 // 单项失败按空处理，绝不抛错。返回 { ok:true, sendManifest, payload, totalBytes }。
-function collectDiagnosis(ctx, opts = {}) {
+export function collectDiagnosis(ctx: DynamicRecord, opts: DynamicRecord = {}): DynamicRecord {
   const o = { ...DEFAULT_OPTS, ...opts };
-  const safe = (fn, fallback) => { try { return fn(); } catch { return fallback; } };
+  const safe = (fn: DynamicFn, fallback: any): any => { try { return fn(); } catch { return fallback; } };
   const profileDir = String(ctx.profileDir || '');
   const logsDir = String(ctx.logsDir || '');
   const home = String(ctx.dshHome || '');
 
-  const readProfileFile = (name, max) => {
+  const readProfileFile = (name: string, max?: number): string => {
     if (!profileDir) return '';
     return readTail(path.join(profileDir, name), max || o.PROFILE_TEXT_MAX);
   };
@@ -189,11 +190,11 @@ function collectDiagnosis(ctx, opts = {}) {
 // ── 发送裁剪（filterDiagnosisPayload）─────────────────────────────────
 // 用户确认清单里取消勾选的项不发送。selectedNames 为 sendManifest 中被勾选
 // 的 name 列表（空数组 = 全部发送）。env（版本环境）不可取消，始终保留。
-function filterDiagnosisPayload(payload, manifest, selectedNames) {
+export function filterDiagnosisPayload(payload: DynamicRecord, manifest: DynamicRecord[], selectedNames: unknown): DynamicRecord {
   if (!Array.isArray(selectedNames) || selectedNames.length === 0) return payload;
   const sel = new Set(selectedNames.map(String));
   const kinds = new Set(manifest.filter((m) => sel.has(m.name)).map((m) => m.kind));
-  const out = {
+  const out: DynamicRecord = {
     ...payload,
     env: payload.env,
     incidents: kinds.has('事故报告') ? payload.incidents : [],
@@ -221,7 +222,7 @@ function filterDiagnosisPayload(payload, manifest, selectedNames) {
 
 // ── 提示词构建（buildDiagnosisPrompt）──────────────────────────────────
 // 系统提示词约束：只诊断、只输出动作白名单内的 JSON 建议、绝不虚构文件内容。
-const ACTION_SPEC = [
+export const ACTION_SPEC = [
   { action: 'restore', params: { snapshotId: '快照 id（来自诊断上下文 snapshots 列表）' }, desc: '回滚 profile 配置到指定快照（高风险，最后手段）' },
   { action: 'disable', params: { pluginId: '插件 id（来自 plugins 列表）' }, desc: '停用某个插件（写盘停用，重启不还原）' },
   { action: 'remove', params: { pluginId: '插件 id' }, desc: '卸载某个内置插件（高风险，清 patch 行与包副本）' },
@@ -233,7 +234,7 @@ const ACTION_SPEC = [
   { action: 'export', params: {}, desc: '建议用户导出诊断 zip（不自动执行）' },
 ];
 
-function buildDiagnosisPrompt(diag) {
+export function buildDiagnosisPrompt(diag: unknown): string {
   const o = Object.assign({}, DEFAULT_OPTS);
   const spec = ACTION_SPEC.map((a) => (
     `  - action: "${a.action}"\n` +
@@ -270,14 +271,14 @@ function buildDiagnosisPrompt(diag) {
 // ── AI 响应解析（parseAiResponse，容错但不迁就）────────────────────────
 // 接受：裸 JSON、```json 包裹、前后有说明文字。解析失败 / 结构不符 /
 // 动作不在白名单 → 丢弃并返回错误描述，绝不执行。
-function parseAiResponse(text, opts = {}) {
+export function parseAiResponse(text: unknown, opts: DynamicRecord = {}): DynamicRecord {
   const o = { ...DEFAULT_OPTS, ...opts };
   const raw = String(text || '').trim();
   if (!raw) return { ok: false, error: 'AI 返回为空' };
   let json = null;
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
   if (fence) {
-    try { json = JSON.parse(fence[1].trim()); } catch { json = null; }
+    try { json = JSON.parse((fence[1] ?? '').trim()); } catch { json = null; }
   }
   if (json === null) {
     try { json = JSON.parse(raw); } catch { json = null; }
@@ -316,14 +317,14 @@ const ID_RE = /^[A-Za-z0-9_.-]+$/;
 const SNAPSHOT_ID_RE = /^[\w.-]+$/;
 const EDIT_OPS = new Set(['replace-line', 'delete-line', 'insert-after']);
 
-function validateSuggestion(item) {
+export function validateSuggestion(item: DynamicRecord | null | undefined): DynamicRecord {
   if (!item || typeof item !== 'object') return { ok: false, error: '建议项不是对象' };
   const action = String(item.action || '');
   if (!SUGGESTION_ACTIONS.has(action)) return { ok: false, error: '未知动作: ' + action };
-  const params = item.params && typeof item.params === 'object' ? item.params : {};
+  const params: DynamicRecord = item.params && typeof item.params === 'object' ? item.params : {};
   const risk = ['low', 'medium', 'high'].includes(item.risk) ? item.risk : 'low';
   const reason = typeof item.reason === 'string' ? item.reason.slice(0, 1000) : '';
-  const out = { action, params: {}, risk, reason };
+  const out: DynamicRecord = { action, params: {}, risk, reason };
 
   if (action === 'restore') {
     const id = String(params.snapshotId || '');
@@ -375,31 +376,34 @@ const EDITABLE_PROFILE_FILES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspac
 const EDITABLE_HOME_FILES = ['settings.yaml'];
 
 // 校验编辑目标：文件名必须本身在白名单内，解析后落在 profileDir / home 根下。
-function validateEditTarget(file, ctx = {}) {
+export function validateEditTarget(file: unknown, ctx: DynamicRecord = {}): DynamicRecord {
   const name = String(file || '');
   if (!name || name.includes('\\') || name.includes('/') || name.includes('..') || name.includes(':')) {
     return { ok: false, error: '越权路径：只允许编辑白名单文件本身' };
   }
   const ext = path.extname(name).toLowerCase();
+  const joinRoot = (root: string): string => /^(?:[A-Za-z]:[\\/]|\\\\)/.test(root)
+    ? path.win32.join(root, name)
+    : path.join(root, name);
   if (EDITABLE_PROFILE_FILES.includes(name)) {
     const profileDir = String(ctx.profileDir || '');
     if (!profileDir) return { ok: false, error: 'profileDir 缺失' };
-    return { ok: true, abs: path.join(profileDir, name), kind: 'profile', ext };
+    return { ok: true, abs: joinRoot(profileDir), kind: 'profile', ext };
   }
   if (EDITABLE_HOME_FILES.includes(name)) {
     const home = String(ctx.home || '');
     if (!home) return { ok: false, error: 'home 缺失' };
-    return { ok: true, abs: path.join(home, name), kind: 'home', ext };
+    return { ok: true, abs: joinRoot(home), kind: 'home', ext };
   }
   return { ok: false, error: '文件不在可编辑白名单内' };
 }
 
-function lineMatches(line, anchor) {
+function lineMatches(line: unknown, anchor: string): boolean {
   const t = String(line).trim();
   return t === anchor || t.startsWith(anchor + ':') || t.startsWith(anchor + ' ');
 }
 
-function applyEditOp(text, op) {
+function applyEditOp(text: unknown, op: DynamicRecord): DynamicRecord {
   const kind = String(op && op.op || '');
   const anchor = String(op && op.anchor || '');
   if (!anchor) return { ok: false, error: '行编辑缺少 anchor' };
@@ -423,7 +427,7 @@ function applyEditOp(text, op) {
   return { ok: false, error: '未知编辑操作: ' + kind };
 }
 
-function verifyContentParses(ext, text) {
+function verifyContentParses(ext: string, text: string): string | null {
   try {
     if (ext === '.json') {
       JSON.parse(text);
@@ -435,13 +439,13 @@ function verifyContentParses(ext, text) {
     }
     return null;
   } catch (err) {
-    return '编辑后内容无法解析（' + (ext === '.json' ? 'JSON' : 'YAML') + '）: ' + String((err && err.message) || err);
+    return '编辑后内容无法解析（' + (ext === '.json' ? 'JSON' : 'YAML') + '）: ' + String((err as Error).message || err);
   }
 }
 
 // 应用一次白名单文件编辑。副作用（备份/写盘）经 ctx 注入，核心纯逻辑可测。
 // 顺序：目标校验 → 行编辑 → 可解析校验 → 备份 → 写盘。
-function applyProfileEdit(edit, ctx = {}) {
+export function applyProfileEdit(edit: DynamicRecord, ctx: DynamicRecord = {}): DynamicRecord {
   const target = validateEditTarget(edit && edit.file, ctx);
   if (!target.ok) return { ok: false, error: target.error };
   const ops = Array.isArray(edit && edit.ops) ? edit.ops : null;
@@ -476,7 +480,7 @@ function applyProfileEdit(edit, ctx = {}) {
     if (typeof ctx.backup === 'function') ctx.backup(target.abs);
     if (typeof ctx.writeFile === 'function') ctx.writeFile(target.abs, result);
   } catch (err) {
-    return { ok: false, error: '写入失败: ' + String((err && err.message) || err) };
+    return { ok: false, error: '写入失败: ' + String((err as Error).message || err) };
   }
   return { ok: true, file: edit.file, opsApplied: applied, backupTaken: true };
 }
@@ -486,9 +490,9 @@ function applyProfileEdit(edit, ctx = {}) {
 // execute（执行单条白名单建议）、retry（重启 Web 服务）、fallback（兜底
 // 回滚+安全模式）。自动跳过 risk=high 的动作；无进展不重试；超过轮次
 // 或修复后仍无法启动 → 兜底并返回完整轮次记录。
-async function runAutoRepair({ diagnose, analyze, execute, retry, fallback, maxRounds = 2, log = () => {} } = {}) {
-  const safe = (fn) => Promise.resolve().then(fn).catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
-  const rounds = [];
+export async function runAutoRepair({ diagnose, analyze, execute, retry, fallback, maxRounds = 2, log = () => {} }: DynamicRecord = {}): Promise<DynamicRecord> {
+  const safe = (fn: DynamicFn): Promise<DynamicRecord> => Promise.resolve().then(fn).catch((err: unknown) => ({ ok: false, error: String((err as Error).message || err) }));
+  const rounds: DynamicRecord[] = [];
   const max = Math.max(1, Number(maxRounds) || 2);
   for (let round = 0; round < max; round++) {
     const diag = await safe(diagnose);
@@ -496,7 +500,7 @@ async function runAutoRepair({ diagnose, analyze, execute, retry, fallback, maxR
     const ai = await safe(() => analyze(diag.payload));
     if (!ai || !ai.ok) return { ok: false, error: (ai && ai.error) || 'AI 诊断失败', rounds };
     const suggestions = Array.isArray(ai.suggestions) ? ai.suggestions : [];
-    const applied = [];
+    const applied: DynamicRecord[] = [];
     for (const s of suggestions) {
       if (s && s.risk === 'high') {
         applied.push({ action: s.action, skipped: 'high-risk' });
@@ -506,7 +510,7 @@ async function runAutoRepair({ diagnose, analyze, execute, retry, fallback, maxR
       applied.push({ action: s && s.action, ok: !!(r && r.ok), result: r && r.result, error: r && r.error });
     }
     const progressed = applied.some((a) => a.ok);
-    const roundRec = { round, analysis: ai.analysis || '', applied };
+    const roundRec: DynamicRecord = { round, analysis: ai.analysis || '', applied };
     if (!progressed) {
       rounds.push(roundRec);
       return { ok: false, rounds, error: 'AI 未给出可自动执行的修复', fallback: await safe(fallback) };
@@ -523,14 +527,14 @@ async function runAutoRepair({ diagnose, analyze, execute, retry, fallback, maxR
 
 // ── 白名单分发（applySuggestion，副作用经 exec 注入）──────────────────
 // exec(suggestion) 由 main.js 提供，返回 { ok, result?, error?, restartRequired? }。
-async function applySuggestion(suggestion, exec, log = () => {}) {
+export async function applySuggestion(suggestion: DynamicRecord, exec: DynamicFn, log: DynamicFn = () => {}): Promise<DynamicRecord> {
   const v = validateSuggestion(suggestion);
   if (!v.ok) return { ok: false, error: v.error };
   try {
     const res = await exec(v.suggestion);
     return { ok: true, ...(res || {}) };
   } catch (err) {
-    const msg = String((err && err.message) || err);
+    const msg = String((err as Error).message || err);
     log('rescue', '救援动作执行失败: ' + msg);
     return { ok: false, error: msg };
   }
@@ -539,15 +543,15 @@ async function applySuggestion(suggestion, exec, log = () => {}) {
 // ── 壳层安全模式 patch（safeModePatch）────────────────────────────────
 // 只保留 keepIds（核心插件）的登记点，其余 id 的行全部移除（复用
 // removePluginFromPatch 的纯文本手术，保留文件格式与注释）。
-function safeModePatch(patchText, keepIds) {
+export function safeModePatch(patchText: unknown, keepIds: unknown): { patch: string; removed: string[] } {
   const text = String(patchText || '');
-  const keep = new Set(Array.isArray(keepIds) ? keepIds : []);
-  const ids = new Set();
+  const keep = new Set<string>(Array.isArray(keepIds) ? keepIds.map(String) : []);
+  const ids = new Set<string>();
   const re = /^[ \t]*- id:\s*([A-Za-z0-9_.-]+)/gm;
   let m;
-  while ((m = re.exec(text)) !== null) ids.add(m[1]);
+  while ((m = re.exec(text)) !== null) ids.add(m[1] ?? '');
   let patch = text;
-  const removed = [];
+  const removed: string[] = [];
   for (const id of ids) {
     if (keep.has(id)) continue;
     const next = removePluginFromPatch(patch, id);
@@ -561,7 +565,7 @@ function safeModePatch(patchText, keepIds) {
 
 // ── 崩溃循环计数（纯函数）────────────────────────────────────────────
 // state: { bootFailures, windowStart, lastAt }；now 为毫秒时间戳（可注入便于测试）。
-function recordBootFailure(state, now = Date.now(), opts = {}) {
+export function recordBootFailure(state: DynamicRecord | null, now = Date.now(), opts: DynamicRecord = {}): DynamicRecord {
   const o = { ...DEFAULT_OPTS, ...opts };
   const s = state && typeof state === 'object' ? { ...state } : {};
   if (!s.windowStart || now - s.windowStart > o.BOOT_FAILURE_WINDOW_MS) {
@@ -574,7 +578,7 @@ function recordBootFailure(state, now = Date.now(), opts = {}) {
   return s;
 }
 
-function shouldEnterRescue(state, now = Date.now(), opts = {}) {
+export function shouldEnterRescue(state: DynamicRecord | null, now = Date.now(), opts: DynamicRecord = {}): boolean {
   const o = { ...DEFAULT_OPTS, ...opts };
   const s = state || {};
   if (!s.windowStart || now - s.windowStart > o.BOOT_FAILURE_WINDOW_MS) return false;
@@ -583,7 +587,7 @@ function shouldEnterRescue(state, now = Date.now(), opts = {}) {
 
 // ── AI 调用（chatCompletions，httpFn 可注入便于测试）──────────────────
 // 默认走 node:https POST /chat/completions；超时与响应大小双上限。
-function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn } = {}) {
+export function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }: DynamicRecord = {}): Promise<DynamicRecord> {
   const key = String(apiKey || '');
   if (!key) return Promise.resolve({ ok: false, error: 'no-key' });
   const base = String(baseUrl || process.env.DEEPSEEK_API_BASE || 'https://api.deepseek.com').replace(/\/+$/, '');
@@ -602,7 +606,7 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
   const transport = base.startsWith('http://') ? http : https;
   const doFetch = typeof httpFn === 'function'
     ? httpFn
-    : (url2, reqBody, headers) => new Promise((resolve, reject) => {
+    : (url2: string, reqBody: string, headers: Record<string, string>) => new Promise<DynamicRecord>((resolve, reject) => {
       const req = transport.request(url2, {
         method: 'POST',
         headers: {
@@ -611,10 +615,10 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
           'User-Agent': 'DSH-Desktop/Rescue',
           ...(headers || {}),
         },
-      }, (res) => {
+      }, (res: any) => {
         let data = '';
         res.setEncoding('utf8');
-        res.on('data', (c) => {
+        res.on('data', (c: string) => {
           data += c;
           if (data.length > DEFAULT_OPTS.AI_RESPONSE_MAX) {
             req.destroy(new Error('AI 响应过大'));
@@ -628,14 +632,14 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
         });
       });
       req.setTimeout(timeout, () => req.destroy(new Error('AI 请求超时')));
-      req.on('error', (err) => reject(err));
+      req.on('error', (err: Error) => reject(err));
       req.write(reqBody);
       req.end();
     });
 
   return Promise.resolve()
     .then(() => doFetch(url, body, { Authorization: 'Bearer ' + key }))
-    .then((res) => {
+    .then((res: DynamicRecord) => {
       if (!res) return { ok: false, error: 'AI 无响应' };
       if (res.error) return { ok: false, error: String(res.error) };
       let parsed = null;
@@ -644,24 +648,5 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
       if (!content || typeof content.content !== 'string') return { ok: false, error: 'AI 响应缺少内容' };
       return { ok: true, content: content.content };
     })
-    .catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
+    .catch((err: unknown) => ({ ok: false, error: String((err as Error).message || err) }));
 }
-
-module.exports = {
-  DEFAULT_OPTS,
-  ACTION_SPEC,
-  readTail,
-  collectDiagnosis,
-  filterDiagnosisPayload,
-  buildDiagnosisPrompt,
-  parseAiResponse,
-  validateSuggestion,
-  applySuggestion,
-  safeModePatch,
-  recordBootFailure,
-  shouldEnterRescue,
-  chatCompletions,
-  validateEditTarget,
-  applyProfileEdit,
-  runAutoRepair,
-};

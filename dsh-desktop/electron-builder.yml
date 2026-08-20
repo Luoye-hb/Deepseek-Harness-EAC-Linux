@@ -27,6 +27,7 @@ files:
   - main.js
   # Task 1.x/2.x：lib/ 为 tsc 原地编译产物（prepack 时生成），bundled-files 防呆覆盖。
   - lib/state.js
+  - lib/dsh-home.js
   - lib/log.js
   - lib/proc.js
   - lib/paths.js
@@ -97,6 +98,7 @@ files:
   - host-bootstrap.js
   - native/supervisor/index.node
   - updater.js
+  - settings.js
   - client-updater.js
   - logger.js
   - plugin-updater.js

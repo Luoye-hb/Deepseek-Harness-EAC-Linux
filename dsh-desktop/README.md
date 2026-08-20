@@ -147,7 +147,6 @@
 | `dsh-easy-setup` | 一键迁移（一键夺舍）：选择目录 → 新建工作区与对话 → AI 全程可视化迁移 skills / MCP / 记忆 | 设置 → 一键迁移 |
 | `dsh-change-review`（v4） | AI 变更审核：监控本会话文件改动，手动/自动让模型复查自己刚做的改动（正确性/安全性/目标一致性），配合「文件」页一键还原 | 设置 → AI 变更审核 |
 | `dsh-undo-savepoint`（v4） | 崩溃急救与撤销：配置/插件代码快照、undo/redo、一键安全模式、密钥脱敏 vault、跨机迁移 ZIP | 对话顶部 undo/redo 按钮 + 快照面板 |
-| `@deepseek-ai/dsh-openclaw-bridge`（v4） | 微信 ClawBot / OpenClaw 桥：微信扫码绑定后在小程序里驱动常驻 DSH 会话；OpenAI 兼容端点；第三方模型端点 | 设置 → ClawBot |
 | `@deepseek-ai/dsh-float-window`（v4） | 会话浮窗：把会话弹出到独立窗口分屏多任务 | 会话头部「弹出到独立窗口」 |
 | `@dsh-external/dsh-side-session`（v4） | 侧边临时会话：浮窗追问、不写主会话、多种回答引擎 | Ctrl+Shift+S |
 | `dsh-session-manager`（v4） | 会话删除与归档管理：会话行「删除对话」+ 归档恢复/删除面板 | 会话菜单 + 设置面板 |
