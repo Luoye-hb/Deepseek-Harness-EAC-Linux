@@ -30,6 +30,7 @@ files:
   - lib/dsh-home.js
   - lib/log.js
   - lib/proc.js
+  - lib/process-tree.js
   - lib/paths.js
   - lib/bridge.js
   - lib/run-state.js
@@ -88,6 +89,7 @@ files:
   - lib/supervisor/installer.js
   - lib/extension-host/rpc.js
   - lib/extension-host/job-fence.js
+  - lib/extension-host/posix-lease.js
   - lib/extension-host/manager.js
   - lib/extension-host/bridge-server.js
   - lib/extension-host/sdk/index.js

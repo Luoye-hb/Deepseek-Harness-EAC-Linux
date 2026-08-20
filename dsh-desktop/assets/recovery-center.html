@@ -64,6 +64,7 @@
 </header>
 <main>
   <div class="banner" id="banner">本页独立于 Web UI 运行：可在此停用、移除、回滚或隔离问题插件后重试启动。</div>
+  <div class="banner" id="fence">正在读取 Extension Host 围栏状态…</div>
   <div class="toolbar">
     <button id="btn-retry">重试启动 Web 服务</button>
     <button id="btn-safemode" class="warn" title="重启应用并禁用全部非核心外置插件">安全模式重启</button>
@@ -107,6 +108,7 @@ async function refresh() {
   if (!st || !st.ok) { banner('状态读取失败：' + (st && st.error), 'err'); return; }
   $('meta').textContent = 'v' + st.appVersion + ' · profile: ' + st.profile +
     ' · 快照 ' + st.snapshots.length + ' · 事故 ' + st.incidents.length;
+  $('fence').textContent = 'Extension Host 围栏：' + st.fence.mode + ' · ' + st.fence.limitation;
   const tb = $('rows');
   if (!st.plugins.length) {
     tb.innerHTML = '<tr><td colspan="6" class="empty">注册表为空（尚未登记插件档案）</td></tr>';

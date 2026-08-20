@@ -27,7 +27,6 @@
  */
 
 import { app } from 'electron';
-import { spawn } from 'node:child_process';
 
 // ── lib 装配表（bridge 注入需要运行期引用；保持 require 顺序稳定）──────
 import { state } from './lib/state.js';
@@ -44,6 +43,7 @@ import { boot, fatal, handleBootFailure } from './lib/boot.js';
 import { shutdownExtensionHosts } from './lib/extension-host/manager.js';
 import * as structuredLogger from './logger.js';
 import * as updaterReal from './updater.js';
+import { terminateChildProcessTree } from './lib/process-tree.js';
 
 // 跨域注入点装配（lib/bridge.ts 的默认实现只是警告占位；这里在模块加载期
 // 指向真实实现 —— 装配早于任何事件回调，语义等价于原 main.js 闭包直调）。
@@ -97,16 +97,16 @@ if (!gotLock) {
         // 标记文件的 attempts 机制会在下次启动重试）。
         if (state.marketOpChild && state.marketOpChild.pid && state.marketOpChild.exitCode === null) {
           try {
-            spawn('taskkill', ['/pid', String(state.marketOpChild.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          } catch {
-            /* 已退出 */
+            await terminateChildProcessTree(state.marketOpChild);
+          } catch (err) {
+            log('boot', '插件市场任务进程树清理失败: ' + String((err as Error).message));
           }
         }
         await killTreeAndWait(state.serverProc);
         // VNext Phase 2：树杀全部 SDK 插件 Host（Job 围栏下 Supervisor 崩溃
         // 也有 OS 兜底回收；此处覆盖正常退出路径）。
         await shutdownExtensionHosts();
-        updaterReal.abort();
+        await updaterReal.abort();
         if (state.sessionWatcher) state.sessionWatcher.stop();
       } catch (err) {
         log('boot', '退出清理异常: ' + String((err as Error)?.message));

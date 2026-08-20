@@ -25,6 +25,7 @@ const JOB_MODE = jobFence.fenceMode() === 'win32-job';
 /** 受控 DSH_HOME（registry/incidents 均动态读取 state.dshHome）。 */
 function freshHome() {
   const home = mkdtempSync(join(tmpdir(), 'extmgr-'));
+  process.env.DSH_HOME = home;
   stateMod.state.dshHome = home;
   return home;
 }

@@ -25,8 +25,21 @@ import * as path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable, Readable } from 'node:stream';
 import { log } from '../log.js';
+import { terminateProcessTree } from '../process-tree.js';
+import {
+  reclaimPosixLease, removePosixLease, writePosixLease,
+  type LeaseContext,
+} from './posix-lease.js';
 
 export type FenceMode = 'win32-job' | 'posix-process-group' | 'taskkill-fallback';
+
+export interface FenceCapabilities {
+  mode: FenceMode;
+  treeCleanup: boolean;
+  hardResourceLimits: boolean;
+  killOnSupervisorExit: boolean;
+  limitation: string;
+}
 
 /** Rust 原生模块的最小类型面（与 native/supervisor/src/job.rs 对应）。 */
 interface NativeSupervisor {
@@ -65,7 +78,7 @@ export interface FenceHandle {
 export interface Fence {
   readonly mode: FenceMode;
   /** 在围栏内拉起进程（stdio 即 RPC 传输层）。 */
-  launch(exe: string, args: string[], cwd?: string): FenceHandle;
+  launch(exe: string, args: string[], cwd?: string): Promise<FenceHandle>;
   /** 释放围栏资源（launch 失败/未用时的 Job 句柄回收）。 */
   dispose(): void;
 }
@@ -187,7 +200,7 @@ class JobFence implements Fence {
     this.jobId = native.createJob(jobOpts);
   }
 
-  launch(exe: string, args: string[], cwd?: string): FenceHandle {
+  async launch(exe: string, args: string[], cwd?: string): Promise<FenceHandle> {
     if (this.used) throw new Error('JobFence 一次只承载一个进程');
     this.used = true;
     const child = spawn(exe, args, { cwd, stdio: 'pipe', windowsHide: true });
@@ -219,30 +232,11 @@ class JobFence implements Fence {
 }
 
 // ---------------------------------------------------------------------------
-// 降级实现：spawn + taskkill /T /F
+// 降级实现：Windows taskkill；POSIX 独立进程组 + Linux 身份租约
 // ---------------------------------------------------------------------------
 
 function taskkillTree(pid: number): Promise<void> {
-  return new Promise((resolve) => {
-    if (process.platform !== 'win32') {
-      try {
-        process.kill(-pid, 'SIGTERM');
-      } catch {
-        try { process.kill(pid, 'SIGTERM'); } catch { /* 已退出 */ }
-      }
-      const timer = setTimeout(() => {
-        try { process.kill(-pid, 'SIGKILL'); } catch {
-          try { process.kill(pid, 'SIGKILL'); } catch { /* 已退出 */ }
-        }
-        resolve();
-      }, 500);
-      timer.unref();
-      return;
-    }
-    const tk = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-    tk.once('exit', () => resolve());
-    tk.once('error', () => resolve());
-  });
+  return terminateProcessTree(pid, { graceMs: 500, hardMs: 2_000 }).then(() => undefined);
 }
 
 class FallbackFenceHandle implements FenceHandle {
@@ -286,7 +280,7 @@ class FallbackFenceHandle implements FenceHandle {
 class FallbackFence implements Fence {
   readonly mode: FenceMode = process.platform === 'win32' ? 'taskkill-fallback' : 'posix-process-group';
 
-  launch(exe: string, args: string[], cwd?: string): FenceHandle {
+  async launch(exe: string, args: string[], cwd?: string): Promise<FenceHandle> {
     const child = spawn(exe, args, {
       cwd,
       stdio: 'pipe',
@@ -305,6 +299,110 @@ class FallbackFence implements Fence {
   }
 }
 
+class PosixFenceHandle implements FenceHandle {
+  readonly mode = 'posix-process-group' as const;
+  readonly pid: number;
+  readonly stdin: Writable;
+  readonly stdout: Readable;
+  readonly stderr: Readable;
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly lease: LeaseContext | null;
+  private readonly exitCallbacks: Array<(code: number | null) => void> = [];
+  private cleanupPromise: Promise<void> | null = null;
+  private exitCode: number | null | undefined;
+  private stopped = false;
+
+  constructor(child: ChildProcessWithoutNullStreams, lease: LeaseContext | null) {
+    this.child = child;
+    this.lease = lease;
+    this.pid = child.pid ?? -1;
+    this.stdin = child.stdin;
+    this.stdout = child.stdout;
+    this.stderr = child.stderr;
+    child.once('exit', (code) => {
+      this.exitCode = code;
+      void this.cleanupGroup().then(() => {
+        for (const cb of this.exitCallbacks.splice(0)) cb(code);
+      });
+    });
+  }
+
+  onExit(cb: (code: number | null) => void): void {
+    if (this.exitCode !== undefined && this.cleanupPromise) {
+      void this.cleanupPromise.then(() => cb(this.exitCode ?? null));
+      return;
+    }
+    this.exitCallbacks.push(cb);
+  }
+
+  private cleanupGroup(): Promise<void> {
+    if (this.cleanupPromise) return this.cleanupPromise;
+    this.stopped = true;
+    this.cleanupPromise = (async () => {
+      const gone = await terminateProcessTree(this.pid);
+      if (gone && this.lease) removePosixLease(this.lease);
+      else if (!gone) log('warn', `job-fence: POSIX 进程组 ${this.pid} 有界清理后仍存活，保留租约`);
+      this.stdin.destroy();
+    })().catch((err) => {
+      log('warn', `job-fence: POSIX 进程组 ${this.pid} 清理失败，保留租约 error=${String((err as Error).message ?? err)}`);
+    });
+    return this.cleanupPromise;
+  }
+
+  async kill(): Promise<void> {
+    await this.cleanupGroup();
+  }
+
+  alive(): boolean {
+    return !this.stopped && this.child.exitCode === null && !this.child.killed;
+  }
+
+  dispose(): void {
+    void this.cleanupGroup();
+  }
+}
+
+class PosixFence implements Fence {
+  readonly mode = 'posix-process-group' as const;
+  private readonly opts: FenceOptions;
+  private used = false;
+
+  constructor(opts: FenceOptions) {
+    this.opts = opts;
+  }
+
+  async launch(exe: string, args: string[], cwd?: string): Promise<FenceHandle> {
+    if (this.used) throw new Error('PosixFence 一次只承载一个进程组');
+    this.used = true;
+    const lease = leaseContextFor(this.opts, exe, args);
+    if (lease && await reclaimPosixLease(lease) === 'rejected') {
+      throw new Error('Linux Fence 拒绝覆盖身份不匹配的旧租约；请在恢复中心检查事故记录');
+    }
+    const child = spawn(exe, args, {
+      cwd,
+      stdio: 'pipe',
+      detached: true,
+      windowsHide: true,
+    });
+    if (child.pid === undefined) {
+      child.kill();
+      throw new Error(`围栏 spawn 失败: ${exe}`);
+    }
+    try {
+      if (lease) writePosixLease(lease, child.pid);
+    } catch (err) {
+      await terminateProcessTree(child.pid);
+      throw new Error(`Linux Fence 租约创建失败（进程已回收）: ${String((err as Error).message)}`);
+    }
+    return new PosixFenceHandle(child, lease);
+  }
+
+  dispose(): void {
+    /* 未 launch 时无进程组或租约。 */
+  }
+
+}
+
 // ---------------------------------------------------------------------------
 // 工厂
 // ---------------------------------------------------------------------------
@@ -314,10 +412,39 @@ export interface FenceOptions {
   memoryLimitBytes?: number;
   /** CPU 配额百分比 1-100（仅 win32-job 模式生效）。 */
   cpuRatePercent?: number;
+  /** Linux 运行租约身份；三项齐备时启用持久租约。 */
+  pluginId?: string;
+  leaseDir?: string;
+  hostBootstrapPath?: string;
+  /** 租约身份校验拒绝时写入事故系统。 */
+  onLeaseMismatch?(detail: string): void;
+}
+
+function leaseContextFor(opts: FenceOptions, exe: string, args?: string[]): LeaseContext | null {
+  if (!opts.pluginId || !opts.leaseDir || !opts.hostBootstrapPath) return null;
+  const expected = path.resolve(opts.hostBootstrapPath);
+  if (args && !args.some((arg) => path.resolve(arg) === expected)) {
+    throw new Error('Linux Fence launch 参数缺少声明的 host-bootstrap 入口');
+  }
+  return {
+    pluginId: opts.pluginId,
+    leaseDir: opts.leaseDir,
+    executablePath: exe,
+    hostBootstrapPath: expected,
+    onMismatch: opts.onLeaseMismatch ?? ((detail) => log('warn', `job-fence: ${detail}`)),
+  };
+}
+
+/** Reclaim one prior Linux lease without launching a replacement Host. */
+export async function reclaimFenceLease(opts: FenceOptions, executablePath: string): Promise<void> {
+  if (process.platform !== 'linux') return;
+  const lease = leaseContextFor(opts, executablePath);
+  if (lease) await reclaimPosixLease(lease);
 }
 
 /** 创建围栏：Windows 优先 Job Object，POSIX 使用独立进程组。 */
 export function createFence(opts: FenceOptions = {}): Fence {
+  if (process.platform !== 'win32') return new PosixFence(opts);
   const native = loadNativeSupervisor();
   if (native) {
     try {
@@ -333,4 +460,37 @@ export function createFence(opts: FenceOptions = {}): Fence {
 export function fenceMode(): FenceMode {
   if (loadNativeSupervisor()) return 'win32-job';
   return process.platform === 'win32' ? 'taskkill-fallback' : 'posix-process-group';
+}
+
+/** Honest operator-facing capability summary for Recovery Center. */
+export function fenceCapabilities(): FenceCapabilities {
+  return capabilitiesForFenceMode(fenceMode());
+}
+
+export function capabilitiesForFenceMode(mode: FenceMode): FenceCapabilities {
+  if (mode === 'win32-job') {
+    return {
+      mode,
+      treeCleanup: true,
+      hardResourceLimits: true,
+      killOnSupervisorExit: true,
+      limitation: 'Win32 Job 提供树回收、硬资源限额与 Job 句柄关闭自动清理。',
+    };
+  }
+  if (mode === 'posix-process-group') {
+    return {
+      mode,
+      treeCleanup: true,
+      hardResourceLimits: false,
+      killOnSupervisorExit: false,
+      limitation: 'POSIX 进程组提供树回收与下次启动租约清理；无同级硬配额，Supervisor 被 SIGKILL 后不保证立即清理。',
+    };
+  }
+  return {
+    mode,
+    treeCleanup: true,
+    hardResourceLimits: false,
+    killOnSupervisorExit: false,
+    limitation: 'taskkill fallback 仅提供树终止；无硬配额或 Supervisor 崩溃自动清理。',
+  };
 }

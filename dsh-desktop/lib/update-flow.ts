@@ -479,7 +479,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
       state.quitting = true;
       state.forceQuit = true;
       markCleanExit();
-      updater.abort();
+      await updater.abort();
       if (state.sessionWatcher) state.sessionWatcher.stop();
       // V4：先等 dsh web 进程树真正退出（旧实现 killTree 的强杀补刀在
       // 主进程退出后不会执行，node.exe+conhost.exe 成对残留）。
@@ -539,7 +539,7 @@ export function offerPendingClientUpdate(): void {
     state.quitting = true;
     state.forceQuit = true;
     markCleanExit();
-    updater.abort();
+    await updater.abort();
     if (state.sessionWatcher) state.sessionWatcher.stop();
     // V4：同 runClientUpdateFlow —— 等进程树退出再交给更新脚本接管。
     await killTreeAndWait(state.serverProc);

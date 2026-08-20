@@ -34,6 +34,7 @@ import {
   upsertLegacyPlugin,
 } from '../supervisor/registry.js';
 import { COMPANION_PLUGINS } from '../plugin-registry-data.js';
+import { fenceCapabilities } from '../extension-host/job-fence.js';
 
 /** 恢复中心窗口实例（state 之外的单例 —— 无需跨模块共享可变状态）。 */
 let rcWindow: BrowserWindow | null = null;
@@ -102,6 +103,7 @@ function registerRecoveryCenterIpc(): void {
             plugins: listRegistryEntries(),
             snapshots: g.listSnapshots().slice(0, 20),
             incidents: g.listIncidents().slice(0, 20),
+            fence: fenceCapabilities(),
           };
         }
         case 'disable':

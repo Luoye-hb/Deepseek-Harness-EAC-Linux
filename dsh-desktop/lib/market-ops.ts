@@ -19,6 +19,7 @@ import { childEnv } from './server.js';
 import { bridge } from './bridge.js';
 import { artifactKeep, allowBuilds } from './market-modules.js';
 import { managedPackageNames, healProfileModules } from './plugins.js';
+import { terminateChildProcessTree } from './process-tree.js';
 
 const MARKER_NAME = '.dsh-market-pending.json';
 const MARKER_MAX_ATTEMPTS = 3;
@@ -170,6 +171,7 @@ export async function processPendingMarketOps(): Promise<void> {
           // 脚本静默放行，而不是 ERR_PNPM_IGNORED_BUILDS 硬失败。
           env: { ...childEnv(), CI: 'true' },
           windowsHide: true,
+          detached: process.platform !== 'win32',
           stdio: ['ignore', 'pipe', 'pipe'],
         },
       );
@@ -188,11 +190,9 @@ export async function processPendingMarketOps(): Promise<void> {
       child.stderr?.on('data', onData);
       const timer = setTimeout(() => {
         log('market-pending', '排队任务超时（5 分钟），强制终止');
-        try {
-          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        } catch {
-          /* kill 失败由 close 事件兜底 */
-        }
+        void terminateChildProcessTree(child).catch((err) => {
+          log('market-pending', '排队任务进程树终止失败: ' + String((err as Error).message));
+        });
       }, 5 * 60 * 1000);
       child.on('error', (err) => {
         clearTimeout(timer);

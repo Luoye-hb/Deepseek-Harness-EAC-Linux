@@ -121,8 +121,10 @@ test('job-fence：fenceMode 与 createFence 模式一致；stdio 管道 + onExit
     assert.equal(fence.mode, 'win32-job');
   }
   // spawn 一个真实 node 子进程（两种模式共用路径），验证 stdio 管道 + 退出感知
-  const childScript = 'process.stdin.on("data",(c)=>{process.stdout.write("ack:"+c.toString().trim());process.exit(0)})';
-  const h = fence.launch(process.execPath, ['-e', childScript]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-fence-echo-'));
+  const childScript = path.join(dir, 'echo.cjs');
+  fs.writeFileSync(childScript, 'process.stdin.on("data",(c)=>{process.stdout.write("ack:"+c.toString().trim());process.exit(0)})');
+  const h = await fence.launch(process.execPath, [childScript]);
   assert.ok(h.pid > 0);
   assert.equal(h.mode, fence.mode);
   const exited = new Promise((r) => h.onExit(r));
@@ -140,11 +142,15 @@ test('job-fence：fenceMode 与 createFence 模式一致；stdio 管道 + onExit
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(h.alive(), false, '自退出后不得存活');
   h.dispose();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('job-fence：kill() 强杀长驻进程（树回收）', async () => {
   const fence = jobFence.createFence();
-  const h = fence.launch(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-fence-hang-'));
+  const childScript = path.join(dir, 'hang.cjs');
+  fs.writeFileSync(childScript, 'setInterval(()=>{},1000)');
+  const h = await fence.launch(process.execPath, [childScript]);
   const exited = new Promise((r) => h.onExit(r));
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(h.alive(), true, '长驻进程必须在围栏内存活');
@@ -153,6 +159,7 @@ test('job-fence：kill() 强杀长驻进程（树回收）', async () => {
   assert.equal(h.alive(), false, 'kill 后不得存活');
   // 幂等
   await h.kill();
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('job-fence：native sha256Stream 与 node crypto 一致', async () => {

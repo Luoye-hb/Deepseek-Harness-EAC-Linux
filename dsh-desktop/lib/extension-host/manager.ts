@@ -17,7 +17,10 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { createFence, fenceMode, type FenceHandle, type FenceMode } from './job-fence.js';
+import {
+  createFence, fenceMode, reclaimFenceLease,
+  type FenceHandle, type FenceMode, type FenceOptions,
+} from './job-fence.js';
 import { RpcPeer } from './rpc.js';
 import { readRegistry, writeRegistry } from '../supervisor/registry.js';
 import type { RegistryEntry } from '../supervisor/registry.js';
@@ -25,6 +28,8 @@ import { extensionsRoot, installSdkPlugin } from '../supervisor/installer.js';
 import { applyTransition, noteStableRunning, STABLE_MS } from '../supervisor/state-machine.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
+import { dshHomePath } from '../dsh-home.js';
+import { recordIncident } from '../supervisor/incidents.js';
 import { toContributions } from './sdk/index.js';
 import type {
   CollectContextParams, ContextContribution, HostInitParams, HostInitResult,
@@ -147,6 +152,16 @@ export class ExtensionHostManager {
     return fenceMode();
   }
 
+  /** 应用启动时清理全部有档案插件的上次 Linux Host 租约。 */
+  async reclaimStaleLeases(): Promise<void> {
+    if (process.platform !== 'linux') return;
+    const reg = readRegistry();
+    for (const [id, entry] of Object.entries(reg.plugins)) {
+      if (entry.kind !== 'isolated') continue;
+      await reclaimFenceLease(this.fenceOptions(id, entry), this.o.nodeExe);
+    }
+  }
+
   /**
    * 拉起一个插件的 Host（幂等：已在运行则直接返回成功）。
    * 状态机：starting →（init 成功）running /（失败）failed|quarantined。
@@ -196,10 +211,10 @@ export class ExtensionHostManager {
       }
     }
 
-    const fence = createFence({ memoryLimitBytes: this.o.memoryLimitBytes });
+    const fence = createFence(this.fenceOptions(id, e));
     let handle: FenceHandle;
     try {
-      handle = fence.launch(this.o.nodeExe, [this.o.hostBootstrapPath]);
+      handle = await fence.launch(this.o.nodeExe, [this.o.hostBootstrapPath]);
     } catch (err) {
       fence.dispose(); // 未用的 Job 句柄立即回收
       this.startFailed(id, `围栏 spawn 失败: ${String((err as Error).message)}`);
@@ -420,6 +435,25 @@ export class ExtensionHostManager {
     rt.peer.close('supervisor-kill');
     await rt.fence.kill();
   }
+
+  private fenceOptions(id: string, entry: RegistryEntry): FenceOptions {
+    return {
+      memoryLimitBytes: this.o.memoryLimitBytes,
+      pluginId: id,
+      leaseDir: path.join(dshHomePath(), 'extensions', 'leases'),
+      hostBootstrapPath: this.o.hostBootstrapPath,
+      onLeaseMismatch: (detail) => {
+        log('ext-host', `${id}: ${detail}`);
+        recordIncident(id, {
+          kind: 'fault',
+          from: entry.state,
+          to: entry.state,
+          version: entry.version,
+          detail,
+        });
+      },
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +478,9 @@ export function getExtensionHostManager(): ExtensionHostManager {
 /** 启动链入口：并行拉起全部启用的 SDK 插件（无插件时为空操作）。 */
 export async function startEnabledExtensionHosts(): Promise<void> {
   try {
-    await getExtensionHostManager().startEnabled();
+    const manager = getExtensionHostManager();
+    await manager.reclaimStaleLeases();
+    await manager.startEnabled();
   } catch (err) {
     log('ext-host', '启动 SDK 插件宿主失败（不影响核心）: ' + String((err as Error).message));
   }

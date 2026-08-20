@@ -25,11 +25,11 @@ import {
   loadSettings, saveSettings, settingsPath,
   type DshSettings, type SettingsContext,
 } from './settings.js';
+import { terminateChildProcessTree } from './lib/process-tree.js';
 
 export { loadSettings, saveSettings, settingsPath, type DshSettings } from './settings.js';
 
 const PKG = '@deepseek-ai/dsh';
-const IS_WIN = process.platform === 'win32';
 
 // 镜像源链：默认源（用户 .npmrc / NPM_CONFIG_REGISTRY）卡住或失败时依次
 // 自动切换。切换与结果都会经 onProgress 上报给更新弹窗提示。
@@ -130,19 +130,13 @@ export function compareVersions(a: string, b: string): number {
 
 // --- npm 运行器 ------------------------------------------------------------
 
-function killProc(proc: ChildProcess | null): void {
-  if (!proc || !proc.pid) return;
-  try {
-    if (IS_WIN) spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    else proc.kill('SIGTERM');
-  } catch {
-    /* 已退出 */
-  }
+async function killProc(proc: ChildProcess | null): Promise<void> {
+  await terminateChildProcessTree(proc).catch(() => undefined);
 }
 
 /** 中止正在进行的 npm 子进程（更新/回退期间应用退出时调用）。 */
-export function abort(): void {
-  killProc(activeProc);
+export async function abort(): Promise<void> {
+  await killProc(activeProc);
   activeProc = null;
 }
 
@@ -203,7 +197,7 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       reject(e instanceof Error ? e : new Error(String(e)));
     };
     const timer = setTimeout(() => {
-      killProc(proc);
+      void killProc(proc);
       finishErr(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
     }, timeoutMs);
     // 停滞检测：stallMs > 0 时，超过阈值没有产生任何输出即判死（触发
@@ -213,7 +207,7 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       if (!stallMs) return;
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
-        killProc(proc);
+        void killProc(proc);
         finishErr(new Error('下载停滞（' + Math.round(stallMs / 1000) + ' 秒无进展），将切换镜像源重试'));
       }, stallMs);
     };

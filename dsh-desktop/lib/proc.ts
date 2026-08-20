@@ -11,7 +11,6 @@
  * 「退出后残留一对进程」的关键，勿改动节奏（详见函数内注释）。
  */
 
-import { spawn, execSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -19,6 +18,11 @@ import { app } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import {
+  requestProcessTreeTermination,
+  terminateChildProcessTree,
+  waitForProcessTreeExit,
+} from './process-tree.js';
 
 /** 是否运行在 Windows（进程回收策略分支依据）。 */
 export const IS_WIN = process.platform === 'win32';
@@ -72,35 +76,7 @@ export function dshVersionSource(): string {
  * POSIX：对进程组发 SIGTERM，失败则对进程本身发。
  */
 export function killTree(proc: ChildProcess | null): void {
-  if (!proc || !proc.pid) return;
-  try {
-    if (IS_WIN) {
-      // M2 修复：先优雅（无 /F）给进程收尾机会，短等待后仍存活再强杀。
-      spawn('taskkill', ['/pid', String(proc.pid), '/T'], { windowsHide: true, stdio: 'ignore' });
-      const pid = proc.pid;
-      setTimeout(() => {
-        try {
-          const alive = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
-            encoding: 'utf8',
-            windowsHide: true,
-          });
-          if (alive.includes(String(pid))) {
-            spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          }
-        } catch {
-          /* 进程已退出或查询失败 */
-        }
-      }, 1500);
-    } else {
-      try {
-        process.kill(-proc.pid, 'SIGTERM');
-      } catch {
-        proc.kill('SIGTERM');
-      }
-    }
-  } catch (err) {
-    log('killTree', String(err));
-  }
+  requestProcessTreeTermination(proc, {}, (err) => log('killTree', String(err)));
 }
 
 /** killTreeAndWait 的可调参数（毫秒）。 */
@@ -127,49 +103,9 @@ export async function killTreeAndWait(
   proc: ChildProcess | null,
   opts: KillTreeAndWaitOpts = {},
 ): Promise<void> {
-  const { graceMs = 1200, hardMs = 4000 } = opts;
-  if (!proc || !proc.pid || proc.exitCode !== null) return;
-  const pid = proc.pid;
+  if (!proc?.pid) return;
   try {
-    if (IS_WIN) {
-      spawn('taskkill', ['/pid', String(pid), '/T'], { windowsHide: true, stdio: 'ignore' });
-      await waitForProcExit(proc, graceMs);
-      if (proc.exitCode !== null) return;
-      try {
-        const alive = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
-          encoding: 'utf8',
-          windowsHide: true,
-        });
-        // CSV 输出里 PID 带引号；查不到说明已退出。
-        if (!alive.includes(`"${pid}"`)) return;
-      } catch {
-        return;
-      }
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      await waitForProcExit(proc, hardMs);
-    } else {
-      try {
-        process.kill(-proc.pid, 'SIGTERM');
-      } catch {
-        try {
-          proc.kill('SIGTERM');
-        } catch {
-          /* 已退出 */
-        }
-      }
-      await waitForProcExit(proc, graceMs);
-      if (proc.exitCode !== null) return;
-      try {
-        process.kill(-proc.pid, 'SIGKILL');
-      } catch {
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          /* 已退出 */
-        }
-      }
-      await waitForProcExit(proc, hardMs);
-    }
+    await terminateChildProcessTree(proc, opts);
   } catch (err) {
     log('killTree', String(err));
   }
@@ -180,45 +116,9 @@ export async function killTreeAndWait(
  * 终止才释放）。轮询 tasklist / kill-0，超时后放行由调用方自行处理。
  */
 export function waitForProcExit(proc: ChildProcess | null, timeoutMs: number): Promise<void> {
-  return new Promise((resolve) => {
-    if (!proc || !proc.pid) {
-      resolve();
-      return;
-    }
-    const pid = proc.pid;
-    const started = Date.now();
-    const isAlive = (): boolean => {
-      if (proc.exitCode !== null) return false;
-      if (!IS_WIN) {
-        try {
-          process.kill(pid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      }
-      try {
-        const out = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
-          encoding: 'utf8',
-          windowsHide: true,
-        });
-        return out.includes(`"${pid}"`);
-      } catch {
-        return false;
-      }
-    };
-    const check = (): void => {
-      if (!isAlive()) {
-        resolve();
-        return;
-      }
-      if (Date.now() - started >= timeoutMs) {
-        log('service', `等待旧服务进程退出超时（PID ${pid}），继续`);
-        resolve();
-        return;
-      }
-      setTimeout(check, 200);
-    };
-    check();
+  if (!proc?.pid) return Promise.resolve();
+  const pid = proc.pid;
+  return waitForProcessTreeExit(pid, timeoutMs, 200).then((exited) => {
+    if (!exited) log('service', `等待旧服务进程树退出超时（PGID/PID ${pid}），继续`);
   });
 }
