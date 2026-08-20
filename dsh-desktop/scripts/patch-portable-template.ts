@@ -1,24 +1,23 @@
 'use strict';
 
-// Patch electron-builder's portable NSIS template so the portable exe keeps a
-// cached unpack directory across runs.
+// 给 electron-builder 的 portable NSIS 模板打补丁，让便携版 exe 跨启动
+// 保留解包缓存目录。
 //
-// Default behaviour: RMDir /r $INSTDIR before extraction and after app exit,
-// so every launch re-extracts app-64.7z (132MB / ~24k files) into %TEMP%.
-// With Defender scanning each new file this makes cold start take minutes.
+// 默认行为：解包前与应用退出后各执行一次 RMDir /r $INSTDIR，每次启动都
+// 把 app-64.7z（132MB / 约 2.4 万个文件）重新解到 %TEMP%。Defender 对
+// 每个新文件扫描，冷启动要花数分钟。
 //
-// Patched behaviour (unpackDirName must be a stable string in
-// electron-builder.yml):
-//   - if %TEMP%\<unpackDirName>\.dsh-portable-version equals ${VERSION}
-//     and the app exe exists, run the cached app directly (no extraction);
-//   - otherwise delete, re-extract, and write the version marker;
-//   - never delete the cache after the app exits.
-// A version bump therefore automatically invalidates the cache.
+// 补丁后行为（unpackDirName 必须是 electron-builder.yml 里的固定字符串）：
+//   - 若 %TEMP%\<unpackDirName>\.dsh-portable-version 等于 ${VERSION}
+//     且应用 exe 存在，直接运行缓存副本（跳过解包）；
+//   - 否则删除、重新解包并写入版本标记；
+//   - 应用退出后永不删除缓存。
+// 版本号变更即自动失效缓存。
 
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-function patch() {
+function patch(): void {
   const libPackage = require.resolve('app-builder-lib/package.json');
   const template = path.join(path.dirname(libPackage), 'templates', 'nsis', 'portable.nsi');
   let text = fs.readFileSync(template, 'utf8');

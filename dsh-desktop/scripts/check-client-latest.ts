@@ -8,16 +8,20 @@
 //   PORTABLE_EXECUTABLE_DIR   模拟便携版（资产选 *-portable-x64.exe）
 //   DSH_DESKTOP_APP_VERSION   以指定版本作为“当前版本”比较（默认 0.0.0）
 
-const path = require('node:path');
-const os = require('node:os');
-const fs = require('node:fs');
-const clientUpdater = require('../client-updater');
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as clientUpdater from '../client-updater.js';
 
 const current = process.env.DSH_DESKTOP_APP_VERSION || '0.0.0';
 const wantDownload = process.argv.includes('--download');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-check-client-'));
-const ctx = {
+const ctx: clientUpdater.ClientUpdCtx = {
   userDataDir: tmp,
+  // 客户端更新只消费 userDataDir 与 log；nodeExe/npmCli 是共用 ctx 工厂
+  // 形状，给空实现即可。
+  nodeExe: () => '',
+  npmCli: () => '',
   log: (tag, msg) => console.log(`[${tag}] ${msg}`),
 };
 
@@ -28,7 +32,7 @@ const ctx = {
   console.log('\n=== latest release ===');
   console.log('来源:', release.source);
   console.log('版本:', release.version, release.isNewer ? '(新于当前)' : '(不新于当前)');
-  console.log('标题:', release.name || '(无)');
+  console.log('标题:', release.name ?? '(无)');
   console.log('资产:');
   for (const a of release.assets) console.log(`  - ${a.name}  ${a.size ? Math.round(a.size / 1048576) + ' MB' : '(大小未知)'}  ${a.url}`);
   const sel = clientUpdater.selectAsset(release);
@@ -43,7 +47,7 @@ const ctx = {
   });
   console.log('\n下载完成:', res.filePath, Math.round(res.size / 1048576), 'MB');
   console.log('（未安装；临时目录:', tmp, '）');
-})().catch((err) => {
+})().catch((err: Error) => {
   console.error('\n失败:', err.message);
   process.exit(1);
 });

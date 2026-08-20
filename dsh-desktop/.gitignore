@@ -12,9 +12,7 @@ data/
 /shared/**/*.js
 /preload/*.js
 /preload-lib/**/*.js
-/scripts/patch-session-manage.js
-/scripts/plugin-manager-patch.js
-/scripts/onboarding.js
+/scripts/*.js
 !scripts/koffi-preflight.cjs
 # Rust 围栏模块：cargo target 不入库；index.node 为预编译产物（367KB，
 # predist 经 scripts/build-native.js copy 校验后随安装包分发）
