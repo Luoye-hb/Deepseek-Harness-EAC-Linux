@@ -66,6 +66,10 @@ export interface TurnEndInfo {
 // 会话完成通知：同一会话 30 秒内至多一条（长任务多回合不刷屏）。
 const lastNotifyAt = new Map<string, number>(); // sessionId -> timestamp
 
+/**
+ * 会话回合结束通知（session-watcher 回调）：系统 toast + 点击聚焦主窗口。
+ * 同一会话 30 秒节流（长任务多回合不刷屏）。
+ */
 export function onSessionTurnEnd(info: TurnEndInfo): void {
   if (!state.notifyOnTurnEnd || state.quitting) return;
   const now = Date.now();

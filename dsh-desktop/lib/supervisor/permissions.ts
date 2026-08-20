@@ -77,10 +77,3 @@ export function setGranted(id: string, granted: boolean): boolean {
   reg.plugins[id] = e;
   return writeRegistry(reg);
 }
-
-/** 读取授权状态（未建档/未授权返回 false）。 */
-export function isGranted(id: string): boolean {
-  const reg = readRegistry();
-  const e = reg.plugins[id] as { granted?: boolean } | undefined;
-  return !!e && e.granted === true;
-}

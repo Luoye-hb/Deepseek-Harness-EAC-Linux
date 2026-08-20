@@ -119,14 +119,6 @@ export interface RpcNotification {
 
 export type RpcMessage = RpcRequest | RpcResponse | RpcNotification;
 
-/** Host → Supervisor 的生命周期通知。 */
-export interface HostHello {
-  pluginId: string;
-  version: string;
-  /** 插件声明的工具名列表（Core Bridge 桥接用）。 */
-  tools: string[];
-}
-
 /** Supervisor → Host 心跳探测参数。 */
 export interface PingParams {
   /** 发出时间戳（Host 原样回带，供 RTT 测量）。 */

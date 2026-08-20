@@ -35,6 +35,7 @@ interface RevertResult {
   error?: string;
 }
 
+/** 注册会话/余额/文件域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
 export function registerSessionIpc(): void {
   // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口（校验来源与
   // 数量上限）；浮窗自己只允许关闭自身。

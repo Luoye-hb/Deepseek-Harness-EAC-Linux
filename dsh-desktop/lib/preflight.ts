@@ -8,9 +8,8 @@
  */
 
 import * as path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import {
-  runKoffiPreflight,
   runKoffiPreflightAsync,
   enablePickerBrowseOverlay,
   clearAutoPickerBrowseOverlay,
@@ -27,24 +26,6 @@ export function pickerBrowseOverlayPath(): string {
 /** 预检日志适配（tag=preflight）。 */
 function preflightLogger(msg: string): void {
   log('preflight', msg);
-}
-
-/** 同步探针（会把事件循环卡住最长 20 秒，仅非关键路径使用）。 */
-export function applyKoffiPreflight(): boolean {
-  const file = pickerBrowseOverlayPath();
-  const ok = runKoffiPreflight({
-    spawnSync,
-    nodeExe: nodeExe(),
-    script: path.join(__dirname, '..', 'scripts', 'koffi-preflight.cjs'),
-    log: preflightLogger,
-  });
-  if (ok) {
-    clearAutoPickerBrowseOverlay({ file, log: preflightLogger });
-    state.pickerBrowseOverlay = null;
-  } else {
-    state.pickerBrowseOverlay = enablePickerBrowseOverlay({ file, log: preflightLogger });
-  }
-  return ok;
 }
 
 // V4：异步版（spawn 而非 spawnSync）—— 同步探针会把主进程事件循环卡住

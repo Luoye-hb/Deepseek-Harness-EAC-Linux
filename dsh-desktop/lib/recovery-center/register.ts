@@ -73,11 +73,6 @@ export function openRecoveryCenter(): void {
   log('recovery-center', '恢复中心已打开');
 }
 
-/** 恢复中心是否处于打开状态（启动失败弹窗据此决定是否再提供入口）。 */
-export function recoveryCenterOpen(): boolean {
-  return !!rcWindow && !rcWindow.isDestroyed();
-}
-
 /** 来源校验：只接受恢复中心窗口自身。 */
 function fromRecoveryWindow(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
   return !!rcWindow && !rcWindow.isDestroyed() && event.sender === rcWindow.webContents;

@@ -37,6 +37,7 @@ export interface ScanDomain {
   junctionFindings(): Finding[];
 }
 
+/** 构建扫描域：healthCheck（配置巡检 + 木马静态扫描，含逐文件结论缓存）与 junctionFindings。 */
 export function createScanDomain(ctx: GuardCtx): ScanDomain {
   // Task 12.2（spec F2.1）：高危扫描的逐文件结论缓存（随 guard 单例存活）。
   // 键 = 文件绝对路径，命中条件 = (mtimeMs, size) 与上次扫描一致 —— 任何

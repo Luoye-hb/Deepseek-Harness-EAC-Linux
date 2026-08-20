@@ -23,6 +23,7 @@ export interface SnapshotDomain {
   lastGoodSnapshot(): SnapshotMeta | null;
 }
 
+/** 构建快照域：snapshot/listSnapshots/restore/markGood/lastGoodSnapshot（语义见文件头）。 */
 export function createSnapshotDomain(ctx: GuardCtx): SnapshotDomain {
   function snapshot(reason?: string): SnapshotMeta | null {
     try {

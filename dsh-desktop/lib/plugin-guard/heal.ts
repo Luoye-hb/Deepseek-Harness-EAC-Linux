@@ -34,6 +34,7 @@ export interface HealDomain {
   attributeBootFailure(errText: string): { name: string; kind: string; rowId: string | null } | null;
 }
 
+/** 构建修复域：修复执行器/junction 修复/事故报告/guardedBoot 链/启动失败归因（语义见文件头）。 */
 export function createHealDomain(ctx: GuardCtx, scan: ScanDomain, snap: SnapshotDomain): HealDomain {
   /** dshBin() → 安装闭包根（与 scan.ts 的同名私有函数一致）。 */
   function expectedClosureRoot(): string | null {

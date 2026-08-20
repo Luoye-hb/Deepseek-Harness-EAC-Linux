@@ -80,10 +80,10 @@
     - 懒加载评估：updater 被 12+ 模块扇入（tray/server/proc/paths…）、balance-ui 被 ipc/session 拉入、terminal 被 ipc/app 拉入——真正可推迟的仅 shortcuts.ts（~3ms，收益不可测）；唯一重模块 koffi 预检 V4 已异步化（boot.ts 注释）；结论：结构性扇入使懒加载为净负收益，冷启动瓶颈（插件同步 IO 3.8s）已由扫描缓存消除
   - [x] 12.3 日志异步管线核查（pino async + 轮转不变）：管线 pino→RedactTransform（回调式 transform，行缓冲）→RotateWriteStream（终点同步写为「崩溃安全优先」既定设计，main.00-09×20MB 轮转链不变）；Task 12 改动未触碰日志链；logger-redact/logger-rotate 测试全绿
   - [x] 12.4 bench 对比不劣化报告写入提交信息 → 回归 + commit（6f1b01c：stamp-scan -70.6% / copy-skip 冷 -60.8% 暖 -98.7% / 两次 sync 合计 2218.4→448.9ms -79.8%，全行 OK；491/491 全绿含新增 4 项缓存语义回归）
-- [ ] Task 13: 注释、日志与死代码清理
-  - [ ] 13.1 全部新模块文件头注释 + 非自明函数中文 JSDoc
-  - [ ] 13.2 日志审计（Supervisor/Host/SDK/恢复中心齐全且无重复）
-  - [ ] 13.3 死代码清理（仅删零引用项，全局搜索验证）→ 回归 + commit
+- [x] Task 13: 注释、日志与死代码清理
+  - [x] 13.1 全部新模块文件头注释 + 非自明函数中文 JSDoc（66 个 TS 模块文件头全覆盖核验；补齐 createWindow/initRendererRecovery/wireWindowRecovery/startHeartbeatLoop/fatal/runClientUpdateFlow/guardFloatWebContents/三个 guard 域工厂/5 个 IPC 注册函数等入口级 JSDoc）
+  - [x] 13.2 日志审计（Supervisor/Host/SDK/恢复中心齐全且无重复）：四域通道核验通过 —— Supervisor 按域分 tag（state-machine/installer/registry/incidents/permissions，状态转移仅 state-machine 单点记录）；Host 族 ext-host（manager 生命周期）/ext:\<id\>:\<level\>（插件日志经 RPC log 通知转发，级别由 tag 正则映射）/ext:\<id\>:stderr/job-fence；SDK io.log → notify → 转发链闭合；恢复中心 recovery-center 独立 tag，与 guard 内部日志层级分工无重复
+  - [x] 13.3 死代码清理（仅删零引用项，全局搜索验证）：零引用导出扫描（588 导出，跨文件+定义文件+配置全文词匹配）→ 删 5 项：job-fence `_resetNativeCacheForTest`、preflight 同步版 `applyKoffiPreflight`（V4 全走 async 版）+ 连带清 spawnSync/runKoffiPreflight 导入、recovery-center `recoveryCenterOpen`、permissions `isGranted`、protocol `HostHello`（被 HostInitParams 取代）；test-only 引用项（runKoffiPreflight 等）保留 → 回归 491/491 + typecheck 零错 + commit
 - [ ] Task 14: 最终验收
   - [ ] 14.1 `npm test` 全绿；typecheck 零错；check-syntax + 编译产物校验；`cargo clippy`/`cargo test` 通过；规模检查（main.ts<400、无文件>600 行、无自有 .js/.mjs 源）
   - [ ] 14.2 `npm run pack` 打包成功且 bundled-files 绿（host-bootstrap/恢复中心/示例插件/Rust `.node` 全部入包）

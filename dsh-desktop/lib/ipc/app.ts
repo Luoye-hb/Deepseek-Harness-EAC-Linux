@@ -24,6 +24,7 @@ import { openBuiltinTerminal } from '../terminal.js';
 import { runUpdateFlow, runClientUpdateFlow } from '../update-flow.js';
 import { fromMainWindow } from './sender.js';
 
+/** 注册应用外壳域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
 export function registerAppIpc(): void {
   ipcMain.handle('chrome:init', async (event) => {
     if (!fromMainWindow(event)) return null;

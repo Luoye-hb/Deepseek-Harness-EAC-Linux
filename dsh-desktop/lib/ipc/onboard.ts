@@ -20,6 +20,7 @@ import {
 } from '../onboarding.js';
 import { fromMainWindow, fromWizardWindow } from './sender.js';
 
+/** 注册选择向导域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
 export function registerOnboardIpc(): void {
   // 内置插件选择向导（assets/onboarding.html，onboarding-preload.js 桥）：
   //   list   —— 目录（核心/推荐标记 + 描述 + 体积）+ 模式 + 当前启停状态

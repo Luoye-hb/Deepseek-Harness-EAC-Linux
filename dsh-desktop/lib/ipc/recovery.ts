@@ -16,6 +16,7 @@ import { markCleanExit } from '../run-state.js';
 import { startAndShowGuarded } from '../server.js';
 import { fromMainWindow } from './sender.js';
 
+/** 注册恢复域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
 export function registerRecoveryIpc(): void {
   // Renderer 心跳：preload 每 5s 上报一次，恢复状态机用它兜底判定
   // 「挂起但 Chromium 未发出 unresponsive」的场景。

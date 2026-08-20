@@ -70,6 +70,11 @@ const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // 失败处理链
 // ---------------------------------------------------------------------------
 
+/**
+ * 启动失败多级处置链：插件归因停用 → 保护中心快照回滚 → 客户端版本回退
+ * （每级之间重新尝试启动；全部失败才停留在此界面）。供 boot 的 catch 与
+ * bridge（server 守护启动失败重试）共用。
+ */
 export function handleBootFailure(err: unknown): void {
   const ov = updater.overlayBinPath(updCtx());
   if (ov && fs.existsSync(ov)) {
@@ -184,6 +189,12 @@ export function handleBootFailure(err: unknown): void {
   scheduleClientUpdateRescue();
 }
 
+/**
+ * 终态致命错误弹窗（boot 链与恢复流程的兜底出口）：附错误详情构建器产出的
+ * 诊断文本；按钮含「打开恢复中心」（不依赖 Web UI/主窗，仍可处置插件）、
+ * 「复制日志」；有主窗时多一个「重试」（重走 startAndShow）。退出路径均
+ * markCleanExit，避免看门狗把已知坏安装反复拉起。
+ */
 export function fatal(title: string, err: unknown): void {
   log('fatal', title + ': ' + String((err as Error)?.stack || (err as Error)?.message || err));
   const detail = buildErrorDetail(err, state.logsDir, ['dsh-web.log', 'desktop.log']);
@@ -270,6 +281,11 @@ export function verifyBundledModules(): Promise<void> {
 // 启动编排
 // ---------------------------------------------------------------------------
 
+/**
+ * 应用启动编排主流程（详见文件头）。任何一步抛错都走 handleBootFailure
+ * 的多级失败链；窗口就绪后的定时器/监听器全部非阻塞（void/nextTick），
+ * 不阻塞「启动就绪」的到达。
+ */
 export async function boot(): Promise<void> {
   // Portable builds keep all data next to the exe.
   if (!app.isPackaged && process.env.DSH_DESKTOP_USERDATA) {

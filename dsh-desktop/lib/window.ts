@@ -112,6 +112,12 @@ export interface CreateWindowOpts {
   startHidden?: boolean;
 }
 
+/**
+ * 创建主窗口并装配全部行为（见文件头清单）：加载态页 → ready-to-show 再
+ * 显示；导航/开窗围栏（外部链接转系统浏览器）；页面错误采集；F11/F12/
+ * Ctrl+R/Alt+F4 快捷键；最大化状态同步（自绘标题栏按钮用）；关闭按退出
+ * 策略分流；末尾接线 renderer-recovery。startHidden 供恢复流程后台重建。
+ */
 export function createWindow(opts: CreateWindowOpts = {}): void {
   const { startHidden = false } = opts;
   state.mainWindow = new BrowserWindow({
@@ -238,6 +244,7 @@ export function createWindow(opts: CreateWindowOpts = {}): void {
 // 态）；preload 以 --dsh-float=<sessionId> 识别浮窗模式，注入更细的拖拽条。
 // ---------------------------------------------------------------------------
 
+/** 浮窗 webContents 围栏：与主窗同规则的导航/开窗拦截 + 浮窗专属错误采集。 */
 export function guardFloatWebContents(wc: WebContents): void {
   wc.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
@@ -344,6 +351,11 @@ export function closeAllFloatWindows(): void {
 // 渲染进程自恢复：装配 renderer-recovery 状态机（上游 Issue #9 根治修复）
 // ---------------------------------------------------------------------------
 
+/**
+ * 构建渲染进程自恢复状态机（renderer-recovery.ts，上游 Issue #9 根治）：
+ * 把日志/退出态/服务存活/窗口重建/服务就绪等待等宿主能力适配进恢复机，
+ * 幂等（已构建直接复用）。挂载主窗由 wireWindowRecovery 单独接线。
+ */
 export function initRendererRecovery(): unknown {
   if (state.recovery) return state.recovery;
   const opts = {
@@ -394,11 +406,13 @@ export function initRendererRecovery(): unknown {
   return state.recovery;
 }
 
+/** 把当前主窗挂到已构建的恢复状态机（createWindow 末尾与恢复流程重建后调用）。 */
 export function wireWindowRecovery(): void {
   if (state.recovery && state.mainWindow && !state.mainWindow.isDestroyed())
     state.recovery.attach(state.mainWindow, 'main');
 }
 
+/** 每 15s 轮询一次恢复状态机的心跳判定（可见窗口失联才触发恢复流程）。 */
 export function startHeartbeatLoop(): void {
   // renderer 心跳由 preload 每 5s 上报；这里周期性判定「可见窗口」是否失联
   // （窗口不可见时页面定时器被节流，判定只针对可见窗口）。

@@ -81,6 +81,11 @@ function lnkUsesManagedIcon(lnkPath: string, ico: string): boolean {
   return path.resolve(String(link.icon)).toLowerCase() === path.resolve(ico).toLowerCase();
 }
 
+/**
+ * 开始菜单/桌面快捷方式维护（仅打包版 Windows；幂等）：清理旧名称残留、
+ * 按设置策略（auto/never）创建缺失链接、把指向旧 exe 的链接改指当前安装
+ * 位置。E2E 环境用 DSH_DESKTOP_TEST_NO_SHORTCUTS=1 跳过。
+ */
 export function maintainShortcuts(): void {
   if (!app.isPackaged || !IS_WIN) return;
   // E2E / 自动化：跳过快捷方式维护（临时 exe 不得改写真实开始菜单/桌面

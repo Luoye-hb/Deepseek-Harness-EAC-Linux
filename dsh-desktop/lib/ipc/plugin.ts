@@ -28,6 +28,7 @@ interface PluginRow {
   toggleable?: boolean;
 }
 
+/** 注册插件域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
 export function registerPluginIpc(): void {
   // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
   // 设置页「插件保护」分区（dsh-plugin-shield 插件）从这里取数与触发动作。

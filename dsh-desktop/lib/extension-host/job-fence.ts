@@ -95,11 +95,6 @@ export function loadNativeSupervisor(): NativeSupervisor | null {
   return nativeCache;
 }
 
-/** 重置探测缓存（仅测试用）。 */
-export function _resetNativeCacheForTest(): void {
-  nativeCache = undefined;
-}
-
 /** 强制原生模块不可用/恢复（仅测试用：验证 taskkill 降级路径）。 */
 export function _forceNativeUnavailableForTest(unavailable: boolean): void {
   forceUnavailableForTest = unavailable;

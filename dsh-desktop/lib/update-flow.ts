@@ -142,6 +142,11 @@ function makeUpdateProgressPusher(win: BrowserWindow): {
 // agent 更新流（官方 @deepseek-ai/dsh releases，用户确认）
 // ---------------------------------------------------------------------------
 
+/**
+ * agent（@deepseek-ai/dsh）更新流：检查官方 releases → 用户确认 → 下载
+ * 安装到 overlay（失败自动切换镜像源）→ 重启 Web 服务切版本。manual=true
+ * 来自「检查更新」入口（跳过节流、弹窗提示已是最新）。
+ */
 export async function runUpdateFlow(manual: boolean): Promise<void> {
   if (state.quitting) return;
   if (state.updateBusy) {
@@ -268,6 +273,11 @@ function notifyPluginUpdates(updatable: PluginUpdateItem[]): void {
   }
 }
 
+/**
+ * 内置插件上游更新检查（npm 源 vs 随包资产）：默认只提示不打扰，开启自动
+ * 更新时经 staging 合并 + 覆盖层原子切换后拷入 profile（详见文件头）。
+ * 24h 落盘节流；manual=true 强制检查。
+ */
 export async function runPluginUpdateCheck(manual: boolean): Promise<void> {
   if (state.quitting) return;
   const ctx = updCtx();
@@ -337,6 +347,13 @@ function clientUpdateOpts(newVersion: string): clientUpdater.ApplyUpdateOpts {
   };
 }
 
+/**
+ * 客户端（DSH Desktop 封装本体）更新流：检查 GitHub/Gitee releases →
+ * 用户确认（跳过版本/稍后有记忆）→ 下载（断点续传）→ 杀进程树 → 备份 →
+ * 原子替换 → 重启（详见 client-updater 域）。manual=true 来自菜单「检查
+ * 更新」（失败/已是最新弹窗提示）；定时自动检查静默失败。E2E 可用
+ * DSH_DESKTOP_TEST_AUTO_UPDATE=1 自动接受。
+ */
 export async function runClientUpdateFlow(manual: boolean): Promise<void> {
   if (state.quitting) return;
   if (state.clientUpdateBusy) {
