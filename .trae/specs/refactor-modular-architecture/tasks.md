@@ -72,11 +72,14 @@
   - [x] 11.3 `assets/sdk-plugins/sample-sdk-plugin/`（echo/status 工具 + 上下文贡献 + 设置 + 事件订阅；boot 首启幂等安装 + 随包分发）；**踩坑记录**：Node ≥ 24 global fetch 默认走环境代理（用户 0.0.0.0 代理使回环 EADDRNOTAVAIL）→ 桥接通道统一 node:http 直连；bridge-server 端口必须等 listening 事件后再读
   - [x] 11.4 ~~迁移 1 个简单伴生插件~~ **并入 11.3 说明**：候选 dsh-auto-compact 的价值全在浏览器半边（host 半为 no-op），属 Phase 3 外置 UI 范畴；SDK V1 样板由 sample-sdk-plugin 承担（零侵入注册 Agent 工具的活样板），伴生插件整体迁移待 Phase 3 UI 协议
   - [x] 11.5 测试：extension-host-sdk.test.mjs 6 项（元数据/参数校验/设置持久化/上下文超时丢弃/事件广播/端点鉴权全链路/mock cordis 真实 HTTP 桥接）→ 全量 487/487 + typecheck 零错 → commit
-- [ ] Task 12: 性能专项
-  - [ ] 12.1 `scripts/bench-boot.ts`：冷启动关键路径耗时 + 启动期 IO 计数，产出改造前基线
-  - [ ] 12.2 启动扫描缓存（mtime+size 哈希）；并行拉起（Host/preset/快捷方式/余额）；懒加载非首屏模块
-  - [ ] 12.3 日志异步管线核查（pino async + 轮转不变）
-  - [ ] 12.4 bench 对比不劣化报告写入提交信息 → 回归 + commit
+- [x] Task 12: 性能专项
+  - [x] 12.1 `scripts/bench-boot.ts`：冷启动关键路径耗时 + 启动期 IO 计数，产出改造前基线（39 插件源：stamp-scan 1612.9ms / copy-skip 1109.2ms×2 / hosts 串行 949→并行 255ms；IO 计数经原生 fs 模块对象补丁——__importStar 副本属性是委托回原对象的活 getter，补丁须打在 `require('node:fs')` 原生对象上）
+  - [x] 12.2 启动扫描缓存（mtime+size 哈希）；并行拉起（Host/preset/快捷方式/余额）；懒加载非首屏模块
+    - 扫描缓存：plugin-copy 单遍走树（readdir+Dirent+每文件 1 stat，exists 3843→0）+ 戳记 {v,f,b}→{v,f,b,h}（FNV-1a over rel|size|mtimeMs，捕获同字节数就地改写）+ 进程内戳记缓存（源路径+顶层 mtimeMs 校验，boot 第 2 次 sync 1109→14.5ms）；guard trojanFindings 逐文件 (path,mtimeMs,size) 结论缓存（命中免 readFileSync+正则）
+    - Host 并行拉起：manager 已 Promise.all（bench 验证收益 76%）；preset 同步在 syncCompanionPlugins 内、快捷方式/余额首拉在窗口就绪后（均非关键路径阻塞点，无需改造）
+    - 懒加载评估：updater 被 12+ 模块扇入（tray/server/proc/paths…）、balance-ui 被 ipc/session 拉入、terminal 被 ipc/app 拉入——真正可推迟的仅 shortcuts.ts（~3ms，收益不可测）；唯一重模块 koffi 预检 V4 已异步化（boot.ts 注释）；结论：结构性扇入使懒加载为净负收益，冷启动瓶颈（插件同步 IO 3.8s）已由扫描缓存消除
+  - [x] 12.3 日志异步管线核查（pino async + 轮转不变）：管线 pino→RedactTransform（回调式 transform，行缓冲）→RotateWriteStream（终点同步写为「崩溃安全优先」既定设计，main.00-09×20MB 轮转链不变）；Task 12 改动未触碰日志链；logger-redact/logger-rotate 测试全绿
+  - [x] 12.4 bench 对比不劣化报告写入提交信息 → 回归 + commit（6f1b01c：stamp-scan -70.6% / copy-skip 冷 -60.8% 暖 -98.7% / 两次 sync 合计 2218.4→448.9ms -79.8%，全行 OK；491/491 全绿含新增 4 项缓存语义回归）
 - [ ] Task 13: 注释、日志与死代码清理
   - [ ] 13.1 全部新模块文件头注释 + 非自明函数中文 JSDoc
   - [ ] 13.2 日志审计（Supervisor/Host/SDK/恢复中心齐全且无重复）
