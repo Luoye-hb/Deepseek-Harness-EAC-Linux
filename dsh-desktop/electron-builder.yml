@@ -60,6 +60,26 @@ files:
   - lib/ipc/onboard.js
   - lib/ipc/session.js
   - lib/boot.js
+  # 门面背后的实现子目录（Task 6/14 拆分；bundled-files 闭包测试防漏）：
+  - lib/logger/index.js
+  - lib/logger/api.js
+  - lib/logger/redact.js
+  - lib/logger/rotate.js
+  - lib/logger/diagnostics.js
+  - lib/client-update/index.js
+  - lib/client-update/types.js
+  - lib/client-update/net.js
+  - lib/client-update/release.js
+  - lib/client-update/download.js
+  - lib/client-update/apply.js
+  - lib/plugin-guard/index.js
+  - lib/plugin-guard/ctx.js
+  - lib/plugin-guard/snapshot.js
+  - lib/plugin-guard/scan.js
+  - lib/plugin-guard/heal.js
+  - lib/renderer-recovery/policy.js
+  - lib/renderer-recovery/load.js
+  - lib/renderer-recovery/machine.js
   - lib/supervisor/registry.js
   - lib/supervisor/state-machine.js
   - lib/supervisor/incidents.js

@@ -71,3 +71,46 @@ test('preload.js 必须在打包清单中（窗口上下文桥）', () => {
   const patterns = bundledFilesPatterns();
   assert.ok(patterns.includes('preload.js'));
 });
+
+// Task 14：上述两个测试只覆盖 main.js 的「直接」require。Task 6 门面化把
+// logger/client-updater/plugin-guard 拆进了 lib/ 子目录，门面在清单里面、
+// 实现文件却不在 —— 启动照样闪退。本测试从 main.js / host-bootstrap.js /
+// preload.js 三个入口出发做 require 闭包遍历（读编译产物 .js），每一个
+// 可静态解析的本地相对 require 都必须命中 files 清单。
+test('入口 require 闭包内的每个本地模块都在 files 清单中', () => {
+  const patterns = bundledFilesPatterns();
+  const patternSet = new Set(patterns);
+
+  /** 编译产物里的本地相对 require（CJS 双引号/单引号均可）。 */
+  function localRequiresOfCompiled(src: string): string[] {
+    const out: string[] = [];
+    const re = /require\(\s*(['"])(\.[^'"]+)\1\s*\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(src)) !== null) out.push(m[2]);
+    return out;
+  }
+
+  const entries = ['main.js', 'host-bootstrap.js', 'preload.js'];
+  const seen = new Set<string>();
+  const queue = [...entries];
+  let walked = 0;
+  while (queue.length) {
+    const rel = queue.shift() as string;
+    if (seen.has(rel)) continue;
+    seen.add(rel);
+    const abs = join(root, rel);
+    if (!fs.existsSync(abs)) continue; // 入口或依赖不存在（如未编译的 .cjs）跳过
+    walked++;
+    const dir = path.posix.dirname(rel);
+    for (const spec of localRequiresOfCompiled(fs.readFileSync(abs, 'utf8'))) {
+      const joined = dir === '.' ? spec : path.posix.join(dir, spec);
+      const norm = path.posix.normalize(joined);
+      if (!fs.existsSync(join(root, norm))) continue; // 动态/可选 require 解析失败不阻断
+      queue.push(norm);
+    }
+  }
+  assert.ok(walked >= 5, `闭包至少应覆盖 5 个文件，实际 ${walked}`);
+  const missing = [...seen].filter((f) => f !== 'main.js' && f !== 'host-bootstrap.js' && f !== 'preload.js' && !patternSet.has(f));
+  assert.deepEqual(missing, [],
+    '以下模块在入口 require 闭包内但未打包（启动即闪退风险）: ' + missing.join(', '));
+});
