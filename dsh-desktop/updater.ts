@@ -312,9 +312,6 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
     const timer = setTimeout(() => {
       killProc(proc);
       finishErr(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
-    const timer = setTimeout(() => {
-      killProc(proc);
-      finishErr(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
     }, timeoutMs);
     // 停滞检测：stallMs > 0 时，超过阈值没有产生任何输出即判死（触发
     // 调用方切换镜像源），避免「卡住但没到整体超时」的长时间空转。

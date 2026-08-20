@@ -111,7 +111,7 @@ test('job-fence：native 模块可加载且导出面完整（本机为 Windows �
     }
   } else {
     assert.equal(native, null, '非 Windows 应降级');
-    assert.equal(jobFence.fenceMode(), 'taskkill-fallback');
+    assert.equal(jobFence.fenceMode(), 'posix-process-group');
   }
 });
 

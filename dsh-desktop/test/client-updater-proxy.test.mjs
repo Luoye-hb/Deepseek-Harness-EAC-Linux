@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { githubProxyUrl, downloadUrls } from '../client-updater.js';
+import clientUpdater from '../client-updater.js';
+
+const { githubProxyUrl, downloadUrls } = clientUpdater;
 
 const GITHUB_ASSET =
   'https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4/Deepseek-Harness-EAC-Setup-x64.exe';

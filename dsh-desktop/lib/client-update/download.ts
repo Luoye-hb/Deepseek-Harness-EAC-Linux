@@ -255,7 +255,7 @@ export function computeSha256(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const h = crypto.createHash('sha256');
     const rs = fs.createReadStream(file);
-    rs.on('data', (c: Buffer) => h.update(c));
+    rs.on('data', (c) => h.update(c));
     rs.on('error', reject);
     rs.on('end', () => resolve(h.digest('hex')));
   });

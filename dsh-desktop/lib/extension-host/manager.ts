@@ -17,7 +17,7 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { createFence, fenceMode, type FenceHandle } from './job-fence.js';
+import { createFence, fenceMode, type FenceHandle, type FenceMode } from './job-fence.js';
 import { RpcPeer } from './rpc.js';
 import { readRegistry, writeRegistry } from '../supervisor/registry.js';
 import type { RegistryEntry } from '../supervisor/registry.js';
@@ -142,8 +142,8 @@ export class ExtensionHostManager {
     return all.flat();
   }
 
-  /** Host 围栏档位（win32-job / taskkill-fallback，恢复中心展示用）。 */
-  fenceMode(): 'win32-job' | 'taskkill-fallback' {
+  /** Host 围栏档位（包含 POSIX 进程组模式，恢复中心展示用）。 */
+  fenceMode(): FenceMode {
     return fenceMode();
   }
 

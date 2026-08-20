@@ -98,6 +98,9 @@ peer.handle('collect-context', async (params) => {
 });
 
 process.stdin.on('data', (chunk: Buffer) => peer.feed(chunk));
+// POSIX 管道在尚无输入时不会因 data listener 单独保持事件循环；显式
+// resume 让 Host 等待 Supervisor 的 init，而不是在握手前正常退出。
+process.stdin.resume();
 
 // 插件把宿主搞崩：留最后一行 stderr 给诊断，快速退出（Supervisor 感知 exit）
 process.on('uncaughtException', (err) => {

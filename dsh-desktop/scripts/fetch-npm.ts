@@ -16,7 +16,7 @@ const candidates = [
   path.join(path.dirname(process.execPath), 'node_modules', 'npm'),
   path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm'),
 ];
-const src = candidates.find((p) => fs.existsSync(path.join(p, 'bin', 'npm-cli.js'))) || candidates[0];
+const src = candidates.find((p) => fs.existsSync(path.join(p, 'bin', 'npm-cli.js'))) ?? candidates[0]!;
 const dest = path.resolve(__dirname, '..', 'vendor', 'npm');
 
 if (!fs.existsSync(path.join(src, 'bin', 'npm-cli.js'))) {
