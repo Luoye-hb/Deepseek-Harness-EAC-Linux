@@ -35,6 +35,9 @@ const { createGuard } = require('./plugin-guard');
 const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
 const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
+const { customFrameOptions } = require('./window-frame');
+const { ensureProfileClosureExtras } = require('./profile-closure-extras');
+const { linuxUpdateGuidance } = require('./linux-update-guidance');
 const {
   STANDARD_SHORTCUT_NAME,
   RUNTIME_SHORTCUT_DESCRIPTION,
@@ -904,10 +907,14 @@ function watchServerProc(proc, out, opts = {}) {
       // 原地重启（插件市场）或已替换为新进程时，不打扰用户、也不清掉新进程的句柄。
       const intentional = restartingServer || serverProc !== proc;
       if (serverProc === proc) serverProc = null;
+      const wasServing = Boolean(webUrl);
+      if (!intentional && !handedOff) webUrl = null;
       if (!handedOff) {
         finish(reject, new Error(`dsh web 启动失败（退出码 ${code}）。日志: ${path.join(logsDir, 'dsh-web.log')}`));
       }
-      if (!quitting && !intentional && !handedOff && webUrl && mainWindow && !mainWindow.isDestroyed()) {
+      if (!quitting && !intentional && !handedOff && wasServing && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadFile(path.join(__dirname, 'assets', 'loading.html'))
+          .catch((err) => log('boot', '服务退出后加载本地等待页失败: ' + err.message));
         const detail = buildErrorDetail(new Error(`dsh web 进程退出（code=${code} signal=${signal}）`), logsDir, ['dsh-web.log']);
         showBox({
           type: 'error',
@@ -959,6 +966,10 @@ function waitUntilUp(url, timeoutMs = 120000) {
 }
 
 function startAndShow(overlays = []) {
+  if (quitting) return Promise.reject(new Error('应用正在退出'));
+  // 新一轮启动期间旧地址已经不可依赖。先清空，避免启动失败后 exit 处理器
+  // 同时弹出“服务已停止”，也避免恢复逻辑继续请求失效端口。
+  webUrl = null;
   // koffi 预检失败注入的目录选择器降级 overlay 一并交给 dsh web（--patch）。
   const merged = [];
   if (pickerBrowseOverlay && fs.existsSync(pickerBrowseOverlay)) merged.push(pickerBrowseOverlay);
@@ -968,11 +979,16 @@ function startAndShow(overlays = []) {
   return startServer(4, merged)
     .then(waitUntilUp)
     .then((url) => {
-      webUrl = url;
       log('boot', 'Web UI 就绪: ' + url);
       if (mainWindow && !mainWindow.isDestroyed()) {
-        return mainWindow.loadURL(url).then(() => url);
+        // 只有页面真正加载成功后才标记为 serving。若服务在 loadURL 期间
+        // 退出，应只走启动失败链路，不能再并发弹“服务已停止”。
+        return mainWindow.loadURL(url).then(() => {
+          webUrl = url;
+          return url;
+        });
       }
+      webUrl = url;
       return url;
     });
 }
@@ -1201,7 +1217,9 @@ function handleBootFailure(err) {
 // 互相干扰；网络失败不打扰（runClientUpdateFlow 的 manual 弹窗已够）。
 let clientUpdateRescueArmed = false;
 function scheduleClientUpdateRescue() {
-  if (clientUpdateRescueArmed || process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) return;
+  // Linux 包由 apt/dnf/pacman/zypper 或 AppImage 文件管理，无法在应用内
+  // 自动更新。启动失败时再弹一次安装说明只会遮住真正的错误对话框。
+  if (!IS_WIN || clientUpdateRescueArmed || process.env.DSH_DESKTOP_SKIP_CLIENT_UPDATE) return;
   clientUpdateRescueArmed = true;
   setTimeout(() => {
     runClientUpdateFlow(true).catch((e) => log('client-update', '救援检查失败: ' + e.message));
@@ -1262,8 +1280,8 @@ function createWindow({ startHidden = false } = {}) {
     title: 'Deepseek Harness EAC',
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, 'assets', 'icon.png'),
-    // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    // Windows / Linux 使用自绘栏；macOS 保留原生窗口框架与菜单栏。
+    ...customFrameOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1402,7 +1420,7 @@ function createFloatWindow(sessionId, { title } = {}) {
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     // 与主窗一致的无边框；浮窗 preload 注入一条更细的纯拖拽条。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+    ...customFrameOptions(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1515,7 +1533,7 @@ function openPluginWizard({ mode = 'first' } = {}) {
       title: '内置插件选择向导',
       backgroundColor: '#0b1220',
       icon: path.join(__dirname, 'assets', 'icon.png'),
-      ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+      ...customFrameOptions(),
       webPreferences: {
         preload: path.join(__dirname, 'assets', 'onboarding-preload.js'),
         contextIsolation: true,
@@ -3631,6 +3649,13 @@ function syncCompanionPlugins() {
     const home = dshHomePath();
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
     ensureDesktopProfileInit();
+    const extras = ensureProfileClosureExtras(
+      home,
+      path.join(__dirname, 'node_modules'),
+      ['schemastery'],
+      (message) => log('boot', message)
+    );
+    if (extras.linked.length) log('boot', '已补齐 profile 安装闭包依赖: ' + extras.linked.join(', '));
     // V4 运行时补丁（幂等，随启动 / 服务重启 / agent 更新后重放）：
     //  · 对话删除/归档 —— dsh-session-manager 插件的全链路前置依赖；
     applySessionManageFix();
@@ -4242,11 +4267,12 @@ async function runClientUpdateFlow(manual) {
   if (quitting) return;
   if (!IS_WIN) {
     if (manual) {
+      const guidance = linuxUpdateGuidance();
       await showBox({
         type: 'info',
         title: '客户端更新',
-        message: 'Linux 版本由系统包管理器更新。',
-        detail: 'Arch Linux 请下载新的 .pacman 包后运行：\n\nsudo pacman -U ./Deepseek-Harness-EAC-*.pacman',
+        message: guidance.message,
+        detail: guidance.detail,
         buttons: ['确定'],
       });
     }
@@ -4666,7 +4692,9 @@ async function boot() {
         setInterval(() => runPluginUpdateCheck(false), 6 * 3600 * 1000).unref();
       }
     })
-    .catch((err) => handleBootFailure(err));
+    .catch((err) => {
+      if (!quitting) handleBootFailure(err);
+    });
 }
 
 // ---------------------------------------------------------------------------
