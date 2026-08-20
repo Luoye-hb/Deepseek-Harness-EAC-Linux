@@ -84,11 +84,17 @@
   - [x] 13.1 全部新模块文件头注释 + 非自明函数中文 JSDoc（66 个 TS 模块文件头全覆盖核验；补齐 createWindow/initRendererRecovery/wireWindowRecovery/startHeartbeatLoop/fatal/runClientUpdateFlow/guardFloatWebContents/三个 guard 域工厂/5 个 IPC 注册函数等入口级 JSDoc）
   - [x] 13.2 日志审计（Supervisor/Host/SDK/恢复中心齐全且无重复）：四域通道核验通过 —— Supervisor 按域分 tag（state-machine/installer/registry/incidents/permissions，状态转移仅 state-machine 单点记录）；Host 族 ext-host（manager 生命周期）/ext:\<id\>:\<level\>（插件日志经 RPC log 通知转发，级别由 tag 正则映射）/ext:\<id\>:stderr/job-fence；SDK io.log → notify → 转发链闭合；恢复中心 recovery-center 独立 tag，与 guard 内部日志层级分工无重复
   - [x] 13.3 死代码清理（仅删零引用项，全局搜索验证）：零引用导出扫描（588 导出，跨文件+定义文件+配置全文词匹配）→ 删 5 项：job-fence `_resetNativeCacheForTest`、preflight 同步版 `applyKoffiPreflight`（V4 全走 async 版）+ 连带清 spawnSync/runKoffiPreflight 导入、recovery-center `recoveryCenterOpen`、permissions `isGranted`、protocol `HostHello`（被 HostInitParams 取代）；test-only 引用项（runKoffiPreflight 等）保留 → 回归 491/491 + typecheck 零错 + commit
-- [ ] Task 14: 最终验收
-  - [ ] 14.1 `npm test` 全绿；typecheck 零错；check-syntax + 编译产物校验；`cargo clippy`/`cargo test` 通过；规模检查（main.ts<400、无文件>600 行、无自有 .js/.mjs 源）
-  - [ ] 14.2 `npm run pack` 打包成功且 bundled-files 绿（host-bootstrap/恢复中心/示例插件/Rust `.node` 全部入包）
-  - [ ] 14.3 架构文档 §10 验收标准 1-6 逐条核验（可重复执行的测试/脚本）
-  - [ ] 14.4 checklist.md 全勾 → 最终 commit
+- [x] Task 14: 最终验收
+  - [x] 14.1 `npm test` 全绿；typecheck 零错；check-syntax + 编译产物校验；`cargo clippy`/`cargo test` 通过；规模检查（main.ts<400、无文件>600 行、无自有 .js/.mjs 源）（2026-08-20：**npm test 492/492 全绿**（22.2s，62 测试文件）；typecheck 零错（strict+noUncheckedIndexedAccess+exactOptionalPropertyTypes）；check-syntax 16 入口产物全过；`cargo clippy` release 零告警 + `cargo test` 10/10；规模：main.ts=149 行、第一方源码无 >600 行（assets/plugins/zat-dsh-engine 两文件 1533/3336 行属 vendored 插件资产，checklist L19 明示 assets 豁免）、无第一方 .mjs；唯二 .cjs 为刻意保留的独立子进程脚本——scripts/koffi-preflight.cjs（启动前 koffi FFI 崩溃探针，须在编译产物加载前以子进程运行）与 test/fixtures/vnext-orphans-driver.cjs（孤儿回收测试的 Supervisor 替身，被 kill -9 模拟崩溃），均非 tsc 管辖的自有模块源）
+  - [x] 14.2 `npm run pack` 打包成功且 bundled-files 绿（host-bootstrap/恢复中心/示例插件/Rust `.node` 全部入包）（2026-08-20：pack 退出码 0；网络前置修复——GitHub 直连超时，手动下载 winCodeSign-2.6.0.7z（npmmirror，SHA-256 与官方钉死值 cdaec715…743a4 一致）放入 `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign-2.6.0\` 归档缓存跳过下载，重跑带 ELECTRON_MIRROR+ELECTRON_BUILDER_BINARIES_MIRROR 双镜像；afterPack 全链 OK：npm CLI 118 deps 拷入、conpty arm64 裁剪、131 个 .js.map 丢弃、schemastery 注入 dsh 闭包、bundle manifest 595 包、长路径审计干净；产物核验：host-bootstrap.js、assets/recovery-center.html+preload、assets/sdk-plugins/sample-sdk-plugin、native/supervisor/index.node（359KB）、Task 6/14 拆分子目录（lib/renderer-recovery/{policy,load,machine}.js、lib/logger/diagnostics.js 等）全部在 win-unpacked 内；bundled-files 测试（含入口 require 闭包遍历）随 492/492 全绿）
+  - [x] 14.3 架构文档 §10 验收标准 1-6 逐条核验（可重复执行的测试/脚本）：
+    - §10.1 Host 插件崩溃核心对话仍可完成 → `extension-host-manager.test.ts` 三项故障注入（外部 kill -9→crash/retrying→自动重启恢复 running；工具 hang 调用级严格超时 invoke 拒绝且 Host 存活；事件循环死循环→心跳超时判死→重启恢复）+ `extension-host.test.ts` 帧协议/RpcPeer/围栏（进程隔离使核心与插件故障物理隔离）；发布门：`scripts/e2e-full.js` 真实对话链
+    - §10.2 插件启动失败仍能进恢复中心关闭/卸载 → `recovery-center.test.ts`（三入口：托盘菜单/启动失败链对话框/DSH_DESKTOP_RECOVERY=1 直开；页面与 preload 不依赖 dsh web；rc:action 单通道 + 来源校验）+ `recovery-integration.test.ts` 接线钉住 + `supervisor-phase1.test.ts` 卸载→registry uninstalled
+    - §10.3 连续失败自动隔离不再反复加载 → `extension-host-manager.test.ts`「连续启动失败 3 次→自动隔离并停手」+ `supervisor-phase1.test.ts`「§8 状态机全部合法转移可走通」（含 quarantined 态）
+    - §10.4 安装/更新/回滚不改 Core Profile 依赖图与 patch 层 → `supervisor-phase1.test.ts`「核心配置围栏：安装/卸载/回滚全程不触碰 Core Profile（§10.4）」（测试名直接锚定本条）+「原子安装：staging→切换→建档；失败自动回退保住旧版」
+    - §10.5 故障关联版本/日志/时间/恢复动作 → `supervisor-phase1.test.ts`「状态机：转移留痕 incidents，registry 落盘可读」+ `recovery-center.test.ts`「扩展注册表：档案登记/失败归因/隔离标记」「启动失败归因落扩展注册表」
+    - §10.6 无第三方插件/离线/全禁用正常启动并完成基础工作 → `recovery-center.test.ts`「安全模式：非核心插件强制禁用（新行与既有启用行）」+ `plugin-guard.test.ts` guardedBoot 三部曲（首启失败→修复重试/快照回滚/落事故，行为级）+ `scripts/sim-client-update.js`（无外网依赖的离线更新链模拟）；发布门：`scripts/e2e-v4.js`/`e2e-mario.js`/`e2e-full.js` 真实启动冒烟
+  - [x] 14.4 checklist.md 全勾 → 最终 commit（2026-08-20：全 37 项勾选完成，其中 5 项补注实现偏差说明（tsc 原地产物替代 dist/、.cjs 探针/替身豁免、bundled-files 闭包遍历实现）；Task 14.0 拆分独立 commit 35acbbc，本条为收尾 commit）
 
 # Task Dependencies
 
