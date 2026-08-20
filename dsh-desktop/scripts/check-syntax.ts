@@ -7,9 +7,9 @@
 // 错误发生在运行时），因此本脚本额外做模式扫描。
 // 检查范围与 electron-builder.yml 的 files 清单保持一致（入口 js）。
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 const entryFiles = [
@@ -39,13 +39,18 @@ const entryFiles = [
 // 孤立 async/await 表达式在运行时会抛 ReferenceError，必须在打包前拦截。
 const DETACHED_KEYWORD = /^[ \t]*(async|await)[ \t]*(?:\/\/[^\r\n]*)?[ \t]*\r?\n(?:[ \t]*(?:\/\/[^\r\n]*)?[ \t]*\r?\n)*[ \t]*function\b/gm;
 
-function detachedHits(text) {
-  const hits = [];
-  let match;
+interface DetachedHit {
+  keyword: string;
+  line: number;
+}
+
+function detachedHits(text: string): DetachedHit[] {
+  const hits: DetachedHit[] = [];
+  let match: RegExpExecArray | null;
   DETACHED_KEYWORD.lastIndex = 0;
   while ((match = DETACHED_KEYWORD.exec(text)) !== null) {
     const upTo = text.slice(0, match.index);
-    hits.push({ keyword: match[1], line: upTo.split(/\r?\n/).length });
+    hits.push({ keyword: match[1] ?? '', line: upTo.split(/\r?\n/).length });
   }
   return hits;
 }

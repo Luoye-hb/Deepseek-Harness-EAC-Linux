@@ -1,5 +1,5 @@
 /**
- * scripts/build-native.js — Rust 围栏模块的可复现构建入口。
+ * scripts/build-native.ts — Rust 围栏模块的可复现构建入口。
  *
  * 本机事实（Windows 10 1607 / build 14393）：VS18 BuildTools 的 MSVC 14.51
  * link.exe 进口了旧系统缺失的 API，启动即 0xC0000139（入口点不存在）。
@@ -20,23 +20,23 @@
  * 并做存在性断言（predist 校验复用 `copy`）。
  */
 'use strict';
-const { spawnSync } = require('node:child_process');
-const fs = require('node:fs');
-const path = require('node:path');
+import { spawnSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const crateRoot = path.join(__dirname, '..', 'native', 'supervisor');
 const targetDir = path.join(crateRoot, 'target');
 const manifest = path.join(crateRoot, 'Cargo.toml');
 
 /** 取工具链 sysroot（失败抛出 —— 没有 rustc 时无法构建）。 */
-function sysroot() {
+function sysroot(): string {
   const r = spawnSync('rustc', ['--print', 'sysroot'], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error('rustc 不可用（请先安装 Rust 工具链）');
   return r.stdout.trim();
 }
 
 /** 准备 lld-link.exe（从工具链 rust-lld 复制；argv0 决定 MSVC link 兼容模式）。 */
-function prepareLldLink() {
+function prepareLldLink(): string {
   const src = path.join(sysroot(), 'lib', 'rustlib', 'x86_64-pc-windows-msvc', 'bin', 'rust-lld.exe');
   if (!fs.existsSync(src)) throw new Error(`rust-lld 不存在: ${src}`);
   fs.mkdirSync(targetDir, { recursive: true });
@@ -46,7 +46,7 @@ function prepareLldLink() {
 }
 
 /** 以 lld-link 为链接器调用 cargo（返回 cargo 退出码）。 */
-function runCargo(sub, rest) {
+function runCargo(sub: string, rest: string[]): number {
   const linker = prepareLldLink();
   const env = { ...process.env, RUSTFLAGS: `-C linker=${linker}` };
   const r = spawnSync('cargo', [sub, '--manifest-path', manifest, ...rest], {
@@ -58,7 +58,7 @@ function runCargo(sub, rest) {
 }
 
 /** 复制 cargo cdylib 产物 → index.node（存在性断言）。 */
-function copyArtifact() {
+function copyArtifact(): void {
   const releaseDir = path.join(targetDir, 'release');
   const candidates =
     process.platform === 'win32' ? ['dsh_supervisor_native.dll']

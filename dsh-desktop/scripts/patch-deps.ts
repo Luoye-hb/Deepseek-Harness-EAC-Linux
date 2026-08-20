@@ -1,8 +1,8 @@
 'use strict';
 // 依赖层小补丁（幂等）：目录选择器 worker 无消息退出时，把真实退出码/信号带进
 // 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
-const fs = require('node:fs');
-const path = require('node:path');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-host-directory-picker-native', 'lib', 'index.js');
@@ -18,7 +18,7 @@ const NEW_BLOCK = [
   '\t});',
 ].join('\n');
 
-function patchPickerWorker() {
+function patchPickerWorker(): void {
   if (!fs.existsSync(target)) {
     console.log('[patch-deps] dsh-host-directory-picker-native 不存在，跳过');
     return;
@@ -46,7 +46,7 @@ const NAV_SCROLL_MARKER = 'dsh-desktop-nav-scroll';
 const NAV_RE = /\.([A-Za-z0-9_-]+)_nav\{box-sizing:border-box;flex-direction:column;flex:none;gap:18px;width:188px;padding:22px 12px 0;display:flex\}/;
 const NAVLIST_RE = /\.([A-Za-z0-9_-]+)_navList\{flex-direction:column;gap:4px;display:flex\}/;
 
-function patchSettingsNavScroll() {
+function patchSettingsNavScroll(): void {
   const file = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-ui-settings-general', 'lib', 'client.js');
   if (!fs.existsSync(file)) {
     console.log('[patch-deps] dsh-client-ui-settings-general 不存在，跳过');
@@ -75,7 +75,7 @@ function patchSettingsNavScroll() {
   console.log('[patch-deps] 已补丁 settings-general：设置弹窗左栏可滚动，底部条目不再被裁掉');
 }
 
-function main() {
+function main(): void {
   patchPickerWorker();
   patchSettingsNavScroll();
 }
