@@ -47,7 +47,7 @@ jobs:
       - name: 安装 Node.js（含 npm 缓存）
         uses: actions/setup-node@v4
         with:
-          node-version: 24.19.0
+          node-version: 22
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 

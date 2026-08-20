@@ -2,10 +2,10 @@
 
 ## 2026-08 Linux 适配复验
 
-- 构建、测试与随包运行时统一到官方 Node v24.19.0；发布目标严格限定为 Windows x64 与 Linux x86_64，macOS 不在支持范围。
-- Windows Extension Host 继续使用 Job Object；Linux 使用独立 POSIX 进程组与经 PID、PGID、`/proc` start time、可执行文件和 bootstrap 命令行共同验证的 `0600` lease。Linux Fence 不承诺 Job Object 级资源配额、cgroup v2 隔离或强杀后的即时自动拉起。
-- `updater.ts` 已拆为类型、网络、release 解析、下载与应用模块并重新通过 strict TypeScript、入口语法、Windows 源码规模和 updater 定向测试。公开的 `loadSettings`、`saveSettings`、`settingsPath` 与 `DshSettings` 兼容导出保持不变。
-- 客户端更新边界重新验收：Windows 保留 portable/NSIS 下载、校验、应用与回滚；Linux 只返回发行版包管理器或 AppImage 手动替换指引，不执行后台下载或 Windows 命令脚本。
+- Linux 构建、测试与随包运行时统一到官方 Node v24.19.0；本分支只发布 Linux x86_64 的 pacman、deb、rpm 与 AppImage。
+- Linux Extension Host 使用独立 POSIX 进程组与经 PID、PGID、`/proc` start time、可执行文件和 bootstrap 命令行共同验证的 `0600` lease。Linux Fence 不承诺 cgroup v2 资源配额或强杀后的即时自动拉起。
+- `updater.ts` 已拆分并通过 strict TypeScript、入口语法、源码规模与 Linux 定向测试。公开的 `loadSettings`、`saveSettings`、`settingsPath` 与 `DshSettings` 兼容导出保持不变。
+- Linux 客户端更新只返回发行版包管理器或 AppImage 手动替换指引，不执行后台下载、命令脚本或回滚。上游 Windows 实现只作为未来普通 merge 的基线保留，不属于本分支交付或验收范围。
 
 ## 1. 目标
 

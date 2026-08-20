@@ -10,7 +10,7 @@ on:
     branches:
       - main
     tags:
-      - '*-linux'
+      - 'linux-v*'
     paths:
       - 'dsh-desktop/**'
       - '.github/workflows/linux.yml'
@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: linux-${{ github.ref }}
-  cancel-in-progress: ${{ !endsWith(github.ref, '-linux') }}
+  cancel-in-progress: ${{ !startsWith(github.ref_name, 'linux-v') }}
 
 jobs:
   build:
@@ -75,10 +75,9 @@ jobs:
           vendor/node/node vendor/npm/bin/npm-cli.js --version
 
       - name: Set release version from Linux tag
-        if: endsWith(github.ref, '-linux')
+        if: startsWith(github.ref_name, 'linux-v')
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          version="${version%-linux}"
+          version="${GITHUB_REF_NAME#linux-v}"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$ ]]
           npm version "$version" --no-git-tag-version --allow-same-version
 
@@ -109,7 +108,7 @@ jobs:
 
   release:
     name: Publish isolated Linux release
-    if: endsWith(github.ref, '-linux')
+    if: startsWith(github.ref_name, 'linux-v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
