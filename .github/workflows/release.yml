@@ -8,6 +8,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号，例如 4.4.1 或 4.4.1-rc.1'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -32,13 +38,23 @@ jobs:
         id: tag
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
-          if [[ "$tag" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            raw="${{ github.event.inputs.version }}"
+          else
+            raw="${GITHUB_REF_NAME}"
+          fi
+          if [[ "$raw" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
             version="${BASH_REMATCH[1]}"
           else
-            echo "::error::标签 '${tag}' 不是有效的版本号（期望形如 v4.4.1 或 v4.4.1-rc.1）"
+            echo "::error::'$raw' 不是有效的版本号（期望形如 4.4.1 或 4.4.1-rc.1）"
             exit 1
           fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            tag="v${version}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          
           echo "tag=${tag}"     >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "标签: ${tag} -> 版本号: ${version}"
@@ -88,7 +104,7 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
-            dsh-desktop/dist/Deepseek-Harness-EAC-Setup-x64.exe
-            dsh-desktop/dist/Deepseek-Harness-EAC-Portable-x64.exe
+            dsh-desktop/dist/Deepseek-Harness-EAC-Setup-*.exe
+            dsh-desktop/dist/Deepseek-Harness-EAC-Portable-*.exe
             dsh-desktop/dist/*.blockmap
             dsh-desktop/dist/SHA256SUMS.txt

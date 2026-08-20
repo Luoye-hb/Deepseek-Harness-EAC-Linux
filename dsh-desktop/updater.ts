@@ -136,8 +136,8 @@ export function compareVersions(a: string, b: string): number {
     hasPre: boolean;
   }
   const parse = (v: string): Parsed => {
-    const [core = '', pre = ''] = String(v).split('-');
-    const nums = core.split('.').map((s) => parseInt(s, 10) || 0);
+    const [core = '', pre = ''] = String(v).trim().replace(/^v/i, '').split('-');
+    const nums = Array.from({ length: 3 }, (_, i) => parseInt(core.split('.')[i] ?? '', 10) || 0);
     const preNum = parseInt((pre.match(/\d+/) || [''])[0] as string, 10);
     return { nums, pre, preNum: Number.isNaN(preNum) ? -1 : preNum, hasPre: !!pre };
   };
@@ -229,6 +229,9 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       activeProc = null;
       reject(e instanceof Error ? e : new Error(String(e)));
     };
+    const timer = setTimeout(() => {
+      killProc(proc);
+      finishErr(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
     const timer = setTimeout(() => {
       killProc(proc);
       finishErr(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));

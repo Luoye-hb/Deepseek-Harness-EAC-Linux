@@ -100,3 +100,50 @@ test('移除：id 白名单校验（防注入）', () => {
   assert.throws(() => removePluginFromPatch('- insert:\n', 'a b'), /非法字符/);
   assert.throws(() => removePluginFromPatch('', '../evil'), /非法字符/);
 });
+
+// —— dsh 官方「空块项 + 独立 id」多行格式（web-desktop profile 实际写法）——
+
+test('移除：dsh 官方 `-` 空块项 + 独立 id 格式（退役 tdai-memory 场景）', () => {
+  const t =
+    '-\n' +
+    '    insert:\n' +
+    '        -\n' +
+    '            id: tdai-memory\n' +
+    '            name: \'dsh-tdai-memory\'\n' +
+    '-\n' +
+    '    insert:\n' +
+    '        -\n' +
+    '            id: mobile-fix\n' +
+    '            name: \'dsh-web-mobile-fix\'\n';
+  assert.equal(hasEntryId(t, 'tdai-memory'), true, '应识别空块项格式的 tdai-memory');
+  const r = removePluginFromPatch(t, 'tdai-memory');
+  assert.equal(hasEntryId(r, 'tdai-memory'), false, 'tdai-memory 应被移除');
+  assert.ok(r.includes('mobile-fix'), '兄弟条目 mobile-fix 必须保留');
+  assert.ok(!/name:\s*dsh-tdai-memory/.test(r), '不得残留孤立 name 行');
+  assert.ok(!r.includes('tdai-memory'), '整块（含 name）都应清除');
+});
+
+test('移除：dsh 官方格式删 picturereader（web profile 重复挂载清理场景）', () => {
+  const t =
+    '- insert:\n' +
+    '    - id: worktree\n' +
+    "      name: 'dsh-worktree'\n" +
+    '- insert:\n' +
+    '    - id: picturereader\n' +
+    "      name: 'picturereader'\n";
+  assert.equal(hasEntryId(t, 'picturereader'), true);
+  const r = removePluginFromPatch(t, 'picturereader');
+  assert.equal(hasEntryId(r, 'picturereader'), false);
+  assert.ok(r.includes('worktree'), 'worktree 必须保留');
+});
+
+test('hasEntryId：dsh 官方空块项格式命中与短 id 前缀不误配', () => {
+  const t =
+    '-\n' +
+    '    insert:\n' +
+    '        -\n' +
+    '            id: dsh-pet-settings\n' +
+    '            name: \'dsh-pet-settings\'\n';
+  assert.equal(hasEntryId(t, 'dsh-pet'), false, '短 id 不得命中长 id 兄弟（空块项格式）');
+  assert.equal(hasEntryId(t, 'dsh-pet-settings'), true, '完整 id 应命中空块项格式');
+});

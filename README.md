@@ -9,7 +9,7 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.0.1-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
@@ -58,21 +58,21 @@
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~226 MB |
-| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~241 MB |
+| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | 免安装，双击即用，可放 U 盘 | ~226 MB |
+| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~241 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
 ### Linux（x64）
 
-Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v4.0.1-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.0.1-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
+Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v4.4.0-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
 
 | 发行版 | 包 | 安装 |
 | --- | --- | --- |
-| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-4.0.1-x64.pacman` |
-| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-4.0.1-amd64.deb` |
-| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-4.0.1.x86_64.rpm` |
-| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.0.1-linux/Deepseek-Harness-EAC-4.0.1-x86_64.AppImage) | `chmod +x` 后直接运行 |
+| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-4.4.0-x64.pacman` |
+| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-4.4.0-amd64.deb` |
+| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-4.4.0.x86_64.rpm` |
+| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | `chmod +x` 后直接运行 |
 
 > - 卸载：`pacman -Rns dsh-desktop` / `apt remove dsh-desktop` / `dnf remove dsh-desktop`
 > - 与 Windows 版一致：内置 Node.js 与 npm CLI，目标机器无需预装 Node.js；数据目录沿用 `~/.dsh`（`DSH_HOME`）
@@ -160,7 +160,6 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 - **项目文件树 + HTML/端口预览**：VSCode 风格文件树，站内预览 HTML/本地端口服务（仅回环）
 - **社区插件市场（v2 新增，dsh-webui-market）**：设置 → 插件 → 市场，浏览 awesome-dsh-plugin.com 收录的 dsh 插件并一键安装/卸载到 profile；安装/卸载任务在服务重启窗口期排队执行，不打断当前会话
 - **外置视觉模型（v2 新增，dsh-tool-vision）**：`inspect_image` 工具把本地图片或图片 URL 发给任意 OpenAI 兼容视觉端点（qwen-vl / GLM-4V / Ollama 等），看图回答直接带回对话
-- **长期记忆（v2 新增，dsh-tdai-memory）**：腾讯云 Agent Memory 移植 —— L0 对话捕获 → L1 结构化记忆 → L2 场景 / L3 画像，自动召回注入 + 记忆/对话搜索工具，复用现有 `~/.memory-tencentdb/memory-tdai` 数据
 - **soul.md 人设热重载（v2 新增，dsh-soul-md）**：markdown 人设文件注入系统提示词（`soul:persona`），文件变更即时热重载，Agent 边干活边角色扮演
 - **移动端布局修复（v2 新增，dsh-web-mobile-fix）**：窄屏（≤400px）下设置面板、弹窗、侧栏、会话头布局修复，纯前端 CSS，不影响桌面布局
 - **快速配置（dsh-easy-setup）**：视觉模型提供商/模型一键选择、`soul.md` 人设可视化编辑、从 Codex / Claude Code 目录一键迁移 skills + MCP + 记忆
@@ -234,7 +233,7 @@ dsh-desktop/                  # Electron 桌面端
 │   └── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
 │                             # / dsh-easy-setup / dsh-skin-switch
 │                             # 内置社区插件：dsh-webui-market / dsh-tool-vision
-│                             # / dsh-tdai-memory / dsh-soul-md / dsh-web-mobile-fix
+│                             # / dsh-soul-md / dsh-web-mobile-fix
 │                             # （含 vendor 与自包含运行时依赖，随仓库分发）
 ├── scripts/                  # 构建与开发辅助脚本
 ├── build/icon.png            # electron-builder 图标
@@ -245,9 +244,47 @@ dsh-desktop/                  # Electron 桌面端
 
 ## Contributors
 
-- [@zouyuxuan122](https://github.com/zouyuxuan122) — 项目发起者与维护者
-- [@Luoye-hb](https://github.com/Luoye-hb) — Linux 多发行版打包支持（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)）
+感谢每一位贡献者：
+
+<p align="center">
+  <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
+  </a>
+</p>
+
+### 交流群
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群二维码" width="320" />
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>QQ 交流群</strong><br />群号：523412163</td>
+    <td align="center"><strong>微信交流群</strong></td>
+  </tr>
+</table>
+
+### Bug 反馈
+
+遇到 Bug，或有希望我们增加的功能，请前往 [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/)。
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=zouyuxuan122%2FDeepseek-Harness-EAC&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&theme=dark&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+ </picture>
+</a>
 
 ## License
 
 MIT。基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）。内置皮肤版权归原作者所有（见上方皮肤许可表）。
+
+<!-- 咕咕嘎嘎 -->

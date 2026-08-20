@@ -24,6 +24,13 @@ dsh-desktop/.dsh-test-home/
 dsh-desktop/.dsh-packaged-test/
 dsh-desktop/test/.dsh-home-repro/
 # 桌面壳运行数据目录
+dsh-desktop/.dsh-test-runtime/
+
+# Standalone local test runtime kept outside the source tree when permissions allow
+.test-runtime/
+
+# Logs
+*.log
 dsh-desktop/data/
 # 更新器待装目录（下载的安装包与 .part 断点分片）
 updates/

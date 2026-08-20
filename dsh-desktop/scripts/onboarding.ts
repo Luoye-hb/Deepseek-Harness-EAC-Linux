@@ -35,9 +35,8 @@ export const CORE_PLUGIN_IDS = new Set([
 export const RECOMMENDED_PLUGIN_IDS = new Set([
   'skin-switch',
   'easy-setup',
-  'tool-vision',
+  'picturereader',
   'soul-md',
-  'tdai-memory',
   'mobile-fix',
   'better-sidebar',
   'message-rewind',
