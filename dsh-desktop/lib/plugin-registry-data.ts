@@ -34,7 +34,7 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin', dir: 'dsh-webui-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
-  { id: 'tool-vision', name: 'dsh-tool-vision', dir: 'dsh-tool-vision' },
+  { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，schema required 无默认值，
   // 全新安装校验失败拖垮整个插件树（详见 patch-row-heal 的存量修复）。
   { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
@@ -64,15 +64,15 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
   { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop' },
+  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop', disabled: true },
   { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom', dir: 'dsh-settings-nav-custom' },
   { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
-  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste' },
+  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
 ];
 
 /** 内置插件上游更新源（V4.3，plugin-updater.js 消费；npm 404 优雅降级）。 */
 export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: string }> = {
-  'tool-vision': { npm: 'dsh-tool-vision' },
+  picturereader: { npm: 'picturereader' },
   'soul-md': { npm: 'dsh-soul-md' },
   'tdai-memory': { npm: 'dsh-tdai-memory' },
   'dsh-pet': { npm: 'dsh-pet' },

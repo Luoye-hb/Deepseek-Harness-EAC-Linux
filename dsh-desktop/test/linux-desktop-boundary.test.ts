@@ -10,6 +10,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const linuxUpdate = require(path.join(root, 'lib', 'linux-update.js'));
 const terminal = require(path.join(root, 'lib', 'terminal-platform.js'));
 const clientUpdater = require(path.join(root, 'client-updater.js'));
+const pluginRegistry = require(path.join(root, 'lib', 'plugin-registry-data.js'));
 
 function source(file: string): string {
   return fs.readFileSync(path.join(root, file), 'utf8');
@@ -108,6 +109,31 @@ test('Linux startup initializes and syncs the desktop profile before launching d
     bootSource,
     /await runPluginOnboardingIfNeeded\(onboardingNeeded\);[\s\S]*syncCompanionPlugins\(\);[\s\S]*startAndShowGuarded\(\)/,
   );
+});
+
+test('Linux companion sync mounts picturereader and disables overlapping image injectors by default', () => {
+  const plugins = pluginRegistry.COMPANION_PLUGINS as Array<{
+    id: string;
+    name: string;
+    dir?: string;
+    disabled?: boolean;
+  }>;
+  const byId = new Map(plugins.map((plugin) => [plugin.id, plugin]));
+  assert.deepEqual(byId.get('picturereader'), {
+    id: 'picturereader',
+    name: 'picturereader',
+    dir: 'picturereader',
+  });
+  assert.equal(byId.has('tool-vision'), false);
+  assert.equal(pluginRegistry.PLUGIN_UPDATE_SOURCES.picturereader.npm, 'picturereader');
+  assert.equal(pluginRegistry.PLUGIN_UPDATE_SOURCES['tool-vision'], undefined);
+  assert.equal(byId.get('file-drop')?.disabled, true);
+  assert.equal(byId.get('image-paste')?.disabled, true);
+
+  const pluginDir = path.join(root, 'assets', 'plugins', byId.get('picturereader')?.dir ?? '');
+  const manifest = JSON.parse(fs.readFileSync(path.join(pluginDir, 'package.json'), 'utf8')) as { name?: string };
+  assert.equal(manifest.name, 'picturereader');
+  assert.match(fs.readFileSync(path.join(pluginDir, 'cordis.patch.yml'), 'utf8'), /id:\s*picturereader/);
 });
 
 test('Linux client update boundary is guidance-only and disables background/apply/rollback paths', () => {
