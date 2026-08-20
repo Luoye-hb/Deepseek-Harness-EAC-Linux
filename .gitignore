@@ -11,10 +11,6 @@ dsh-desktop/vendor/
 .dev-data/
 .update-test/
 
-# openclaw-dsh-bridge (微信桥接插件) build artifacts
-openclaw-dsh-bridge/node_modules/
-openclaw-dsh-bridge/dist/
-
 # 测试运行数据（dsh home / 打包探针）
 dsh-desktop/.dsh-test-home/
 dsh-desktop/.dsh-packaged-test/

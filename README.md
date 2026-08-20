@@ -241,8 +241,6 @@ dsh-desktop/                  # Electron 桌面端
 ├── vendor/                   # 内置 node.exe / npm CLI（不入库）
 ├── electron-builder.yml      # 打包配置
 └── dist/                     # 构建产物（不入库，发布到 Releases）
-openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
-research/                     # 第三方微信/桥接协议调研资料
 ```
 
 ## Contributors
