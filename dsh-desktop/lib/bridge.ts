@@ -30,23 +30,8 @@ export interface MessageBoxResult {
   response: number;
 }
 
-/** plugin-guard 实例的最小形状（见 lib/state.ts 的 PluginGuardLike）。 */
-export interface GuardLike {
-  snapshot(reason: string): unknown;
-  restore(id: unknown): unknown;
-  lastGoodSnapshot(): unknown;
-  repairJunctions(): { repaired: unknown[] };
-  junctionFindings(): unknown[];
-  setRollbackLift(fn: () => Promise<unknown>): void;
-  guardedBoot(
-    boot: () => Promise<string>,
-    logHint: () => string,
-    opts?: { preRetry?: (errText: string) => Promise<{ applied: string[] } | false> },
-  ): Promise<string>;
-  listSnapshots(): { id: string }[];
-  markGood(id: string): void;
-  [key: string]: unknown;
-}
+/** plugin-guard 实例（plugin-guard.ts 的 GuardInstance；Task 7 起真实类型）。 */
+export type GuardLike = import('../plugin-guard.js').GuardInstance;
 
 /** 跨域注入点（main.js 装配期覆写）。 */
 export const bridge = {
@@ -60,10 +45,9 @@ export const bridge = {
   ensureGuard: (): GuardLike => {
     throw new Error('bridge.ensureGuard 未装配');
   },
-  /** 启动失败处理（boot 域）。 */
-  handleBootFailure: (_err: unknown): Promise<void> => {
+  /** 启动失败处理（boot 域；真实实现返回 void，见 lib/boot.ts）。 */
+  handleBootFailure: (_err: unknown): void => {
     log('bridge', 'handleBootFailure 未装配');
-    return Promise.resolve();
   },
   /** 插件市场排队任务执行（plugins 域）。 */
   processPendingMarketOps: (): Promise<unknown> => {

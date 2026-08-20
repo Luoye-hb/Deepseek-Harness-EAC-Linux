@@ -1,33 +1,34 @@
-'use strict';
+/**
+ * plugin-updater.ts — 内置插件上游更新引擎（Electron 主进程）（Task 7.1 自
+ * plugin-updater.js 迁 TS）。
+ *
+ * 内置插件（assets/plugins）随应用分发、版本固定：不升级应用本身就拿不到
+ * 上游修复。本模块让「上游仍在 npm / GitHub 发布」的内置插件可以直接更新：
+ *   · checkPluginUpdates(ctx, sources)         —— 静默检测（镜像链 + 内存
+ *                                                  TTL + 24h 落盘节流）
+ *   · applyBuiltinPluginUpdate(ctx, source, opts)
+ *                                              —— 下载新版本到覆盖层并
+ *                                                 （尽力）拷入 profile
+ *   · autoApplyUpdates(ctx, sources, opts)     —— 自动更新流程（默认关闭）
+ *
+ * 覆盖层 <userData>/builtin-plugin-updates/<dir>：syncCompanionPlugins 的
+ * 「覆盖层优先」规则保证下次启动从覆盖层拷贝、不被资产版本还原；
+ * 应用自身升级后资产版本更新，覆盖层自动让位。
+ *
+ * 安全设计：
+ *   · 更新源白名单（PLUGIN_UPDATE_SOURCES）：EAC 独占插件永不更新
+ *   · 更新前保护中心快照（一键回滚 + 守护启动兜底）
+ *   · engines.dsh 门槛：新包要求的内核版本高于当前 dsh → 拒绝
+ *   · npm 下载加 --ignore-scripts，绝不执行第三方安装脚本
+ *   · 合并以当前资产副本为底、npm 包覆盖其上：保留 EAC 附加文件（如
+ *     dsh-webui-market 的离线目录快照 data/），只增不删
+ *   · 单插件失败/未上架/404 → 优雅降级，绝不阻塞
+ */
 
-// plugin-updater.js — 内置插件上游更新引擎（Electron 主进程）。
-//
-// 内置插件（assets/plugins）随应用分发、版本固定：不升级应用本身就拿不到
-// 上游修复。本模块让「上游仍在 npm / GitHub 发布」的内置插件可以直接更新：
-//   · checkPluginUpdates(ctx, sources)         —— 静默检测（镜像链 + 内存
-//                                                  TTL + 24h 落盘节流）
-//   · applyBuiltinPluginUpdate(ctx, source, opts)
-//                                              —— 下载新版本到覆盖层并
-//                                                 （尽力）拷入 profile
-//   · autoApplyUpdates(ctx, sources, opts)     —— 自动更新流程（默认关闭）
-//
-// 覆盖层 <userData>/builtin-plugin-updates/<dir>：syncCompanionPlugins 的
-// 「覆盖层优先」规则（main.js）保证下次启动从覆盖层拷贝、不被资产版本还原；
-// 应用自身升级后资产版本更新，覆盖层自动让位。
-//
-// 安全设计：
-//   · 更新源白名单（main.js PLUGIN_UPDATE_SOURCES）：EAC 独占插件永不更新
-//   · 更新前保护中心快照（一键回滚 + 守护启动兜底）
-//   · engines.dsh 门槛：新包要求的内核版本高于当前 dsh → 拒绝
-//   · npm 下载加 --ignore-scripts，绝不执行第三方安装脚本
-//   · 合并以当前资产副本为底、npm 包覆盖其上：保留 EAC 附加文件（如
-//     dsh-webui-market 的离线目录快照 data/），只增不删
-//   · 单插件失败/未上架/404 → 优雅降级，绝不阻塞
-
-const path = require('node:path');
-const fs = require('node:fs');
-
-const updater = require('./updater');
+import * as path from 'node:path';
+import * as fs from 'node:fs';
+import * as updater from './updater.js';
+import type { UpdCtx } from './updater.js';
 
 // 内存缓存：同一启动周期内重复查询（更新标签页刷新）不重复打 npm。
 const PLUGIN_CHECK_TTL_MS = 10 * 60 * 1000;
@@ -36,45 +37,107 @@ const PLUGIN_CHECK_INTERVAL_MS = 24 * 3600 * 1000;
 const NPM_VIEW_TIMEOUT_MS = 45 * 1000;
 const NPM_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 
-let checkCache = { at: 0, list: null };
+/** 更新源声明：npm 包名或 GitHub owner/repo。 */
+export interface UpdateSource {
+  npm?: string;
+  github?: string;
+}
+
+/** 检测源条目（PLUGIN_UPDATE_SOURCES 项）。 */
+export interface PluginSource {
+  id: string;
+  name: string;
+  assetsDir: string;
+  update: UpdateSource;
+}
+
+/** 检测结果条目。 */
+export interface PluginUpdateItem {
+  id: string;
+  name: string;
+  source: 'npm' | 'github' | null;
+  sourceName: string;
+  current: string | null;
+  latest: string | null;
+  hasUpdate: boolean;
+  skipped: boolean;
+  error: string | null;
+}
+
+/** ctx 的可注入扩展（测试替身用）。 */
+export interface PluginUpdCtx extends UpdCtx {
+  runNpm?: typeof updater.runNpm;
+  resolveLatest?: (ctx: PluginUpdCtx, source: UpdateSource) => Promise<string | null>;
+}
+
+/** guard 的最小面（createGuard 实例的子集）。 */
+export interface GuardLike {
+  snapshot(reason: string): { id: string } | null;
+}
+
+/** applyBuiltinPluginUpdate 选项。 */
+export interface ApplyUpdateOpts {
+  latest?: string | null;
+  profileDirP?: string | null;
+  guard?: GuardLike | null;
+  copyIntoProfile?: (overlayDir: string, name: string) => void;
+  bundledDshVersion?: string | null;
+  log?: (tag: string, msg: string) => void;
+  force?: boolean;
+}
+
+interface CheckCache {
+  at: number;
+  list: PluginUpdateItem[] | null;
+}
+
+let checkCache: CheckCache = { at: 0, list: null };
 
 // ---------------------------------------------------------------------------
 // 路径
 // ---------------------------------------------------------------------------
 
-function overlayRoot(ctx) { return path.join(ctx.userDataDir, 'builtin-plugin-updates'); }
+export function overlayRoot(ctx: UpdCtx): string {
+  return path.join(ctx.userDataDir, 'builtin-plugin-updates');
+}
 
-function overlayDirOf(ctx, dir) { return path.join(overlayRoot(ctx), dir); }
+export function overlayDirOf(ctx: UpdCtx, dir: string): string {
+  return path.join(overlayRoot(ctx), dir);
+}
 
-function stagingRoot(ctx) { return path.join(ctx.userDataDir, 'plugin-update-staging'); }
+export function stagingRoot(ctx: UpdCtx): string {
+  return path.join(ctx.userDataDir, 'plugin-update-staging');
+}
 
 // ---------------------------------------------------------------------------
 // 源解析（source = { npm: 包名 } | { github: 'owner/repo' }）
 // ---------------------------------------------------------------------------
 
-function sourceKind(source) {
+export function sourceKind(source: UpdateSource | null | undefined): 'npm' | 'github' | null {
   if (source && source.npm) return 'npm';
   if (source && source.github) return 'github';
   return null;
 }
 
-function sourceName(source) {
-  return source && source.npm ? source.npm : (source && source.github ? source.github : '');
+export function sourceName(source: UpdateSource | null | undefined): string {
+  return source && source.npm ? source.npm : source && source.github ? source.github : '';
 }
 
 // ---------------------------------------------------------------------------
 // 版本读取 / 判定
 // ---------------------------------------------------------------------------
 
-function versionOfDir(dir) {
+export function versionOfDir(dir: string): string | null {
   try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as { version?: unknown };
     return typeof pkg.version === 'string' && pkg.version ? pkg.version : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 /** 当前实际加载版本：profile 副本优先，资产副本回退。 */
-function currentVersionOf(ctx, assetsDir, source, profileDirP) {
+export function currentVersionOf(ctx: UpdCtx, assetsDir: string, source: UpdateSource, profileDirP: string | null): string | null {
   const name = sourceName(source);
   if (profileDirP && name) {
     const v = versionOfDir(path.join(profileDirP, 'node_modules', ...name.split('/')));
@@ -83,7 +146,7 @@ function currentVersionOf(ctx, assetsDir, source, profileDirP) {
   return versionOfDir(assetsDir);
 }
 
-function hasUpdateOf(current, latest) {
+export function hasUpdateOf(current: string | null, latest: string | null): boolean {
   if (!current || !latest) return false;
   return updater.compareVersions(latest, current) > 0;
 }
@@ -92,56 +155,60 @@ function hasUpdateOf(current, latest) {
 // npm / GitHub latest
 // ---------------------------------------------------------------------------
 
-/** npm 包最新版本（复用 updater.js 的镜像源链，主源失败自动切镜像）。 */
-async function npmLatest(ctx, name) {
+/** npm 包最新版本（复用 updater 的镜像源链，主源失败自动切镜像）。 */
+export async function npmLatest(ctx: PluginUpdCtx, name: string): Promise<string> {
   const run = ctx.runNpm || updater.runNpm;
   const chain = updater.registryChain(await updater.currentRegistry(ctx));
-  const errors = [];
+  const errors: string[] = [];
   for (const registry of chain) {
     const args = ['view', name, 'version'];
     if (registry) args.push('--registry=' + registry);
     try {
       const out = await run(ctx, args, { timeoutMs: NPM_VIEW_TIMEOUT_MS });
       const lines = String(out || '').trim().split(/\r?\n/).filter(Boolean);
-      const v = lines[lines.length - 1].trim();
+      const v = (lines[lines.length - 1] ?? '').trim();
       if (!/^\d+\.\d+\.\d+/.test(v)) throw new Error('无法解析版本号: ' + JSON.stringify(v));
       return v;
     } catch (err) {
-      errors.push((registry || '默认源') + ': ' + String((err && err.message) || err));
+      errors.push((registry || '默认源') + ': ' + String((err as Error)?.message || err));
     }
   }
   throw new Error('无法获取 ' + name + ' 的最新版本（' + errors.join('；') + '）');
 }
 
 /** GitHub 仓库最新发布（releases/latest 优先，tags 兜底）。 */
-async function githubLatest(ctx, repo) {
-  const fetchJson = async (url) => {
+export async function githubLatest(ctx: UpdCtx, repo: string): Promise<string | null> {
+  const fetchJson = async (url: string): Promise<Record<string, unknown>> => {
     const res = await fetch(url, {
       headers: { accept: 'application/vnd.github+json', 'user-agent': 'dsh-desktop-eac' },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
+    return (await res.json()) as Record<string, unknown>;
   };
   try {
     const rel = await fetchJson('https://api.github.com/repos/' + encodeURIComponent(repo) + '/releases/latest');
-    if (rel && typeof rel.tag_name === 'string' && rel.tag_name) return rel.tag_name.replace(/^v/, '');
+    const tag = rel.tag_name;
+    if (typeof tag === 'string' && tag) return tag.replace(/^v/, '');
   } catch (err) {
-    ctx.log('plugin-update', 'GitHub releases/latest 失败（' + repo + '）: ' + String((err && err.message) || err));
+    ctx.log('plugin-update', 'GitHub releases/latest 失败（' + repo + '）: ' + String((err as Error)?.message || err));
   }
   try {
     const tags = await fetchJson('https://api.github.com/repos/' + encodeURIComponent(repo) + '/tags');
-    if (Array.isArray(tags) && tags.length > 0 && tags[0] && typeof tags[0].name === 'string') {
-      return tags[0].name.replace(/^v/, '');
+    if (Array.isArray(tags) && tags.length > 0) {
+      const first = tags[0] as { name?: unknown };
+      if (first && typeof first.name === 'string') {
+        return first.name.replace(/^v/, '');
+      }
     }
   } catch (err) {
-    ctx.log('plugin-update', 'GitHub tags 失败（' + repo + '）: ' + String((err && err.message) || err));
+    ctx.log('plugin-update', 'GitHub tags 失败（' + repo + '）: ' + String((err as Error)?.message || err));
   }
   return null;
 }
 
-async function resolveLatest(ctx, source) {
-  if (typeof ctx.resolveLatest === 'function') return ctx.resolveLatest(ctx, source);
+export async function resolveLatest(ctx: PluginUpdCtx, source: UpdateSource | null | undefined): Promise<string | null> {
+  if (typeof ctx.resolveLatest === 'function') return ctx.resolveLatest(ctx, source as UpdateSource);
   if (source && source.npm) return npmLatest(ctx, source.npm);
   if (source && source.github) return githubLatest(ctx, source.github);
   return null;
@@ -151,43 +218,53 @@ async function resolveLatest(ctx, source) {
 // 节流 / 跳过版本
 // ---------------------------------------------------------------------------
 
-function dueForCheck(ctx, now) {
+export function dueForCheck(ctx: UpdCtx, now: number): boolean {
   try {
     const s = updater.loadSettings(ctx);
-    const at = s.pluginUpdateCheckedAt ? Date.parse(s.pluginUpdateCheckedAt) : 0;
+    const at = s.pluginUpdateCheckedAt ? Date.parse(String(s.pluginUpdateCheckedAt)) : 0;
     return !at || now - at >= PLUGIN_CHECK_INTERVAL_MS;
-  } catch { return true; }
+  } catch {
+    return true;
+  }
 }
 
-function markChecked(ctx) {
+export function markChecked(ctx: UpdCtx): void {
   try {
     const s = updater.loadSettings(ctx);
     s.pluginUpdateCheckedAt = new Date().toISOString();
     updater.saveSettings(ctx, s);
-  } catch { /* 写失败不影响 */ }
+  } catch {
+    /* 写失败不影响 */
+  }
 }
 
-function isVersionSkipped(ctx, id, version) {
+export function isVersionSkipped(ctx: UpdCtx, id: string, version: string | null): boolean {
   try {
     const s = updater.loadSettings(ctx);
-    return (s.pluginSkipVersions || {})[id] === version;
-  } catch { return false; }
+    return ((s.pluginSkipVersions as Record<string, string>) || {})[id] === version;
+  } catch {
+    return false;
+  }
 }
 
-function rememberSkip(ctx, id, version) {
+export function rememberSkip(ctx: UpdCtx, id: string, version: string): void {
   try {
     const s = updater.loadSettings(ctx);
-    s.pluginSkipVersions = s.pluginSkipVersions || {};
-    s.pluginSkipVersions[id] = version;
+    s.pluginSkipVersions = (s.pluginSkipVersions as Record<string, string>) || {};
+    (s.pluginSkipVersions as Record<string, string>)[id] = version;
     updater.saveSettings(ctx, s);
-  } catch { /* 写失败不影响 */ }
+  } catch {
+    /* 写失败不影响 */
+  }
 }
 
-function isAutoUpdateEnabled(ctx) {
+export function isAutoUpdateEnabled(ctx: UpdCtx): boolean {
   try {
     const s = updater.loadSettings(ctx);
     return s.pluginAutoUpdate === true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,22 +274,24 @@ function isAutoUpdateEnabled(ctx) {
 /**
  * engines.dsh 门槛：新包声明的最低内核要求高于当前生效 dsh 版本 → 拒绝。
  * 范围只取最低下界（>= / ^ 语义下的起点），保守可比。
- * @returns {string|null} 拒绝原因（null = 放行）
+ * @returns 拒绝原因（null = 放行）
  */
-function enginesGate(manifest, activeDshVersion) {
+export function enginesGate(manifest: { engines?: { dsh?: unknown } } | null, activeDshVersion: string | null): string | null {
   try {
     const eng = manifest && manifest.engines;
     if (!eng || !eng.dsh) return null;
     const req = String(eng.dsh).trim();
     if (!req) return null;
     const m = /([<>]=?)?\s*(\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?)/.exec(req);
-    if (!m) return null;
+    if (!m || m[2] === undefined) return null;
     const min = m[2];
     if (!activeDshVersion) return null;
     if (updater.compareVersions(min, activeDshVersion) > 0) {
       return '该插件新版本要求 dsh 内核 >= ' + min + '，当前内核为 ' + activeDshVersion + '，请先更新内核再更新此插件';
     }
-  } catch { /* 解析失败按放行处理，交给守护启动兜底 */ }
+  } catch {
+    /* 解析失败按放行处理，交给守护启动兜底 */
+  }
   return null;
 }
 
@@ -220,50 +299,52 @@ function enginesGate(manifest, activeDshVersion) {
 // 全量检测
 // ---------------------------------------------------------------------------
 
-/**
- * 检查全部有更新源的内置插件。
- * @param ctx     updCtx()
- * @param sources [{ id, name, assetsDir, update }]
- * @param opts    { force, profileDirP }
- * @returns [{ id, name, source, sourceName, current, latest, hasUpdate, skipped, error }]
- */
-async function checkPluginUpdates(ctx, sources, opts = {}) {
+/** 检查全部有更新源的内置插件（结果按名称排序，内存 TTL 缓存）。 */
+export async function checkPluginUpdates(
+  ctx: PluginUpdCtx,
+  sources: PluginSource[],
+  opts: { force?: boolean; profileDirP?: string | null } = {},
+): Promise<PluginUpdateItem[]> {
   const now = Date.now();
   if (!opts.force && checkCache.list && now - checkCache.at < PLUGIN_CHECK_TTL_MS) return checkCache.list;
-  const list = await Promise.all(sources.map(async (s) => {
-    const out = {
-      id: s.id,
-      name: s.name,
-      source: sourceKind(s.update),
-      sourceName: sourceName(s.update),
-      current: null,
-      latest: null,
-      hasUpdate: false,
-      skipped: false,
-      error: null,
-    };
-    try {
-      out.current = currentVersionOf(ctx, s.assetsDir, s.update, opts.profileDirP || null);
-      out.latest = await resolveLatest(ctx, s.update);
-      out.hasUpdate = hasUpdateOf(out.current, out.latest);
-      if (out.hasUpdate && isVersionSkipped(ctx, s.id, out.latest)) out.skipped = true;
-    } catch (err) {
-      out.error = String((err && err.message) || err);
-    }
-    return out;
-  }));
+  const list = await Promise.all(
+    sources.map(async (s): Promise<PluginUpdateItem> => {
+      const out: PluginUpdateItem = {
+        id: s.id,
+        name: s.name,
+        source: sourceKind(s.update),
+        sourceName: sourceName(s.update),
+        current: null,
+        latest: null,
+        hasUpdate: false,
+        skipped: false,
+        error: null,
+      };
+      try {
+        out.current = currentVersionOf(ctx, s.assetsDir, s.update, opts.profileDirP || null);
+        out.latest = await resolveLatest(ctx, s.update);
+        out.hasUpdate = hasUpdateOf(out.current, out.latest);
+        if (out.hasUpdate && out.latest && isVersionSkipped(ctx, s.id, out.latest)) out.skipped = true;
+      } catch (err) {
+        out.error = String((err as Error)?.message || err);
+      }
+      return out;
+    }),
+  );
   list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   checkCache = { at: now, list };
   return list;
 }
 
-function invalidateCache() { checkCache = { at: 0, list: null }; }
+export function invalidateCache(): void {
+  checkCache = { at: 0, list: null };
+}
 
 // ---------------------------------------------------------------------------
 // 应用更新
 // ---------------------------------------------------------------------------
 
-function copyTree(src, dest) {
+function copyTree(src: string, dest: string): void {
   const entries = fs.readdirSync(src, { withFileTypes: true });
   for (const e of entries) {
     const s = path.join(src, e.name);
@@ -278,42 +359,51 @@ function copyTree(src, dest) {
 }
 
 /** GitHub 分发源下载候选：codeload tarball（tag 带不带 v 前缀都试）。 */
-function githubTarballCandidates(repo, latest) {
+export function githubTarballCandidates(repo: string, latest: string): string[] {
   const base = 'https://codeload.github.com/' + encodeURIComponent(repo) + '/tar.gz/refs/tags/';
   return [base + 'v' + latest, base + latest];
 }
 
 /** 安装完成后定位包目录：npm 源按包名；GitHub 源扫描直子目录。 */
-function findInstalledDir(staging, update) {
+export function findInstalledDir(staging: string, update: UpdateSource): string | null {
   const nm = path.join(staging, 'node_modules');
   if (update.npm) {
     const dir = path.join(nm, ...update.npm.split('/'));
     return fs.existsSync(path.join(dir, 'package.json')) ? dir : null;
   }
   if (!fs.existsSync(nm)) return null;
-  const candidates = fs.readdirSync(nm, { withFileTypes: true })
+  const candidates = fs
+    .readdirSync(nm, { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => path.join(nm, e.name))
     .filter((dir) => {
       try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) as { name?: string };
         return pkg.name === path.basename(dir);
-      } catch { return false; }
+      } catch {
+        return false;
+      }
     });
-  if (candidates.length === 1) return candidates[0];
+  if (candidates.length === 1) return candidates[0] ?? null;
   // 多个候选（异常结构）时选版本号与目标一致的。
-  return candidates.find((dir) => versionOfDir(dir) !== null) || null;
+  return candidates.find((dir) => versionOfDir(dir) !== null) ?? null;
+}
+
+/** applyBuiltinPluginUpdate 的结果。 */
+export interface ApplyResult {
+  ok: boolean;
+  current: string | null;
+  latest: string | null;
+  noop?: boolean;
+  profileCopied?: boolean;
+  restartRequired?: boolean;
 }
 
 /**
  * 把某个内置插件更新到 latest。
- * @param ctx    updCtx()
- * @param source { id, name, assetsDir, update }
- * @param opts   { latest, profileDirP, guard, copyIntoProfile(overlayDir, name),
- *                 bundledDshVersion, log }
  * @returns { ok, current, latest, noop?, profileCopied?, restartRequired? }
  */
-async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
+export async function applyBuiltinPluginUpdate(ctx: PluginUpdCtx, source: PluginSource, opts: ApplyUpdateOpts = {}): Promise<ApplyResult> {
   const log = opts.log || ctx.log;
   const update = source.update;
   const name = sourceName(update);
@@ -334,13 +424,11 @@ async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
   fs.rmSync(stagingRootDir, { recursive: true, force: true });
   fs.mkdirSync(stagingRootDir, { recursive: true });
   const staging = path.join(stagingRootDir, 'pkg');
-  const candidates = update.npm
-    ? [update.npm + '@' + latest]
-    : githubTarballCandidates(update.github, latest);
+  const candidates = update.npm ? [update.npm + '@' + latest] : githubTarballCandidates(update.github as string, latest);
   const chain = updater.registryChain(await updater.currentRegistry(ctx));
   const run = ctx.runNpm || updater.runNpm;
-  const errors = [];
-  let installed = null;
+  const errors: string[] = [];
+  let installed: string | null = null;
   outer:
   for (const spec of candidates) {
     for (const registry of chain) {
@@ -357,7 +445,7 @@ async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
         installed = dir;
         break outer;
       } catch (err) {
-        errors.push((registry || '默认源') + ' × ' + spec + ': ' + String((err && err.message) || err));
+        errors.push((registry || '默认源') + ' × ' + spec + ': ' + String((err as Error)?.message || err));
       }
     }
   }
@@ -367,9 +455,12 @@ async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
   }
 
   // 3) 校验：engines.dsh 门槛
-  let manifest;
-  try { manifest = JSON.parse(fs.readFileSync(path.join(installed, 'package.json'), 'utf8')); }
-  catch { manifest = null; }
+  let manifest: { engines?: { dsh?: unknown } } | null;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(installed, 'package.json'), 'utf8')) as { engines?: { dsh?: unknown } };
+  } catch {
+    manifest = null;
+  }
   if (!manifest) {
     fs.rmSync(stagingRootDir, { recursive: true, force: true });
     throw new Error('更新包缺少 package.json，已中止');
@@ -406,9 +497,13 @@ async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
     fs.mkdirSync(path.dirname(overlay), { recursive: true });
     fs.renameSync(merged, overlay);
   } catch (err) {
-    try { if (!fs.existsSync(overlay) && fs.existsSync(bak)) fs.renameSync(bak, overlay); } catch { /* 尽力回滚 */ }
+    try {
+      if (!fs.existsSync(overlay) && fs.existsSync(bak)) fs.renameSync(bak, overlay);
+    } catch {
+      /* 尽力回滚 */
+    }
     fs.rmSync(stagingRootDir, { recursive: true, force: true });
-    throw new Error('切换覆盖层失败: ' + String((err && err.message) || err));
+    throw new Error('切换覆盖层失败: ' + String((err as Error)?.message || err));
   }
   if (fs.existsSync(bak)) fs.rmSync(bak, { recursive: true, force: true });
 
@@ -419,7 +514,7 @@ async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
       opts.copyIntoProfile(overlay, source.name);
       profileCopied = true;
     } catch (err) {
-      log('plugin-update', '更新 ' + source.id + ' 已下载，但写 profile 失败（服务运行中？）: ' + String((err && err.message) || err));
+      log('plugin-update', '更新 ' + source.id + ' 已下载，但写 profile 失败（服务运行中？）: ' + String((err as Error)?.message || err));
     }
   }
 
@@ -429,14 +524,24 @@ async function applyBuiltinPluginUpdate(ctx, source, opts = {}) {
   return { ok: true, current, latest: vNew, profileCopied, restartRequired: !profileCopied };
 }
 
+/** 自动更新结果。 */
+export interface AutoApplyResult {
+  done: Array<{ id: string; name: string; current: string | null; latest: string | null }>;
+  failed: Array<{ id: string; name: string; error: string }>;
+}
+
 /**
  * 自动更新流程（settings.pluginAutoUpdate 开启时由主进程调用）：
  * 逐个下载有更新的内置插件到覆盖层，失败不阻塞其余插件。
  */
-async function autoApplyUpdates(ctx, sources, opts = {}) {
+export async function autoApplyUpdates(
+  ctx: PluginUpdCtx,
+  sources: PluginSource[],
+  opts: ApplyUpdateOpts = {},
+): Promise<AutoApplyResult> {
   const list = await checkPluginUpdates(ctx, sources, opts);
-  const done = [];
-  const failed = [];
+  const done: AutoApplyResult['done'] = [];
+  const failed: AutoApplyResult['failed'] = [];
   for (const item of list) {
     if (!item.hasUpdate || item.skipped) continue;
     const source = sources.find((s) => s.id === item.id);
@@ -446,36 +551,10 @@ async function autoApplyUpdates(ctx, sources, opts = {}) {
       if (r.noop) continue;
       done.push({ id: item.id, name: item.name, current: item.current, latest: r.latest });
     } catch (err) {
-      failed.push({ id: item.id, name: item.name, error: String((err && err.message) || err) });
+      failed.push({ id: item.id, name: item.name, error: String((err as Error)?.message || err) });
     }
   }
   return { done, failed };
 }
 
-module.exports = {
-  PLUGIN_CHECK_TTL_MS,
-  PLUGIN_CHECK_INTERVAL_MS,
-  overlayRoot,
-  overlayDirOf,
-  stagingRoot,
-  sourceKind,
-  sourceName,
-  versionOfDir,
-  currentVersionOf,
-  hasUpdateOf,
-  npmLatest,
-  githubLatest,
-  resolveLatest,
-  githubTarballCandidates,
-  findInstalledDir,
-  dueForCheck,
-  markChecked,
-  isVersionSkipped,
-  rememberSkip,
-  isAutoUpdateEnabled,
-  enginesGate,
-  checkPluginUpdates,
-  invalidateCache,
-  applyBuiltinPluginUpdate,
-  autoApplyUpdates,
-};
+export { PLUGIN_CHECK_TTL_MS, PLUGIN_CHECK_INTERVAL_MS };

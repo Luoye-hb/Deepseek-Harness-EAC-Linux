@@ -70,6 +70,7 @@ test('preload sends renderer heartbeats and exposes the recovery bridge', () => 
 });
 
 test('main.js wires the boot module and registers IPC through lib/ipc', () => {
-  assert.ok(/require\('\.\/lib\/boot\.js'\)/.test(mainSrc), 'boot wiring missing');
+  // Task 7：main.js 为 tsc 编译产物（双引号 require）；源码 main.ts 为 ESM import。
+  assert.ok(/require\(['"]\.\/lib\/boot\.js['"]\)/.test(mainSrc), 'boot wiring missing');
   assert.ok(/registerIpc\(\);/.test(bootSrc), 'registerIpc() is never called');
 });

@@ -44,5 +44,6 @@ test('主窗与浮窗都挂接右键菜单', () => {
   assert.match(windowSrc, /attachEditContextMenu\(state\.mainWindow\.webContents\)/, '主窗挂接');
   assert.match(windowSrc, /attachEditContextMenu\(win\.webContents\)/, '浮窗挂接');
   // Task 3：main.js 经 lib/window.js 接线（打包产物存在性由 bundled-files 守护）。
-  assert.ok(mainSrc.includes("require('./lib/window.js')"), 'main.js must require lib/window.js');
+  // Task 7：main.js 为 tsc 编译产物（双引号 require）；源码 main.ts 为 ESM import。
+  assert.ok(/require\(['"]\.\/lib\/window\.js['"]\)/.test(mainSrc), 'main.js must require lib/window.js');
 });
