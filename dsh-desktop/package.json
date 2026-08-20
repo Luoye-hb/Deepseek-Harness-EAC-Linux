@@ -1,10 +1,15 @@
 {
   "name": "dsh-desktop",
   "productName": "Deepseek Harness EAC",
+  "desktopName": "deepseek-harness-eac",
   "version": "4.6.0",
   "description": "DeepSeek Harness (dsh) 寮€绠卞嵆鐢ㄧ殑 Windows 妗岄潰瀹㈡埛绔細鍐呯疆 dsh CLI 涓?Node 杩愯鏃讹紝涓€閿惎鍔?Web UI",
   "main": "main.js",
-  "author": "DSH Desktop",
+  "author": {
+    "name": "DSH Desktop",
+    "email": "zouyuxuan122@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/zouyuxuan122/Deepseek-Harness-EAC",
   "license": "MIT",
   "private": true,
   "scripts": {
@@ -17,6 +22,11 @@
     "prepack": "npm run build && node scripts/check-syntax.js && node scripts/build-native.js copy",
     "pack": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --dir",
     "dist": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --win && node scripts/make-release-hashes.js",
+    "dist:linux": "npm run predist && node scripts/patch-deps.js && electron-builder --linux --x64",
+    "dist:arch": "npm run predist && node scripts/patch-deps.js && electron-builder --linux pacman --x64",
+    "dist:deb": "npm run predist && node scripts/patch-deps.js && electron-builder --linux deb --x64",
+    "dist:rpm": "npm run predist && node scripts/patch-deps.js && electron-builder --linux rpm --x64",
+    "dist:appimage": "npm run predist && node scripts/patch-deps.js && electron-builder --linux AppImage --x64",
     "postinstall": "npm run build && node scripts/patch-deps.js || exit 0",
     "fetch-npm": "npm run build && node scripts/fetch-npm.js",
     "fetch-runtime": "npm run build && node scripts/fetch-node.js && node scripts/fetch-npm.js",

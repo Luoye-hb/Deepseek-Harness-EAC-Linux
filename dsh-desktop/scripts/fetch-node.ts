@@ -1,6 +1,6 @@
 'use strict';
 
-// 把系统 Node 可执行文件复制进 vendor/node/node.exe。
+// 获取官方 Node v24.19.0 可执行文件到 vendor/node。
 //
 // 原因：打包后的应用用真实 node.exe 拉起 dsh CLI，保证预编译原生模块
 // （sharp / node-pty / koffi …）的 Node ABI 与编译时一致。Electron 内嵌
@@ -19,8 +19,9 @@ import { execFileSync } from 'node:child_process';
 
 const NODE_VERSION = 'v24.19.0';
 const DIST_BASE = `https://nodejs.org/dist/${NODE_VERSION}`;
+const runtimeDir = path.resolve(__dirname, '..', 'vendor', 'node');
 const executable = process.platform === 'win32' ? 'node.exe' : 'node';
-const dest = path.resolve(__dirname, '..', 'vendor', 'node', executable);
+const dest = path.join(runtimeDir, executable);
 
 function get(url: string, destination?: string, redirects = 0): Promise<Buffer | void> {
   if (redirects > 5) return Promise.reject(new Error(`too many redirects: ${url}`));
@@ -53,8 +54,13 @@ function get(url: string, destination?: string, redirects = 0): Promise<Buffer |
   });
 }
 
-async function fetchLinuxRuntime(): Promise<void> {
-  const archiveName = `node-${NODE_VERSION}-linux-x64.tar.xz`;
+async function fetchOfficialRuntime(): Promise<void> {
+  if (process.arch !== 'x64' || (process.platform !== 'win32' && process.platform !== 'linux')) {
+    throw new Error(`unsupported runtime target: ${process.platform}-${process.arch} (Windows/Linux x64 only)`);
+  }
+  const target = process.platform === 'win32' ? 'win-x64' : 'linux-x64';
+  const extension = process.platform === 'win32' ? 'zip' : 'tar.xz';
+  const archiveName = `node-${NODE_VERSION}-${target}.${extension}`;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-node-runtime-'));
   const archive = path.join(tempDir, archiveName);
   try {
@@ -65,30 +71,32 @@ async function fetchLinuxRuntime(): Promise<void> {
     await get(`${DIST_BASE}/${archiveName}`, archive);
     const actual = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
     if (actual !== expected.toLowerCase()) throw new Error(`SHA-256 mismatch for ${archiveName}`);
-    execFileSync('tar', ['-xJf', archive, '-C', tempDir], { stdio: 'inherit' });
-    const source = path.join(tempDir, `node-${NODE_VERSION}-linux-x64`, 'bin', 'node');
+    if (process.platform === 'win32') {
+      execFileSync('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force', archive, tempDir,
+      ], { stdio: 'inherit' });
+    } else {
+      execFileSync('tar', ['-xJf', archive, '-C', tempDir], { stdio: 'inherit' });
+    }
+    const source = process.platform === 'win32'
+      ? path.join(tempDir, `node-${NODE_VERSION}-win-x64`, 'node.exe')
+      : path.join(tempDir, `node-${NODE_VERSION}-linux-x64`, 'bin', 'node');
     if (!fs.existsSync(source)) throw new Error(`official archive did not contain ${source}`);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    fs.rmSync(path.join(runtimeDir, process.platform === 'win32' ? 'node' : 'node.exe'), { force: true });
     fs.copyFileSync(source, dest);
-    fs.chmodSync(dest, 0o755);
+    if (process.platform === 'linux') fs.chmodSync(dest, 0o755);
+    const actualVersion = execFileSync(dest, ['--version'], { encoding: 'utf8' }).trim();
+    if (actualVersion !== NODE_VERSION) throw new Error(`runtime version mismatch: ${actualVersion}`);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
 async function main(): Promise<void> {
-  if (process.platform === 'linux' && process.arch === 'x64') {
-    await fetchLinuxRuntime();
-    console.log(`Downloaded official Node ${NODE_VERSION} / linux-x64`);
-  } else {
-    if (!/node(\.exe)?$/i.test(path.basename(process.execPath))) {
-      throw new Error('fetch-node 必须在系统 Node 下运行，不能在 Electron 内运行。');
-    }
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(process.execPath, dest);
-    if (process.platform !== 'win32') fs.chmodSync(dest, 0o755);
-    console.log(`Copied host Node ${process.version} for ${process.platform}-${process.arch}`);
-  }
+  await fetchOfficialRuntime();
+  console.log(`Downloaded and verified official Node ${NODE_VERSION} / ${process.platform}-x64`);
   console.log(`    -> ${dest}`);
 }
 

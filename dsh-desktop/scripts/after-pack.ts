@@ -11,7 +11,12 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { buildBundleManifest } from '../bundle-integrity.js';
+
+const { checkFile: checkGlibcFile } = require('./check-glibc.cjs') as {
+  checkFile(file: string): { ok: boolean; message: string };
+};
 
 /** electron-builder 传入的打包上下文（结构子集，足以覆盖本钩子用到的字段）。 */
 export interface AfterPackContext {
@@ -21,15 +26,15 @@ export interface AfterPackContext {
 
 export async function afterPack(context: AfterPackContext): Promise<void> {
   const { appOutDir, electronPlatformName } = context;
-  if (electronPlatformName !== 'win32') return;
+  if (electronPlatformName !== 'win32' && electronPlatformName !== 'linux') {
+    throw new Error(`afterPack: unsupported platform ${electronPlatformName}`);
+  }
   const src = path.resolve(__dirname, '..', 'vendor', 'npm');
   const dest = path.join(appOutDir, 'resources', 'npm');
-  if (!fs.existsSync(src)) {
-    console.warn('afterPack: vendor/npm missing — npm CLI will not be bundled');
-    return;
-  }
+  requireDirectory(path.join(src, 'node_modules'), 'vendor/npm dependency payload');
   fs.rmSync(dest, { recursive: true, force: true });
   fs.cpSync(src, dest, { recursive: true });
+  closeAndVerifyNpm(appOutDir, dest, electronPlatformName);
   const deps = fs.readdirSync(path.join(dest, 'node_modules')).length;
   console.log(`afterPack: bundled npm copied (deps: ${deps})`);
 
@@ -38,17 +43,66 @@ export async function afterPack(context: AfterPackContext): Promise<void> {
   // ai sdk、BM25 语料数据），必须原样存活 —— 把插件树整体拷回。
   const pluginsSrc = path.resolve(__dirname, '..', 'assets', 'plugins');
   const pluginsDest = path.join(appOutDir, 'resources', 'app', 'assets', 'plugins');
-  if (fs.existsSync(pluginsSrc)) {
-    fs.rmSync(pluginsDest, { recursive: true, force: true });
-    fs.cpSync(pluginsSrc, pluginsDest, { recursive: true });
-    console.log('afterPack: bundled plugins copied verbatim');
-  }
+  requireDirectory(pluginsSrc, 'bundled plugin tree');
+  fs.rmSync(pluginsDest, { recursive: true, force: true });
+  fs.cpSync(pluginsSrc, pluginsDest, { recursive: true });
+  console.log('afterPack: bundled plugins copied verbatim');
+  auditBundledPluginRuntime(pluginsDest, electronPlatformName);
 
-  trimLongPathFiles(appOutDir);
-  dedupeNestedModules(appOutDir);
+  if (electronPlatformName === 'win32') {
+    trimLongPathFiles(appOutDir);
+    dedupeNestedModules(appOutDir);
+  }
   injectDshClosureExtras(appOutDir);
+  auditNodePty(appOutDir, electronPlatformName);
+  if (electronPlatformName === 'linux') auditLinuxNativePayloads(appOutDir);
   writeBundleManifest(appOutDir);
-  auditLongPaths(appOutDir);
+  if (electronPlatformName === 'win32') auditLongPaths(appOutDir);
+}
+
+function requireDirectory(directory: string, label: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(directory);
+  } catch {
+    throw new Error(`afterPack: mandatory ${label} is missing: ${directory}`);
+  }
+  if (entries.length === 0) throw new Error(`afterPack: mandatory ${label} is empty: ${directory}`);
+}
+
+function closeAndVerifyNpm(appOutDir: string, npmRoot: string, platform: string): void {
+  const packageFile = path.join(npmRoot, 'package.json');
+  const npmPackage = JSON.parse(fs.readFileSync(packageFile, 'utf8')) as {
+    bundleDependencies?: string[];
+    version?: string;
+  };
+  const dependencies = npmPackage.bundleDependencies;
+  if (!Array.isArray(dependencies) || dependencies.length === 0) {
+    throw new Error('afterPack: npm bundleDependencies metadata is missing');
+  }
+  const packedModules = path.join(appOutDir, 'resources', 'app', 'node_modules');
+  const sourceModules = path.resolve(__dirname, '..', 'node_modules');
+  for (const name of dependencies) {
+    const destination = path.join(npmRoot, 'node_modules', ...name.split('/'));
+    if (fs.existsSync(path.join(destination, 'package.json'))) continue;
+    const relative = name.split('/');
+    const source = [packedModules, sourceModules]
+      .map((root) => path.join(root, ...relative))
+      .find((candidate) => fs.existsSync(path.join(candidate, 'package.json')));
+    if (!source) {
+      throw new Error(`afterPack: npm bundled dependency cannot be resolved: ${name}`);
+    }
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.cpSync(source, destination, { recursive: true });
+    console.log(`afterPack: closed npm dependency ${name}`);
+  }
+  const node = path.join(appOutDir, 'resources', 'node', platform === 'win32' ? 'node.exe' : 'node');
+  if (!fs.existsSync(node)) throw new Error(`afterPack: bundled Node is missing: ${node}`);
+  const checked = spawnSync(node, [path.join(npmRoot, 'bin', 'npm-cli.js'), '--version'], { encoding: 'utf8' });
+  if (checked.error || checked.status !== 0 || checked.stdout.trim() !== npmPackage.version) {
+    throw new Error(`afterPack: bundled npm verification failed: ${(checked.stderr || checked.error?.message || '').trim()}`);
+  }
+  console.log(`afterPack: npm@${npmPackage.version} verified with bundled Node`);
 }
 
 // profile 回退闭包（profiles/node_modules junction）由 dsh-app-boot 维护，
@@ -62,13 +116,12 @@ export async function afterPack(context: AfterPackContext): Promise<void> {
 function injectDshClosureExtras(appOutDir: string): void {
   const appNm = path.join(appOutDir, 'resources', 'app', 'node_modules');
   const dshPkgPath = path.join(appNm, '@deepseek-ai', 'dsh', 'package.json');
-  if (!fs.existsSync(dshPkgPath)) return;
+  if (!fs.existsSync(dshPkgPath)) throw new Error(`afterPack: bundled dsh package is missing: ${dshPkgPath}`);
   let dshPkg: { dependencies?: Record<string, string> } & Record<string, unknown>;
   try {
     dshPkg = JSON.parse(fs.readFileSync(dshPkgPath, 'utf8'));
   } catch (err) {
-    console.warn('afterPack: cannot parse bundled dsh package.json:', (err as Error).message);
-    return;
+    throw new Error(`afterPack: cannot parse bundled dsh package.json: ${(err as Error).message}`);
   }
   dshPkg.dependencies = dshPkg.dependencies || {};
 
@@ -80,8 +133,7 @@ function injectDshClosureExtras(appOutDir: string): void {
     try {
       version = (JSON.parse(fs.readFileSync(path.join(appNm, name, 'package.json'), 'utf8')) as { version?: string }).version || '';
     } catch {
-      console.warn(`afterPack: ${name} not found in app closure — skipped`);
-      continue;
+      throw new Error(`afterPack: mandatory closure dependency ${name} is missing`);
     }
     dshPkg.dependencies[name] = '^' + version;
     injected++;
@@ -97,11 +149,89 @@ function injectDshClosureExtras(appOutDir: string): void {
 // ERR_MODULE_NOT_FOUND 上循环。
 function writeBundleManifest(appOutDir: string): void {
   const nmRoot = path.join(appOutDir, 'resources', 'app', 'node_modules');
-  if (!fs.existsSync(nmRoot)) return;
+  requireDirectory(nmRoot, 'application dependency tree');
   const manifest = buildBundleManifest(nmRoot);
   const out = path.join(appOutDir, 'resources', 'app', 'bundle-manifest.json');
   fs.writeFileSync(out, JSON.stringify(manifest, null, 2));
   console.log(`afterPack: bundle manifest written (${Object.keys(manifest.packages).length} packages)`);
+}
+
+const NODE_PTY_CANDIDATES: Record<string, string[]> = {
+  linux: ['build/Release/pty.node', 'prebuilds/linux-x64/pty.node'],
+  win32: ['build/Release/pty.node', 'prebuilds/win32-x64/pty.node', 'prebuilds/win32-x64/conpty.node'],
+};
+
+function auditNodePty(appOutDir: string, platform: string): void {
+  const root = path.join(appOutDir, 'resources', 'app', 'node_modules', 'node-pty');
+  requireDirectory(root, 'node-pty package');
+  const present = (NODE_PTY_CANDIDATES[platform] || []).filter((relative) => fs.existsSync(path.join(root, relative)));
+  if (present.length === 0) throw new Error(`afterPack: node-pty has no ${platform}-x64 native payload`);
+  if (platform !== 'linux') return;
+  const node = path.join(appOutDir, 'resources', 'node', 'node');
+  if (!fs.existsSync(node)) throw new Error(`afterPack: bundled Linux Node is missing: ${node}`);
+  const imported = spawnSync(node, ['-e',
+    'const pty=require(process.argv[1]);if(typeof pty.spawn!=="function")process.exit(2)', root,
+  ], { encoding: 'utf8' });
+  if (imported.error || imported.status !== 0) {
+    throw new Error(`afterPack: bundled Node cannot import node-pty: ${(imported.stderr || imported.error?.message || '').trim()}`);
+  }
+  checkGlibc(path.join(root, present[0]!));
+}
+
+function auditBundledPluginRuntime(pluginsRoot: string, platform: string): void {
+  const modules = path.join(pluginsRoot, 'dsh-tdai-memory', 'node_modules');
+  const required = [
+    path.join(modules, '@tencentdb-agent-memory', 'tcvdb-text', 'dist', 'index.js'),
+    path.join(modules, '@ai-sdk', 'gateway', 'dist', 'index.mjs'),
+    path.join(modules, 'ai', 'dist', 'index.mjs'),
+  ];
+  if (platform === 'linux') {
+    required.push(
+      path.join(modules, '@node-rs', 'jieba-linux-x64-gnu', 'jieba.linux-x64-gnu.node'),
+      path.join(modules, 'sqlite-vec-linux-x64', 'vec0.so'),
+    );
+  } else {
+    required.push(
+      path.join(modules, '@node-rs', 'jieba-win32-x64-msvc', 'jieba.win32-x64-msvc.node'),
+      path.join(modules, 'sqlite-vec-windows-x64', 'vec0.dll'),
+    );
+  }
+  const missing = required.filter((file) => !fs.existsSync(file));
+  if (missing.length > 0) {
+    throw new Error(`afterPack: dsh-tdai-memory payload is incomplete for ${platform}:\n${missing.join('\n')}`);
+  }
+}
+
+function auditLinuxNativePayloads(appOutDir: string): void {
+  const root = path.join(appOutDir, 'resources', 'app');
+  const requiredPatterns: Array<[string, RegExp]> = [
+    ['Sharp', /node_modules[\\/]@img[\\/]sharp-linux-x64[\\/].+\.node$/],
+    ['Koffi', /node_modules[\\/]@koromix[\\/]koffi-linux-x64[\\/].+\.node$/],
+    ['Jieba', /dsh-tdai-memory[\\/]node_modules[\\/]@node-rs[\\/]jieba-linux-x64-gnu[\\/].+\.node$/],
+    ['sqlite-vec', /dsh-tdai-memory[\\/]node_modules[\\/]sqlite-vec-linux-x64[\\/]vec0\.so$/],
+  ];
+  const files: string[] = [];
+  const walk = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith('.node') || entry.name.endsWith('.so')) files.push(file);
+    }
+  };
+  walk(root);
+  for (const [label, pattern] of requiredPatterns) {
+    const matches = files.filter((file) => pattern.test(file));
+    if (matches.length === 0) throw new Error(`afterPack: mandatory Linux native payload missing: ${label}`);
+    for (const file of matches) checkGlibc(file);
+  }
+  checkGlibc(path.join(appOutDir, 'resources', 'node', 'node'));
+  checkGlibc(path.join(appOutDir, 'deepseek-harness-eac'));
+}
+
+function checkGlibc(file: string): void {
+  const result = checkGlibcFile(file);
+  if (!result.ok) throw new Error(`afterPack: ${result.message}`);
+  console.log(`afterPack: ${result.message}`);
 }
 
 // electron-builder 的依赖收集器会把某些依赖无谓地嵌套在其依赖方之下（例如

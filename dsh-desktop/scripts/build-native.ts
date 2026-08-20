@@ -62,11 +62,12 @@ function runCargo(sub: string, rest: string[]): number {
 
 /** 复制 cargo cdylib 产物 → index.node（存在性断言）。 */
 function copyArtifact(): void {
+  if (process.platform !== 'win32') {
+    console.log('[build-native] Rust Job Object fence is Windows-only; native copy skipped');
+    return;
+  }
   const releaseDir = path.join(targetDir, 'release');
-  const candidates =
-    process.platform === 'win32' ? ['dsh_supervisor_native.dll']
-    : process.platform === 'darwin' ? ['libdsh_supervisor_native.dylib']
-    : ['libdsh_supervisor_native.so'];
+  const candidates = ['dsh_supervisor_native.dll'];
   const found = candidates.find((f) => fs.existsSync(path.join(releaseDir, f)));
   if (!found) {
     console.error(`[build-native] 未找到 cargo 产物：${candidates.join(' / ')}（先 cargo build --release）`);

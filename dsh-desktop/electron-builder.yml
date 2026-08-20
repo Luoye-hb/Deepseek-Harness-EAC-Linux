@@ -18,7 +18,7 @@ directories:
 afterPack: scripts/after-pack.js
 
 # Native modules (sharp / node-pty / koffi) are loaded by the bundled plain
-# node.exe, so keep everything as real files and never rebuild for Electron.
+# Node runtime, so keep everything as real files and never rebuild for Electron.
 asar: false
 npmRebuild: false
 buildDependenciesFromSource: false
@@ -97,10 +97,9 @@ files:
   - lib/extension-host/sdk/index.js
   - lib/recovery-center/register.js
   - shared/protocol.js
-  # VNext Phase 2：Host 进程入口（内置 node.exe 拉起）与 Rust 围栏预编译产物
-  # （predist 经 scripts/build-native.js copy 强制校验存在）。
+  # VNext Phase 2：Host 进程入口由平台对应的内置 Node 拉起。Windows Rust
+  # 围栏作为 win.extraResources 单独收录，Linux 包不得携带该 PE 原生模块。
   - host-bootstrap.js
-  - native/supervisor/index.node
   - updater.js
   - settings.js
   - client-updater.js
@@ -143,13 +142,16 @@ files:
   - "**/SKILL.md"
 
 extraResources:
-  - from: vendor/node/node.exe
-    to: node/node.exe
   - from: vendor/npm
     to: npm
 
 win:
   icon: build/icon.png
+  extraResources:
+    - from: vendor/node/node.exe
+      to: node/node.exe
+    - from: native/supervisor/index.node
+      to: native/supervisor/index.node
   target:
     - target: portable
       arch:
@@ -157,6 +159,45 @@ win:
     - target: nsis
       arch:
         - x64
+
+linux:
+  icon: build/icon.png
+  executableName: deepseek-harness-eac
+  syncDesktopName: true
+  desktop:
+    entry:
+      Name: Deepseek Harness EAC
+      Comment: DeepSeek Harness desktop client
+      Categories: Development;
+  category: Development
+  extraResources:
+    - from: vendor/node/node
+      to: node/node
+  target:
+    - target: pacman
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+    - target: rpm
+      arch:
+        - x64
+    - target: AppImage
+      arch:
+        - x64
+
+pacman:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+
+deb:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+
+rpm:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+
+appImage:
+  artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
 
 # 产物名带 ${version}（Setup-v<version>-x64.exe / Portable-v<version>-x64.exe）：
 # releases/latest/download/<file>.exe 要求「最新 release 里存在同名资产」，
