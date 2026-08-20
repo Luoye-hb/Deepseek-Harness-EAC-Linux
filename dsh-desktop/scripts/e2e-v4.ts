@@ -16,37 +16,38 @@
 // 隔离：DSH_HOME / APPDATA / LOCALAPPDATA 全部指向临时目录，绝不触碰真实
 // 用户数据；更新检查用 DSH_DESKTOP_SKIP_*_UPDATE 关闭（避免测试期弹窗）。
 
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { spawn, execSync } = require('node:child_process');
-const http = require('node:http');
-const WebSocket = require('ws');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { spawn, execSync } from 'node:child_process';
+import * as http from 'node:http';
+import { WebSocket } from 'ws';
 
-function arg(name, def) {
+function arg(name: string, def?: string): string | undefined {
   const i = process.argv.indexOf('--' + name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def;
 }
 
-const EXE = arg('exe');
-const MODE = arg('mode', 'fresh');
-const TAG = arg('tag', MODE);
-const DEBUG_PORT = Number(arg('port', '9337'));
-
-if (!EXE || !fs.existsSync(EXE)) {
+const exeArg = arg('exe');
+if (!exeArg || !fs.existsSync(exeArg)) {
   console.error('[e2e] --exe 必须指向存在的 exe');
   process.exit(2);
 }
+// 守卫后收窄副本（模块级收窄不跨函数边界，main() 内仍需 string）
+const EXE: string = exeArg;
+const MODE: string = arg('mode', 'fresh') ?? 'fresh';
+const TAG: string = arg('tag', MODE) ?? MODE;
+const DEBUG_PORT = Number(arg('port', '9337'));
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function tasklistPids(name) {
+function tasklistPids(name: string): Set<number> {
   try {
     const out = execSync(`tasklist /FI "IMAGENAME eq ${name}" /FO CSV /NH`, { encoding: 'utf8', windowsHide: true });
-    const pids = new Set();
+    const pids = new Set<number>();
     for (const line of out.split(/\r?\n/)) {
       const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
-      if (m) pids.add(Number(m[2]));
+      if (m && m[2]) pids.add(Number(m[2]));
     }
     return pids;
   } catch {
@@ -54,44 +55,80 @@ function tasklistPids(name) {
   }
 }
 
-function procAlive(pid) {
+function procAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
   try {
     const out = execSync('tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
     return out.includes('"' + pid + '"');
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 // --- CDP 最小客户端 ---------------------------------------------------------
 
-async function cdpPageTarget() {
-  const list = await new Promise((resolve, reject) => {
+/** CDP /json/list 的页面目标条目（结构子集）。 */
+interface CdpTarget {
+  type?: string;
+  url?: string;
+  webSocketDebuggerUrl?: string;
+}
+
+/** Runtime.evaluate 的返回值对象（结构子集）。 */
+interface CdpRemoteObject {
+  value?: unknown;
+}
+
+async function cdpList(): Promise<CdpTarget[]> {
+  return new Promise((resolve, reject) => {
     http.get(`http://127.0.0.1:${DEBUG_PORT}/json/list`, (res) => {
       let body = '';
-      res.on('data', (c) => { body += c; });
+      res.on('data', (c) => {
+        body += c;
+      });
       res.on('end', () => {
-        try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+        try {
+          resolve(JSON.parse(body) as CdpTarget[]);
+        } catch (e) {
+          reject(e as Error);
+        }
       });
     }).on('error', reject);
   });
-  // 主窗页面：dsh web 的 http://127.0.0.1 页（排除 file:// 加载页与 devtools）
-  return list.find((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\//.test(t.webSocketDebuggerUrl ? t.url : t.url) && t.url.startsWith('http'));
 }
 
-function cdpEval(wsUrl, expr, timeoutMs = 20000) {
+async function cdpPageTarget(): Promise<CdpTarget | undefined> {
+  const list = await cdpList();
+  // 主窗页面：dsh web 的 http://127.0.0.1 页（排除 file:// 加载页与 devtools）
+  return list.find((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url ?? '') && (t.url ?? '').startsWith('http'));
+}
+
+function cdpEval(wsUrl: string, expr: string, timeoutMs = 20000): Promise<CdpRemoteObject | undefined> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { perMessageDeflate: false });
-    const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('CDP eval 超时')); }, timeoutMs);
+    const timer = setTimeout(() => {
+      try {
+        ws.close();
+      } catch { /* 已关闭 */ }
+      reject(new Error('CDP eval 超时'));
+    }, timeoutMs);
     ws.on('open', () => {
       ws.send(JSON.stringify({
         id: 1, method: 'Runtime.evaluate',
         params: { expression: expr, returnByValue: true, awaitPromise: true },
       }));
     });
-    ws.on('message', (data) => {
-      const msg = JSON.parse(data.toString());
+    ws.on('message', (data: Buffer) => {
+      const msg = JSON.parse(data.toString()) as {
+        id?: number;
+        error?: unknown;
+        result?: { result?: CdpRemoteObject; exceptionDetails?: unknown };
+      };
       if (msg.id === 1) {
         clearTimeout(timer);
-        try { ws.close(); } catch {}
+        try {
+          ws.close();
+        } catch { /* 已关闭 */ }
         if (msg.error) return reject(new Error(JSON.stringify(msg.error)));
         if (msg.result && msg.result.exceptionDetails) {
           return reject(new Error(JSON.stringify(msg.result.exceptionDetails).slice(0, 400)));
@@ -99,21 +136,30 @@ function cdpEval(wsUrl, expr, timeoutMs = 20000) {
         resolve(msg.result ? msg.result.result : undefined);
       }
     });
-    ws.on('error', (err) => { clearTimeout(timer); reject(err); });
+    ws.on('error', (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
 // --- 断言收集 ---------------------------------------------------------------
 
-const results = [];
-function check(name, ok, detail = '') {
+interface CheckResult {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+const results: CheckResult[] = [];
+
+function check(name: string, ok: boolean, detail = ''): void {
   results.push({ name, ok: !!ok, detail });
   console.log((ok ? '  ✔ ' : '  ✖ ') + name + (detail && !ok ? ' — ' + detail : ''));
 }
 
 // --- 主流程 -----------------------------------------------------------------
 
-async function main() {
+async function main(): Promise<void> {
   console.log(`[e2e:${TAG}] 模式=${MODE} exe=${EXE}`);
 
   // 0) 单实例守卫：真实应用已在运行则拒绝（拿不到锁会静默退出）。
@@ -125,8 +171,8 @@ async function main() {
 
   // 1) 临时环境
   // 测试根目录：默认系统临时目录；C: 空间紧张时用 DSH_E2E_ROOT 指到大盘
-// （profile 同步会把整个内置插件闭包拷进 DSH_HOME，数 GB 级）。
-const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
+  // （profile 同步会把整个内置插件闭包拷进 DSH_HOME，数 GB 级）。
+  const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
   fs.mkdirSync(rootBase, { recursive: true });
   const root = fs.mkdtempSync(path.join(rootBase, 'dsh-e2e-v4-' + TAG + '-'));
   const home = path.join(root, 'dsh-home');
@@ -144,9 +190,13 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
         if (e.name === 'node_modules' || !e.isDirectory()) continue;
         fs.cpSync(path.join(srcProfiles, e.name), path.join(dstProfiles, e.name), { recursive: true });
       }
-    } catch (err) { console.log('[e2e] 复制 profiles 失败（按 fresh 处理）: ' + err.message); }
+    } catch (err) {
+      console.log('[e2e] 复制 profiles 失败（按 fresh 处理）: ' + (err as Error).message);
+    }
     for (const f of ['settings.yaml', '.credentials.yaml', '.env']) {
-      try { fs.copyFileSync(path.join(srcHome, f), path.join(home, f)); } catch {}
+      try {
+        fs.copyFileSync(path.join(srcHome, f), path.join(home, f));
+      } catch { /* 无该文件 */ }
     }
   }
   console.log(`[e2e:${TAG}] root=${root}`);
@@ -164,7 +214,10 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
     fs.mkdirSync(path.dirname(runExe), { recursive: true });
     fs.copyFileSync(EXE, runExe);
     const cache = path.join(os.tmpdir(), 'deepseek-harness-eac-portable');
-    try { fs.rmSync(cache, { recursive: true, force: true }); console.log('[e2e] 已清理便携解压缓存（强制完整提取）'); } catch {}
+    try {
+      fs.rmSync(cache, { recursive: true, force: true });
+      console.log('[e2e] 已清理便携解压缓存（强制完整提取）');
+    } catch { /* 无缓存 */ }
   }
 
   // 2) 基线进程快照（node/conhost），退出后对比
@@ -189,8 +242,14 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
   const userDataDir = isPortableExe
     ? path.join(path.dirname(runExe), 'data')
     : path.join(root, 'appdata-roaming', 'Deepseek Harness EAC');
-  const desktopLog = () => path.join(userDataDir, 'logs', 'desktop.log');
-  const readLog = () => { try { return fs.readFileSync(desktopLog(), 'utf8'); } catch { return ''; } };
+  const desktopLog = (): string => path.join(userDataDir, 'logs', 'desktop.log');
+  const readLog = (): string => {
+    try {
+      return fs.readFileSync(desktopLog(), 'utf8');
+    } catch {
+      return '';
+    }
+  };
 
   // 4a) fresh 模式：首次向导在 boot 链上阻塞 dsh web 启动，必须先用 CDP
   // 驱动提交（核心+推荐），否则「Web UI 就绪」行永远不会出现。
@@ -198,20 +257,20 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
     const wizardT0 = Date.now();
     let driven = false;
     while (Date.now() - wizardT0 < 180000 && !driven) {
-      let pages = [];
+      let pages: CdpTarget[] = [];
       try {
-        const list = await new Promise((resolve, reject) => {
-          http.get(`http://127.0.0.1:${DEBUG_PORT}/json/list`, (res) => {
-            let body = '';
-            res.on('data', (c) => { body += c; });
-            res.on('end', () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
-          }).on('error', reject);
-        });
-        pages = list.filter((t) => t.type === 'page' && /onboarding\.html/.test(t.url || ''));
-      } catch {}
-      if (pages.length === 0) { await sleep(2000); continue; }
-      const ws = new WebSocket(pages[0].webSocketDebuggerUrl);
-      await new Promise((res) => { ws.on('open', res); ws.on('error', res); });
+        pages = (await cdpList()).filter((t) => t.type === 'page' && /onboarding\.html/.test(t.url || ''));
+      } catch { /* CDP 未就绪 */ }
+      const wizardPage = pages[0];
+      if (!wizardPage || !wizardPage.webSocketDebuggerUrl) {
+        await sleep(2000);
+        continue;
+      }
+      const ws = new WebSocket(wizardPage.webSocketDebuggerUrl);
+      await new Promise<void>((res) => {
+        ws.on('open', () => res());
+        ws.on('error', () => res());
+      });
       // 只发不候：submit 成功后向导窗口立即关闭，CDP 连接随之失效。
       ws.send(JSON.stringify({
         id: 9, method: 'Runtime.evaluate',
@@ -220,16 +279,26 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
           returnByValue: true, awaitPromise: true,
         },
       }));
-      setTimeout(() => { try { ws.close(); } catch {} }, 2000);
+      setTimeout(() => {
+        try {
+          ws.close();
+        } catch { /* 已关闭 */ }
+      }, 2000);
       driven = true;
       console.log('[e2e] 已 CDP 驱动提交首次向导（核心+推荐）');
     }
     check('首次向导已驱动提交（CDP）', driven, `elapsed=${Math.round((Date.now() - wizardT0) / 1000)}s`);
-    const wizardApplied = await new Promise((resolve) => {
+    const wizardApplied = await new Promise<boolean>((resolve) => {
       const t = setInterval(() => {
-        if (/插件选择向导已应用：\d+ 个插件状态变更/.test(readLog())) { clearInterval(t); resolve(true); }
+        if (/插件选择向导已应用：\d+ 个插件状态变更/.test(readLog())) {
+          clearInterval(t);
+          resolve(true);
+        }
       }, 2000);
-      setTimeout(() => { clearInterval(t); resolve(false); }, 120000);
+      setTimeout(() => {
+        clearInterval(t);
+        resolve(false);
+      }, 120000);
     });
     check('向导已应用（boot 日志确认）', wizardApplied);
   }
@@ -238,11 +307,15 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
   // 「dsh web:」）+ CDP 主窗页面（fresh 首装最长 12 分钟，含解压+装依赖）。
   const waitMs = MODE === 'fresh' ? 12 * 60 * 1000 : 8 * 60 * 1000;
   const t0 = Date.now();
-  let page = null;
+  let page: CdpTarget | undefined;
   let sawReadyLine = false;
   while (Date.now() - t0 < waitMs) {
     if (!sawReadyLine && /(Web UI 就绪: https?:\/\/|dsh web: https?:\/\/)/.test(readLog())) sawReadyLine = true;
-    try { page = await cdpPageTarget(); } catch { page = null; }
+    try {
+      page = await cdpPageTarget();
+    } catch {
+      page = undefined;
+    }
     if (page && sawReadyLine) break;
     if (child.exitCode !== null) break; // 进程提前退出
     await sleep(2000);
@@ -251,15 +324,24 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
     `page=${!!page} readyLine=${sawReadyLine} elapsed=${Math.round((Date.now() - t0) / 1000)}s exitCode=${child.exitCode}`);
   if (!page) {
     console.log('[e2e] 日志尾部：\n' + readLog().slice(-3000));
-    try { process.kill(appPid); } catch {}
-    return finish(1);
+    try {
+      if (appPid) process.kill(appPid);
+    } catch { /* 已退出 */ }
+    finish(1);
+    return;
   }
 
   // 5) 文件系统断言：profile 初始化 + v4 新插件同步 + dafeiyu 启停行
   const profDir = path.join(home, 'profiles', 'web-desktop');
-  const profPkg = (() => { try { return JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')); } catch { return null; } })();
+  const profPkg = (() => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } };
+    } catch {
+      return null;
+    }
+  })();
   check('桌面专属 profile 已初始化', !!profPkg && Array.isArray(profPkg.dsh?.profile?.bundles));
-  const nm = (n) => path.join(profDir, 'node_modules', ...n.split('/'));
+  const nm = (n: string): string => path.join(profDir, 'node_modules', ...n.split('/'));
   for (const [label, p] of [
     ['dsh-change-review（AI 变更审核）', nm('dsh-change-review')],
     ['dsh-undo-savepoint（崩溃急救）', nm('dsh-undo-savepoint')],
@@ -269,12 +351,14 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
     ['@vlln/dsh-navbar（导航条）', nm('@vlln/dsh-navbar')],
     ['dsh-plugin-manager（启停管理）', nm('@deepseek-ai/dsh-plugin-manager')],
     ['dsh-dafeiyu（大肥鱼）', nm('dsh-dafeiyu')],
-  ]) {
+  ] as Array<[string, string]>) {
     check('配套插件已同步: ' + label, fs.existsSync(path.join(p, 'package.json')), p);
   }
   check('dafeiyu helper exe 随包（PyInstaller）', fs.existsSync(path.join(nm('dsh-dafeiyu'), 'runtime', 'bin', 'win32-x64', 'dsh-dafeiyu-helper.exe')));
   let patch = '';
-  try { patch = fs.readFileSync(path.join(profDir, 'cordis.patch.yml'), 'utf8'); } catch {}
+  try {
+    patch = fs.readFileSync(path.join(profDir, 'cordis.patch.yml'), 'utf8');
+  } catch { /* 尚未创建 */ }
   check('patch 行: change-review / dsh-undo / openclaw-bridge 已注册',
     /id:\s*change-review\b/.test(patch) && /id:\s*dsh-undo\b/.test(patch) && /id:\s*openclaw-bridge\b/.test(patch));
   const dafeiyuBlock = (patch.match(/- id:\s*dsh-dafeiyu\n(?:[ \t]+[^\n]*\n)*/) || [''])[0];
@@ -296,40 +380,51 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
     try {
       return fs.readFileSync(path.join(junctionNm, '@deepseek-ai', 'dsh-workspace', 'lib', 'index.js'), 'utf8')
         .includes('dsh-desktop patch (session manage)');
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   })();
   check('会话删除补丁生效（烘焙或运行时应用）', /对话删除补丁/.test(log1) || hasBakedSessionPatch,
     `log=${/对话删除补丁/.test(log1)} baked=${hasBakedSessionPatch}`);
   const apiproxyIdx = (() => {
     try {
       return fs.readFileSync(path.join(junctionNm, '@deepseek-ai', 'dsh-host-apiproxy', 'lib', 'index.js'), 'utf8');
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   })();
   check('apiproxy 设置命名空间全量暴露（rc.7+ 无白名单，ClawBot 设置可达）',
     !!apiproxyIdx && apiproxyIdx.includes('settings.describe') && !apiproxyIdx.includes('WEB_SETTINGS_NAMESPACES'),
     `describe=${!!apiproxyIdx && apiproxyIdx.includes('settings.describe')} whitelist=${!!apiproxyIdx && apiproxyIdx.includes('WEB_SETTINGS_NAMESPACES')}`);
 
   // 7) 页面侧断言（CDP，真实渲染进程）
-  try {
-    const bridge = await cdpEval(page.webSocketDebuggerUrl, 'typeof window.dshDesktop');
-    check('页面 dshDesktop 桥可用（preload 注入）', bridge && bridge.value === 'object', JSON.stringify(bridge));
-    const loader = await cdpEval(page.webSocketDebuggerUrl, 'typeof window.__ModuleLoader__');
-    check('客户端插件系统已加载（__ModuleLoader__）', loader && (loader.value === 'object' || loader.value === 'function'), JSON.stringify(loader));
-    const market = await cdpEval(page.webSocketDebuggerUrl,
-      `fetch('/api/dsh-market', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'list', lang: 'zh' }) })
+  const pageWs = page.webSocketDebuggerUrl;
+  if (!pageWs) {
+    check('页面侧断言（CDP）', false, '主窗页面无 webSocketDebuggerUrl');
+  } else {
+    try {
+      const bridge = await cdpEval(pageWs, 'typeof window.dshDesktop');
+      check('页面 dshDesktop 桥可用（preload 注入）', !!bridge && bridge.value === 'object', JSON.stringify(bridge));
+      const loader = await cdpEval(pageWs, 'typeof window.__ModuleLoader__');
+      check('客户端插件系统已加载（__ModuleLoader__）', !!loader && (loader.value === 'object' || loader.value === 'function'), JSON.stringify(loader));
+      const market = await cdpEval(pageWs,
+        `fetch('/api/dsh-market', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ method: 'list', lang: 'zh' }) })
          .then(r => r.status).catch(e => 'ERR:' + e.message)`);
-    const marketStatus = market && market.value;
-    check('插件市场宿主 API 可达（POST /api/dsh-market {method:list}）', marketStatus === 200, String(marketStatus));
-  } catch (err) {
-    check('页面侧断言（CDP）', false, err.message);
+      const marketStatus = market && market.value;
+      check('插件市场宿主 API 可达（POST /api/dsh-market {method:list}）', marketStatus === 200, String(marketStatus));
+    } catch (err) {
+      check('页面侧断言（CDP）', false, (err as Error).message);
+    }
   }
 
   // 8) 退出（真实 UI 路径：⋯ 菜单「退出」等价的 IPC）
   console.log(`[e2e:${TAG}] 触发退出（chrome:menu quit）…`);
-  try {
-    await cdpEval(page.webSocketDebuggerUrl, 'window.dshDesktop.menu.action("quit")', 8000);
-  } catch (err) {
-    console.log('[e2e] quit IPC 异常: ' + err.message);
+  if (pageWs) {
+    try {
+      await cdpEval(pageWs, 'window.dshDesktop.menu.action("quit")', 8000);
+    } catch (err) {
+      console.log('[e2e] quit IPC 异常: ' + (err as Error).message);
+    }
   }
   // 等主进程退出（killTreeAndWait 有界等待 + app.exit）
   const quitT0 = Date.now();
@@ -340,9 +435,9 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
   // 进程残留」根因是 node.exe 杀不干净）；conhost 是 OS 惰性回收（孤儿
   // conhost 无附着进程后 1-2 分钟内自行退出），给 180s 宽限。
   const myPid = process.pid;
-  let leakedNode = [];
-  let leakedConhost = [];
-  const nodeOk = async () => {
+  let leakedNode: number[] = [];
+  let leakedConhost: number[] = [];
+  const nodeOk = async (): Promise<boolean> => {
     const nowNode = tasklistPids('node.exe');
     leakedNode = [...nowNode].filter((p) => !baseNode.has(p) && p !== myPid);
     return leakedNode.length === 0;
@@ -368,27 +463,35 @@ const rootBase = process.env.DSH_E2E_ROOT || os.tmpdir();
   }
 
   // 10) cleanExit 标记
-  let runState = null;
-  try { runState = JSON.parse(fs.readFileSync(path.join(userDataDir, 'run-state.json'), 'utf8')); } catch {}
+  let runState: { cleanExit?: boolean } | null = null;
+  try {
+    runState = JSON.parse(fs.readFileSync(path.join(userDataDir, 'run-state.json'), 'utf8')) as { cleanExit?: boolean };
+  } catch {
+    runState = null;
+  }
   check('run-state.json cleanExit=true（看门狗安静退出）', !!(runState && runState.cleanExit === true));
 
-  // 清理临时目录（保留供排查失败现场？失败时保留）
+  // 清理临时目录（失败时保留现场供排查）
   const failed = results.some((r) => !r.ok);
   if (!failed) {
-    setTimeout(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} }, 100);
+    setTimeout(() => {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch { /* 清理失败 */ }
+    }, 100);
   } else {
     console.log(`[e2e:${TAG}] 失败现场保留于 ${root}`);
   }
-  return finish(failed ? 1 : 0);
+  finish(failed ? 1 : 0);
 }
 
-function finish(code) {
+function finish(code: number): void {
   const pass = results.filter((r) => r.ok).length;
   console.log(`\n[e2e:${TAG}] 结果：${pass}/${results.length} 通过`);
   process.exit(code);
 }
 
 main().catch((err) => {
-  console.error('[e2e] 异常: ' + (err && err.stack || err));
+  console.error('[e2e] 异常: ' + ((err as Error)?.stack || err));
   process.exit(1);
 });

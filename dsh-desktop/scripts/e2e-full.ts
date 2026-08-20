@@ -18,95 +18,152 @@
 // 隔离：DSH_HOME 指向临时目录（复制的本机数据）；便携版 data 目录在临时
 // run 目录内；DSH_DESKTOP_TEST_NO_SHORTCUTS 防真实快捷方式被改写。
 
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { spawn } = require('node:child_process');
-const http = require('node:http');
-const crypto = require('node:crypto');
-const WebSocket = require('ws');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import * as http from 'node:http';
+import * as crypto from 'node:crypto';
+import { WebSocket } from 'ws';
 
-function arg(name, def) {
+function arg(name: string, def?: string): string | undefined {
   const eq = '--' + name + '=';
   const hit = process.argv.find((a) => a.startsWith(eq));
   if (hit) return hit.slice(eq.length);
   const i = process.argv.indexOf('--' + name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def;
 }
-const EXE = arg('exe');
+const exeArg = arg('exe');
+if (!exeArg || !fs.existsSync(exeArg)) {
+  console.error('[full] --exe 必须指向存在的便携版 exe');
+  process.exit(2);
+}
+// 守卫后收窄副本（模块级收窄不跨函数边界，main() 内仍需 string）
+const EXE: string = exeArg;
 const DEBUG_PORT = Number(arg('port', '9341'));
 const MOCK_PORT = Number(arg('mockport', '9342'));
 // 插件选择（2026-08-19 实测）：dsh-task-status 已从 npm registry 下架（404）；
 // dsh-tool-vision 已被客户端内置接管（市场拒装 builtin:true）。默认用
 // dsh-tdai-memory（0.2.10 在架、非内置、走完整 pnpm 市场链路）。
-const INSTALL_TARGET = arg('plugin', 'dsh-tdai-memory');
+const INSTALL_TARGET: string = arg('plugin', 'dsh-tdai-memory') ?? 'dsh-tdai-memory';
 const SKIP_MARKET = arg('skip-market') === '1';
 const SKIP_CHAT = arg('skip-chat') === '1';
-if (!EXE || !fs.existsSync(EXE)) {
-  console.error('[full] --exe 必须指向存在的便携版 exe');
-  process.exit(2);
-}
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function tasklistPids(name) {
+function tasklistPids(name: string): Set<number> {
   try {
-    const { execSync } = require('node:child_process');
     const out = execSync(`tasklist /FI "IMAGENAME eq ${name}" /FO CSV /NH`, { encoding: 'utf8', windowsHide: true });
-    const pids = new Set();
+    const pids = new Set<number>();
     for (const line of out.split(/\r?\n/)) {
       const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
-      if (m) pids.add(Number(m[2]));
+      if (m && m[2]) pids.add(Number(m[2]));
     }
     return pids;
-  } catch { return new Set(); }
+  } catch {
+    return new Set();
+  }
 }
-function procAlive(pid) {
+function procAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
   try {
-    const { execSync } = require('node:child_process');
     return execSync('tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true }).includes('"' + pid + '"');
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
-async function cdpPage() {
-  const list = await new Promise((resolve, reject) => {
+/** CDP /json/list 的页面目标条目（结构子集）。 */
+interface CdpTarget {
+  type?: string;
+  url?: string;
+  webSocketDebuggerUrl?: string;
+}
+
+/** Runtime.evaluate 的返回值对象（结构子集）。 */
+interface CdpRemoteObject {
+  value?: unknown;
+}
+
+async function cdpPage(): Promise<CdpTarget | null> {
+  const list = await new Promise<CdpTarget[]>((resolve, reject) => {
     http.get(`http://127.0.0.1:${DEBUG_PORT}/json/list`, (res) => {
       let b = '';
-      res.on('data', (c) => { b += c; });
-      res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
+      res.on('data', (c) => {
+        b += c;
+      });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(b) as CdpTarget[]);
+        } catch (e) {
+          reject(e as Error);
+        }
+      });
     }).on('error', reject);
   });
-  return list.find((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url)) || null;
+  return list.find((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\//.test(t.url ?? '')) || null;
 }
-function cdpEval(wsUrl, expr, timeoutMs = 180000) {
+
+function cdpEval(wsUrl: string, expr: string, timeoutMs = 180000): Promise<CdpRemoteObject | undefined> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl, { perMessageDeflate: false });
-    const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('CDP eval 超时')); }, timeoutMs);
+    const timer = setTimeout(() => {
+      try {
+        ws.close();
+      } catch { /* 已关闭 */ }
+      reject(new Error('CDP eval 超时'));
+    }, timeoutMs);
     ws.on('open', () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: expr, returnByValue: true, awaitPromise: true } })));
-    ws.on('message', (data) => {
-      const msg = JSON.parse(data.toString());
+    ws.on('message', (data: Buffer) => {
+      const msg = JSON.parse(data.toString()) as {
+        id?: number;
+        result?: { result?: CdpRemoteObject; exceptionDetails?: unknown };
+      };
       if (msg.id === 1) {
         clearTimeout(timer);
-        try { ws.close(); } catch {}
+        try {
+          ws.close();
+        } catch { /* 已关闭 */ }
         if (msg.result && msg.result.exceptionDetails) return reject(new Error(JSON.stringify(msg.result.exceptionDetails).slice(0, 500)));
         resolve(msg.result ? msg.result.result : undefined);
       }
     });
-    ws.on('error', (err) => { clearTimeout(timer); reject(err); });
+    ws.on('error', (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
+
+/** 页面内 fetch 的结果（json 为 body 解析产物，失败为 null）。 */
+interface PageFetchResult {
+  status: number;
+  body: string;
+  json: unknown;
+}
+
 // 页面内 fetch（走应用 origin，市场/桥 API 同源可达）
-async function pageFetch(page, url, init) {
-  const r = await cdpEval(page.webSocketDebuggerUrl,
+async function pageFetch(page: CdpTarget, url: string, init?: Record<string, unknown>): Promise<PageFetchResult> {
+  const r = await cdpEval(page.webSocketDebuggerUrl as string,
     `fetch(${JSON.stringify(url)}, ${JSON.stringify(init || {})})
        .then(async r => ({ status: r.status, body: await r.text() }))
        .catch(e => ({ status: 0, body: 'ERR:' + e.message }))`);
-  const v = r && r.value ? r.value : { status: 0, body: 'no-value' };
-  try { v.json = JSON.parse(v.body); } catch { v.json = null; }
-  return v;
+  const v = (r && r.value ? r.value : { status: 0, body: 'no-value' }) as { status: number; body: string };
+  const out: PageFetchResult = { status: v.status, body: v.body, json: null };
+  try {
+    out.json = JSON.parse(v.body);
+  } catch {
+    out.json = null;
+  }
+  return out;
 }
 
-const results = [];
-function check(name, ok, detail = '') {
+interface CheckResult {
+  name: string;
+  ok: boolean;
+}
+const results: CheckResult[] = [];
+
+function check(name: string, ok: boolean, detail = ''): void {
   results.push({ name, ok: !!ok });
   console.log((ok ? '  ✔ ' : '  ✖ ') + name + (ok ? '' : ' — ' + String(detail).slice(0, 300)));
 }
@@ -118,7 +175,13 @@ function check(name, ok, detail = '') {
 // 号追平后让更新链路静默失败，故固定为 999.0.0 永不过时。
 const MOCK_VERSION = '999.0.0';
 
-async function startMockRelease(exePath) {
+/** mock 发布源句柄（server + 资产哈希）。 */
+interface MockRelease {
+  server: http.Server;
+  exeHash: string;
+}
+
+async function startMockRelease(exePath: string): Promise<MockRelease> {
   const exeHash = crypto.createHash('sha256').update(fs.readFileSync(exePath)).digest('hex');
   const size = fs.statSync(exePath).size;
   const server = http.createServer((req, res) => {
@@ -145,16 +208,18 @@ async function startMockRelease(exePath) {
       res.end(`${exeHash}  Deepseek-Harness-EAC-Portable-x64.exe\n`);
       return;
     }
-    res.writeHead(404); res.end();
+    res.writeHead(404);
+    res.end();
   });
-  await new Promise((r) => server.listen(MOCK_PORT, '127.0.0.1', r));
+  await new Promise<void>((r) => server.listen(MOCK_PORT, '127.0.0.1', r));
   return { server, exeHash };
 }
 
-async function main() {
+async function main(): Promise<void> {
   console.log(`[full] exe=${EXE} 插件=${INSTALL_TARGET}`);
   if (tasklistPids(path.basename(EXE)).size > 0) {
-    console.error('[full] 已有同名 exe 在运行，先退出再跑'); process.exit(2);
+    console.error('[full] 已有同名 exe 在运行，先退出再跑');
+    process.exit(2);
   }
   // 测试根目录：默认系统临时目录；C: 空间紧张时用 DSH_E2E_ROOT 指到大盘
   // （配套插件同步会把整个内置插件闭包拷进 DSH_HOME，数 GB 级）。
@@ -172,7 +237,9 @@ async function main() {
     fs.cpSync(path.join(srcHome, 'profiles', e.name), path.join(home, 'profiles', e.name), { recursive: true });
   }
   for (const f of ['settings.yaml', '.credentials.yaml', '.env']) {
-    try { fs.copyFileSync(path.join(srcHome, f), path.join(home, f)); } catch {}
+    try {
+      fs.copyFileSync(path.join(srcHome, f), path.join(home, f));
+    } catch { /* 无该文件 */ }
   }
   const hasKey = fs.existsSync(path.join(home, '.credentials.yaml'));
   console.log(`[full] root=${root} 真实API Key=${hasKey ? '有' : '无（对话测试将跳过）'}`);
@@ -180,11 +247,19 @@ async function main() {
   const runExe = path.join(root, 'run', path.basename(EXE));
   fs.mkdirSync(path.dirname(runExe), { recursive: true });
   fs.copyFileSync(EXE, runExe);
-  try { fs.rmSync(path.join(os.tmpdir(), 'deepseek-harness-eac-portable'), { recursive: true, force: true }); } catch {}
+  try {
+    fs.rmSync(path.join(os.tmpdir(), 'deepseek-harness-eac-portable'), { recursive: true, force: true });
+  } catch { /* 无缓存 */ }
 
   const mock = await startMockRelease(EXE);
   const userDataDir = path.join(path.dirname(runExe), 'data');
-  const readLog = () => { try { return fs.readFileSync(path.join(userDataDir, 'logs', 'desktop.log'), 'utf8'); } catch { return ''; } };
+  const readLog = (): string => {
+    try {
+      return fs.readFileSync(path.join(userDataDir, 'logs', 'desktop.log'), 'utf8');
+    } catch {
+      return '';
+    }
+  };
   // 预写老用户标记：全新 data 目录会触发「内置插件选择向导」阻塞 boot，
   // 而本场景模拟的是升级老用户（向导已确认过）。更新链路全程只换 exe，
   // userData 与 DSH_HOME 不得被改动 —— 更新后再断言这些字段仍在。
@@ -218,92 +293,104 @@ async function main() {
   console.log(`[full] 应用已启动 pid=${appPid}`);
 
   // ── 1) 就绪 ──
-  let page = null;
+  let page: CdpTarget | null = null;
   const t0 = Date.now();
   while (Date.now() - t0 < 10 * 60 * 1000) {
     if (/(Web UI 就绪: https?:\/\/|dsh web: https?:\/\/)/.test(readLog())) {
-      try { page = await cdpPage(); } catch { page = null; }
+      try {
+        page = await cdpPage();
+      } catch {
+        page = null;
+      }
       if (page) break;
     }
     if (child.exitCode !== null) break;
     await sleep(2000);
   }
   check('老用户环境启动就绪（窗口打开）', !!page, `elapsed=${Math.round((Date.now() - t0) / 1000)}s`);
-  if (!page) { console.log(readLog().slice(-2500)); return finish(1, root, mock, child); }
+  if (!page) {
+    console.log(readLog().slice(-2500));
+    finish(1, root, mock, child);
+    return;
+  }
 
   // ── 2) 插件市场：真实安装第三方插件（dsh CLI → pnpm 全流程）──
   // 市场包目录（更新后数据保留断言用）。市场步骤被跳过或安装被拒时保持
   // null —— 下方 if 块是独立作用域，块内 const 在块外不可见（v4.4 实测
   // ReferenceError: pkgDir is not defined 导致脚本崩溃、后续断言全丢）。
-  let marketPkgDir = null;
+  let marketPkgDir: string | null = null;
   // 市场是否真正受理（v4.4 主流插件已内置，builtin 拒装是常态——此时
   // bundles/pnpm 断言语义切换为内置同步语义）。
   let marketAccepted = false;
   if (SKIP_MARKET) {
     console.log('[full] 跳过市场安装步骤（--skip-market=1）');
   } else {
-  console.log(`[full] 市场安装 ${INSTALL_TARGET}（走真实 pnpm）…`);
-  const profDir = path.join(home, 'profiles', 'web-desktop');
-  const bundlesBefore = new Set((() => {
-    try { return JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')).dsh.profile.bundles; } catch { return []; }
-  })());
-  const ins = await pageFetch(page, '/api/dsh-market', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ method: 'install', source: INSTALL_TARGET }),
-  });
-  let opId = ins.json && ins.json.ok ? ins.json.opId : null;
-  // v4.4 生态：主流社区插件（dsh-tool-vision / dsh-soul-md / dsh-tdai-memory …）
-  // 已全部内置分发（COMPANION_PLUGINS），市场对内置包的拒装（builtin:true，
-  // 拒绝理由附内置说明）本身是正确行为。受理成功（真第三方包）或 builtin
-  // 拒装都算通过；仅异常拒绝（网络/registry 错误）才失败。
-  const builtinRefused = ins.json && ins.json.ok === false && ins.json.builtin === true;
-  check(`市场受理安装请求（opId=${opId || '无'}${builtinRefused ? ' builtin 拒装' : ''}）`, !!opId || !!builtinRefused, ins.body);
-  marketAccepted = !!opId;
-  let opFinal = null;
-  if (opId) {
-    const tIns = Date.now();
-    while (Date.now() - tIns < 8 * 60 * 1000) {
-      const st = await pageFetch(page, '/api/dsh-market', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ method: 'op', opId }),
-      });
-      const op = st.json && st.json.op;
-      if (op && op.status !== 'running') { opFinal = op; break; }
-      await sleep(4000);
+    console.log(`[full] 市场安装 ${INSTALL_TARGET}（走真实 pnpm）…`);
+    const profDir = path.join(home, 'profiles', 'web-desktop');
+    const ins = await pageFetch(page, '/api/dsh-market', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'install', source: INSTALL_TARGET }),
+    });
+    const insJson = ins.json as { ok?: boolean; opId?: string; builtin?: boolean } | null;
+    let opId = insJson && insJson.ok ? insJson.opId ?? null : null;
+    // v4.4 生态：主流社区插件（dsh-tool-vision / dsh-soul-md / dsh-tdai-memory …）
+    // 已全部内置分发（COMPANION_PLUGINS），市场对内置包的拒装（builtin:true，
+    // 拒绝理由附内置说明）本身是正确行为。受理成功（真第三方包）或 builtin
+    // 拒装都算通过；仅异常拒绝（网络/registry 错误）才失败。
+    const builtinRefused = insJson && insJson.ok === false && insJson.builtin === true;
+    check(`市场受理安装请求（opId=${opId || '无'}${builtinRefused ? ' builtin 拒装' : ''}）`, !!opId || !!builtinRefused, ins.body);
+    marketAccepted = !!opId;
+    let opFinal: { status?: string; output?: string } | null = null;
+    if (opId) {
+      const tIns = Date.now();
+      while (Date.now() - tIns < 8 * 60 * 1000) {
+        const st = await pageFetch(page, '/api/dsh-market', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ method: 'op', opId }),
+        });
+        const op = (st.json as { op?: { status?: string; output?: string } } | null)?.op;
+        if (op && op.status !== 'running') {
+          opFinal = op;
+          break;
+        }
+        await sleep(4000);
+      }
     }
-  }
-  if (marketAccepted) {
-    check('插件安装任务完成（pnpm 全流程）', opFinal && opFinal.status === 'done', opFinal && opFinal.status + ' | ' + String(opFinal && opFinal.output || '').slice(-200));
-  } else {
-    console.log('  ℹ 市场拒装（内置接管），pnpm 全流程断言跳过');
-  }
-  const pkgDir = path.join(profDir, 'node_modules', INSTALL_TARGET);
-  // builtin 拒装时包目录来自内置同步（syncCompanionPlugins）——落盘断言仍有效：
-  // 内置版本必须在 node_modules（更新后“仍在”断言验证的就是它不丢）。
-  check('插件包落盘 node_modules', fs.existsSync(path.join(pkgDir, 'package.json')), pkgDir);
-  if (fs.existsSync(path.join(pkgDir, 'package.json'))) marketPkgDir = pkgDir;
-  let bundlesAfter = [];
-  try { bundlesAfter = JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')).dsh.profile.bundles; } catch {}
-  if (marketAccepted) {
-    check('插件登记进 profile bundles', bundlesAfter.includes(INSTALL_TARGET), bundlesAfter.join(','));
-    check('artifact-keep 快照目录生成（第三方产物保护）', fs.existsSync(path.join(home, 'plugin-artifact-cache', 'web-desktop')), '(pnpm 前快照)');
-  } else {
-    // 内置插件不登记 bundles（由启动时 sync 注入 patch 行）——非失败路径。
-    check('内置插件不进 profile bundles（内置同步语义）', !bundlesAfter.includes(INSTALL_TARGET), bundlesAfter.join(','));
-  }
+    if (marketAccepted) {
+      check('插件安装任务完成（pnpm 全流程）', !!opFinal && opFinal.status === 'done', (opFinal && opFinal.status + ' | ' + String(opFinal && opFinal.output || '').slice(-200)) || '');
+    } else {
+      console.log('  ℹ 市场拒装（内置接管），pnpm 全流程断言跳过');
+    }
+    const pkgDir = path.join(profDir, 'node_modules', INSTALL_TARGET);
+    // builtin 拒装时包目录来自内置同步（syncCompanionPlugins）——落盘断言仍有效：
+    // 内置版本必须在 node_modules（更新后“仍在”断言验证的就是它不丢）。
+    check('插件包落盘 node_modules', fs.existsSync(path.join(pkgDir, 'package.json')), pkgDir);
+    if (fs.existsSync(path.join(pkgDir, 'package.json'))) marketPkgDir = pkgDir;
+    let bundlesAfter: string[] = [];
+    try {
+      bundlesAfter = (JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }).dsh?.profile?.bundles ?? [];
+    } catch { /* 解析失败按空 */ }
+    if (marketAccepted) {
+      check('插件登记进 profile bundles', bundlesAfter.includes(INSTALL_TARGET), bundlesAfter.join(','));
+      check('artifact-keep 快照目录生成（第三方产物保护）', fs.existsSync(path.join(home, 'plugin-artifact-cache', 'web-desktop')), '(pnpm 前快照)');
+    } else {
+      // 内置插件不登记 bundles（由启动时 sync 注入 patch 行）——非失败路径。
+      check('内置插件不进 profile bundles（内置同步语义）', !bundlesAfter.includes(INSTALL_TARGET), bundlesAfter.join(','));
+    }
   }
 
   // ── 3) 真实对话 + 识图工具注册（消耗真实 token，约几分钱）──
   if (SKIP_CHAT) {
     console.log('[full] 跳过真实对话步骤（--skip-chat=1）');
   } else if (hasKey) {
-    const chat = async (content) => {
+    const chat = async (content: string): Promise<{ ok: boolean; text: string }> => {
       const r = await pageFetch(page, '/openclaw-bridge/v1/chat/completions', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model: 'default', messages: [{ role: 'user', content }], stream: false }),
       });
       if (r.status !== 200 || !r.json) return { ok: false, text: r.body.slice(0, 300) };
-      const text = (r.json.choices && r.json.choices[0] && r.json.choices[0].message && r.json.choices[0].message.content) || '';
+      const j = r.json as { choices?: Array<{ message?: { content?: string } }> };
+      const text = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
       return { ok: true, text };
     };
     const r1 = await chat('这是一条连通性测试。请只回复两个字：好的');
@@ -318,7 +405,9 @@ async function main() {
       const inTree = fs.existsSync(path.join(home, 'profiles', 'web-desktop', 'node_modules', 'dsh-tool-vision', 'package.json'));
       visionOk = /tool-vision/.test(patch) && inTree;
       visionDetail = `patch行=${/tool-vision/.test(patch)} node_modules=${inTree}`;
-    } catch (err) { visionDetail = err.message; }
+    } catch (err) {
+      visionDetail = (err as Error).message;
+    }
     check('识图链路：dsh-tool-vision 已注册（patch 行 + node_modules）', visionOk, visionDetail);
   } else {
     console.log('  ⚠ 无 API Key，真实对话/识图运行时验证跳过（插件加载已由前序 E2E 覆盖）');
@@ -328,9 +417,9 @@ async function main() {
   console.log(`[full] 触发「检查客户端更新」（mock v${MOCK_VERSION} + 自动确认）…`);
   const logBeforeUpdate = readLog().length;
   try {
-    await cdpEval(page.webSocketDebuggerUrl, 'window.dshDesktop.menu.action("check-client-update")', 15000);
+    await cdpEval(page.webSocketDebuggerUrl as string, 'window.dshDesktop.menu.action("check-client-update")', 15000);
   } catch (err) {
-    console.log('[full] 菜单触发异常（可能因应用已开始退出）: ' + err.message);
+    console.log('[full] 菜单触发异常（可能因应用已开始退出）: ' + (err as Error).message);
   }
   // 等：下载（本地 225MB，秒级）→ 哈希校验 → 进程树回收 → app.exit →
   // detached apply-update.cmd 替换 exe → start 新实例。
@@ -345,11 +434,19 @@ async function main() {
   // 健康启动之后（见下方等待式检查）。
   // 更新脚本可能成功后自删 —— 文件缺失不算失败，仅提示。
   const updatesLeft = (() => {
-    try { return fs.readdirSync(path.join(userDataDir, 'updates')).join(','); } catch { return '(目录不存在)'; }
+    try {
+      return fs.readdirSync(path.join(userDataDir, 'updates')).join(',');
+    } catch {
+      return '(目录不存在)';
+    }
   })();
   console.log('  ℹ updates 目录内容: ' + updatesLeft);
   const updatesLog = (() => {
-    try { return fs.readFileSync(path.join(userDataDir, 'updates', 'apply-update.log'), 'utf8'); } catch { return ''; }
+    try {
+      return fs.readFileSync(path.join(userDataDir, 'updates', 'apply-update.log'), 'utf8');
+    } catch {
+      return '';
+    }
   })();
   console.log('  ℹ apply-update.log: ' + (updatesLog ? updatesLog.slice(-200).replace(/\r?\n/g, ' | ') : '(无)'));
 
@@ -358,7 +455,10 @@ async function main() {
   const tN = Date.now();
   while (Date.now() - tN < 120000) {
     for (const p of tasklistPids(path.basename(runExe))) {
-      if (p !== appPid && procAlive(p)) { newPid = p; break; }
+      if (p !== appPid && procAlive(p)) {
+        newPid = p;
+        break;
+      }
     }
     if (newPid) break;
     await sleep(2000);
@@ -384,20 +484,28 @@ async function main() {
     if (marketPkgDir) {
       check('更新后市场插件仍在 node_modules', fs.existsSync(path.join(marketPkgDir, 'package.json')), marketPkgDir);
     }
-    let bundlesAfterUpdate = [];
-    try { bundlesAfterUpdate = JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')).dsh.profile.bundles; } catch {}
+    let bundlesAfterUpdate: string[] = [];
+    try {
+      bundlesAfterUpdate = (JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }).dsh?.profile?.bundles ?? [];
+    } catch { /* 解析失败按空 */ }
     check('更新后 profile bundles 保留（含原内置插件）', marketAccepted ? bundlesAfterUpdate.includes(INSTALL_TARGET) : bundlesAfterUpdate.length > 0, bundlesAfterUpdate.join(','));
     check('更新后 cordis.patch.yml 保留', fs.existsSync(path.join(profDir, 'cordis.patch.yml')), '(patch 文件)');
     check('更新后内置插件清单标记保留', fs.existsSync(path.join(profDir, '.dsh-builtin-plugins.json')));
     const newLog = readLog().slice(logBeforeUpdate);
     check('更新后新实例无启动失败/完整性告警', !/启动失败|捆绑依赖完整性校验失败/.test(newLog), newLog.slice(0, 300));
     const settingsAfter = (() => {
-      try { return JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8')); } catch { return {}; }
+      try {
+        return JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8')) as { pluginOnboardingDone?: boolean; builtinPluginSelection?: string[] };
+      } catch {
+        return {} as { pluginOnboardingDone?: boolean; builtinPluginSelection?: string[] };
+      }
     })();
     check('更新后设置保留（pluginOnboardingDone/插件选择仍在）', settingsAfter.pluginOnboardingDone === true && Array.isArray(settingsAfter.builtinPluginSelection) && settingsAfter.builtinPluginSelection.length > 0,
       'onboardingDone=' + settingsAfter.pluginOnboardingDone + ' selection=' + (settingsAfter.builtinPluginSelection || []).length);
 
-    try { require('node:child_process').spawn('taskkill', ['/pid', String(newPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {}
+    try {
+      spawn('taskkill', ['/pid', String(newPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } catch { /* 已退出 */ }
     await sleep(4000);
     check('收尾：新实例已退出', !procAlive(newPid));
   }
@@ -407,23 +515,42 @@ async function main() {
   let nodeLeak = true;
   while (Date.now() - tR < 60000) {
     const nowNode = tasklistPids('node.exe');
-    if (![...nowNode].some((p) => p !== process.pid)) { nodeLeak = false; break; }
+    if (![...nowNode].some((p) => p !== process.pid)) {
+      nodeLeak = false;
+      break;
+    }
     await sleep(3000);
   }
   check('更新+重启全链路后无 node.exe 残留', !nodeLeak);
 
-  return finish(results.every(r => r.ok) ? 0 : 1, root, mock, child);
+  finish(results.every((r) => r.ok) ? 0 : 1, root, mock, child);
 }
 
 // 说明：DSH_DESKTOP_RELEASE_API 必须在 spawn env 里 —— main() 里补注入。
-function finish(code, root, mock, child) {
+function finish(code: number, root: string, mock: MockRelease | null, child: ChildProcess): void {
   const pass = results.filter((r) => r.ok).length;
   console.log(`\n[full] 结果：${pass}/${results.length} 通过`);
-  try { if (mock && mock.server) mock.server.close(); } catch {}
-  if (child && child.exitCode === null) { try { require('node:child_process').spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {} }
-  if (results.every(r => r.ok)) setTimeout(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} }, 500);
-  else console.log(`[full] 失败现场保留于 ${root}`);
+  try {
+    if (mock && mock.server) mock.server.close();
+  } catch { /* 已关闭 */ }
+  if (child && child.exitCode === null) {
+    try {
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } catch { /* 已退出 */ }
+  }
+  if (results.every((r) => r.ok)) {
+    setTimeout(() => {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch { /* 清理失败保留现场 */ }
+    }, 500);
+  } else {
+    console.log(`[full] 失败现场保留于 ${root}`);
+  }
   process.exit(code);
 }
 
-main().catch((err) => { console.error('[full] 异常: ' + (err && err.stack || err)); process.exit(1); });
+main().catch((err) => {
+  console.error('[full] 异常: ' + ((err as Error)?.stack || err));
+  process.exit(1);
+});

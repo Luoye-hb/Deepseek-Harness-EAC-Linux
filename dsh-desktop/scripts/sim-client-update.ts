@@ -10,39 +10,46 @@
 //   3. 哈希不一致 → 抛错、安装包被删除（绝不运行被篡改的文件）；
 //   4. 上游无哈希 → 告警放行（老 Release 兼容）。
 
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const http = require('node:http');
-const crypto = require('node:crypto');
-const updater = require('../client-updater.js');
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import * as http from 'node:http';
+import * as crypto from 'node:crypto';
+import * as updater from '../client-updater.js';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const results = [];
-function check(name, ok, detail = '') {
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+interface CheckResult {
+  name: string;
+  ok: boolean;
+}
+const results: CheckResult[] = [];
+
+function check(name: string, ok: boolean, detail = ''): void {
   results.push({ name, ok: !!ok });
   console.log((ok ? '  ✔ ' : '  ✖ ') + name + (ok ? '' : ' — ' + detail));
 }
 
-async function main() {
+async function main(): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-update-sim-'));
   const assetPath = path.join(root, 'setup.exe');
   // 65MB 假安装包（> MIN_VALID_BYTES=64MB）
   const chunk = Buffer.alloc(1024 * 1024, 7);
   const out = fs.createWriteStream(assetPath);
   for (let i = 0; i < 65; i++) out.write(chunk);
-  await new Promise((r) => out.end(r));
+  await new Promise<void>((r) => out.end(r));
   const goodHash = crypto.createHash('sha256').update(fs.readFileSync(assetPath)).digest('hex');
   const badHash = 'f'.repeat(64);
 
   const server = http.createServer((req, res) => {
+    const port = (server.address() as import('node:net').AddressInfo).port;
     if (req.url === '/api/release') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
         tag_name: 'v4.0.1',
         assets: [
-          { name: 'Deepseek-Harness-EAC-Setup-x64.exe', browser_download_url: `http://127.0.0.1:${server.address().port}/dl/setup.exe`, size: fs.statSync(assetPath).size },
-          { name: 'SHA256SUMS.txt', browser_download_url: `http://127.0.0.1:${server.address().port}/dl/sums`, size: 10 },
+          { name: 'Deepseek-Harness-EAC-Setup-x64.exe', browser_download_url: `http://127.0.0.1:${port}/dl/setup.exe`, size: fs.statSync(assetPath).size },
+          { name: 'SHA256SUMS.txt', browser_download_url: `http://127.0.0.1:${port}/dl/sums`, size: 10 },
         ],
       }));
       return;
@@ -57,14 +64,21 @@ async function main() {
       res.end(`${goodHash}  Deepseek-Harness-EAC-Setup-x64.exe\n`);
       return;
     }
-    res.writeHead(404); res.end();
+    res.writeHead(404);
+    res.end();
   });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
   process.env.DSH_DESKTOP_RELEASE_API = base + '/api/release';
   delete process.env.PORTABLE_EXECUTABLE_DIR;
 
-  const ctx = { log: () => {}, userDataDir: path.join(root, 'userdata') };
+  // ClientUpdCtx 形状补齐（nodeExe/npmCli 仅 agent 更新器消费，此处占位）
+  const ctx = {
+    log: () => {},
+    userDataDir: path.join(root, 'userdata'),
+    nodeExe: () => '',
+    npmCli: () => '',
+  };
 
   // 1) checkLatest
   const rel = await updater.checkLatest(ctx, '4.0.0');
@@ -77,15 +91,23 @@ async function main() {
 
   // 3) digest 字段路径 + 哈希不一致 → 中止并删除
   {
-    const relBad = JSON.parse(JSON.stringify(rel));
-    relBad.assets[0].digest = `sha256:${badHash}`;
+    const relBad = JSON.parse(JSON.stringify(rel)) as {
+      assets: Array<{ name: string; browser_download_url: string; size: number; digest?: string }>;
+    };
+    const firstAsset = relBad.assets[0];
+    if (!firstAsset) throw new Error('mock release 无资产');
+    firstAsset.digest = `sha256:${badHash}`;
     const relBadN = updater.normalizeRelease('mock', {
       tag_name: 'v4.0.2',
       assets: relBad.assets.map((a) => ({ ...a, digest: a.digest })),
     });
     relBadN.isNewer = true;
     let threw = '';
-    try { await updater.downloadRelease(ctx, relBadN); } catch (e) { threw = e.message; }
+    try {
+      await updater.downloadRelease(ctx, relBadN);
+    } catch (e) {
+      threw = (e as Error).message;
+    }
     check('哈希不一致 → 抛错中止', /SHA-256 校验失败/.test(threw), threw);
     // downloadRelease 目标文件应已删除（updates 目录里没有 setup.exe）
     const leftover = fs.readdirSync(path.join(ctx.userDataDir, 'updates')).filter((f) => f.endsWith('.exe'));
@@ -103,10 +125,17 @@ async function main() {
   }
 
   server.close();
-  setTimeout(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} }, 200);
+  setTimeout(() => {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch { /* 清理失败不影响结果 */ }
+  }, 200);
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\n[sim-update] 结果：${results.length - failed}/${results.length} 通过`);
   process.exit(failed ? 1 : 0);
 }
 
-main().catch((err) => { console.error('[sim-update] 异常: ' + err.message); process.exit(1); });
+main().catch((err) => {
+  console.error('[sim-update] 异常: ' + (err as Error).message);
+  process.exit(1);
+});
