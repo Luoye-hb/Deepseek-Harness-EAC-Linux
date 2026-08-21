@@ -13,15 +13,15 @@ test('dsh-compact integration: new plugin is bundled and old browser trigger is 
   assert.match(main, /\{ id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' \}/)
   assert.doesNotMatch(
     main.slice(main.indexOf('const COMPANION_PLUGINS'), main.indexOf('const PLUGIN_UPDATE_SOURCES')),
-    /\{ id: 'auto-compact'/,
+    /\{ id: 'compact'/,
   )
-  assert.match(main, /\{ id: 'auto-compact', name: 'dsh-auto-compact' \}/)
+  assert.match(main, /\{ id: 'compact', name: 'dsh-compact' \}/)
   for (const file of ['package.json', 'cordis.patch.yml', 'LICENSE', 'lib/index.js', 'lib/agent.js', 'lib/engine.js', 'lib/policy.js', 'lib/client.js']) {
     assert.equal(existsSync(join(root, 'assets', 'plugins', 'dsh-compact', file)), true, `missing ${file}`)
   }
   const client = readFileSync(join(root, 'assets', 'plugins', 'dsh-compact', 'lib', 'client.js'), 'utf8')
   assert.doesNotMatch(client, /inputActions|setDraft\s*\(|\.submit\s*\(/)
-  assert.match(client, /dsh-auto-compact-config-v1/)
+  assert.match(client, /dsh-compact-config-v1/)
 })
 
 test('dsh-compact integration: package is core because managed presets depend on it', async () => {

@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-compact'
     const STATUS_ENDPOINT = '/plugins/dsh-compact/status'
     const COMPACT_ENDPOINT = '/plugins/dsh-compact/compact-now'
-    const OLD_STORE_KEY = 'dsh-auto-compact-config-v1'
+    const OLD_STORE_KEY = 'dsh-compact-config-v1'
     let currentSessionId = ''
 
     try { window.localStorage.removeItem(OLD_STORE_KEY) } catch {}

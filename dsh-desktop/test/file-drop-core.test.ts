@@ -1,4 +1,4 @@
-// Tests for the dsh-file-drop companion plugin's pure core.
+// Tests for the lib/client.js companion plugin's pure core.
 // The plugin lets users drag files into the conversation input:
 //   · text files → content injected into the composer (size-clamped)
 //   · images / binaries / oversized files → path hint text for the agent
@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const BUNDLE = new URL('../assets/plugins/dsh-file-drop/lib/client.js', import.meta.url);
+const BUNDLE = new URL('../assets/plugins/lib/client.js/lib/client.js', import.meta.url);
 
 /** Evaluate the real client bundle with a stub loader; returns the exposed core. */
 function loadCore() {
@@ -22,14 +22,14 @@ function loadCore() {
   };
   vm.runInNewContext(src, { window: win, console, setTimeout, clearTimeout, FileReader: class {}, DataTransfer: class {}, InputEvent: class {}, Event: class {} });
   assert.ok(captured.handoff, 'bundle must register via __ModuleLoader__.load');
-  assert.equal(captured.handoff.id, 'dsh-file-drop', 'handoff must carry the plugin id');
+  assert.equal(captured.handoff.id, 'lib/client.js', 'handoff must carry the plugin id');
   assert.ok(win.__dshFileDropCore, 'bundle must expose the pure core');
   return win.__dshFileDropCore;
 }
 
 const core = loadCore();
 
-test('bundle registers as dsh-file-drop with a web client', () => {
+test('bundle registers as lib/client.js with a web client', () => {
   // the handoff factory shape is exercised when the loader materializes it;
   // here we only verify registration metadata reached the stub.
 });
