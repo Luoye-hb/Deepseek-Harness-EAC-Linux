@@ -142,18 +142,71 @@ window.__ModuleLoader__.load({
 			["offpeak", "空闲价"],
 		];
 
+		// 获取所有可用模型列表
+		function useAvailableModels() {
+			const [models, setModels] = react.useState([]);
+			const [loading, setLoading] = react.useState(true);
+			react.useEffect(() => {
+				let alive = true;
+				const bridge = window.dshDesktop && window.dshDesktop.balanceModels;
+				if (bridge && typeof bridge.list === "function") {
+					bridge.list().then((res) => {
+						if (alive && res && res.ok && Array.isArray(res.models)) {
+							setModels(res.models);
+						}
+						if (alive) setLoading(false);
+					}).catch(() => {
+						if (alive) setLoading(false);
+					});
+				} else {
+					if (alive) setLoading(false);
+				}
+				return () => { alive = false; };
+			}, []);
+			return { models, loading };
+		}
+
 		function priceBridge() {
 			const b = window.dshDesktop && window.dshDesktop.balancePrices;
 			return b || null;
 		}
 
 		function PricingSection() {
+			const { models: availableModels, loading: modelsLoading } = useAvailableModels();
 			const [model, setModel] = react.useState(PRICE_MODELS[0]);
 			const [form, setForm] = react.useState(null);
 			const [dirty, setDirty] = react.useState(false);
 			const [busy, setBusy] = react.useState(false);
 			const [status, setStatus] = react.useState(null);
 			const [loadError, setLoadError] = react.useState(null);
+			const [showModelPicker, setShowModelPicker] = react.useState(false);
+
+			// 合并默认模型和可用模型列表（去重）
+			const allModels = react.useMemo(() => {
+				const seen = new Set();
+				const result = [];
+				// 先添加默认模型
+				for (const m of PRICE_MODELS) {
+					if (!seen.has(m)) {
+						seen.add(m);
+						result.push({ id: m, name: PRICE_LABELS[m] || m, isDefault: true });
+					}
+				}
+				// 再添加可用模型（跳过已存在的）
+				for (const m of availableModels) {
+					if (!seen.has(m.id)) {
+						seen.add(m.id);
+						result.push({ id: m.id, name: m.name || m.id, provider: m.provider, isDefault: false });
+					}
+				}
+				return result;
+			}, [availableModels]);
+
+			// 获取当前模型的显示名称
+			const currentModelInfo = react.useMemo(() => {
+				const found = allModels.find(m => m.id === model);
+				return found || { id: model, name: model };
+			}, [allModels, model]);
 
 			const load = (m) => {
 				const b = priceBridge();
@@ -272,13 +325,45 @@ window.__ModuleLoader__.load({
 				children: [
 					react_jsx_runtime.jsx("div", { className: "dsh-balance-pr-hint", children: "自定义价格覆盖官方默认档（仅影响本机费用估算显示，单位：¥/百万 token）。" }),
 					react_jsx_runtime.jsxs("div", {
-						className: "dsh-balance-pr-models",
-						children: PRICE_MODELS.map((m) => react_jsx_runtime.jsx("button", {
-							type: "button",
-							className: "dsh-balance-pr-model" + (m === model ? " on" : ""),
-							onClick: () => setModel(m),
-							children: PRICE_LABELS[m] || m,
-						})),
+						className: "dsh-balance-pr-model-selector",
+						children: [
+							react_jsx_runtime.jsxs("div", {
+								className: "dsh-balance-pr-current-model",
+								onClick: () => setShowModelPicker(!showModelPicker),
+								children: [
+									react_jsx_runtime.jsxs("div", { className: "dsh-balance-pr-current-model-info", children: [
+										react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-name", children: currentModelInfo.name }),
+										currentModelInfo.provider && react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-provider", children: currentModelInfo.provider }),
+									]}),
+									react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-id", children: currentModelInfo.id }),
+									react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-arrow" + (showModelPicker ? " open" : ""), children: "▾" }),
+								],
+							}),
+							showModelPicker && react_jsx_runtime.jsx("div", {
+								className: "dsh-balance-pr-model-picker",
+								children: react_jsx_runtime.jsx("div", {
+									className: "dsh-balance-pr-model-picker-list",
+									children: allModels.map((m) => react_jsx_runtime.jsxs("div", {
+										className: "dsh-balance-pr-model-option" + (m.id === model ? " selected" : ""),
+										onClick: () => {
+											setModel(m.id);
+											setShowModelPicker(false);
+										},
+										children: [
+											react_jsx_runtime.jsxs("div", { className: "dsh-balance-pr-model-option-info", children: [
+												react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-option-name", children: m.name }),
+												m.provider && react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-option-provider", children: m.provider }),
+											]}),
+											react_jsx_runtime.jsx("span", { className: "dsh-balance-pr-model-option-id", children: m.id }),
+										],
+									}, m.id)),
+								}),
+							}),
+						],
+					}),
+					modelsLoading && react_jsx_runtime.jsx("div", {
+						className: "dsh-balance-pr-hint",
+						children: "正在加载模型列表…",
 					}),
 					react_jsx_runtime.jsxs("div", {
 						className: "dsh-balance-pr-grid",
@@ -321,10 +406,24 @@ window.__ModuleLoader__.load({
 			".dsh-balance-pr{display:flex;flex-direction:column;gap:10px;font-size:13px;line-height:20px;color:var(--eac-widget-fg,var(--dsw-alias-label-secondary))}",
 			".dsh-balance-pr.err{color:var(--dsw-alias-danger,#e5484d)}",
 			".dsh-balance-pr-hint{font-size:12px;color:var(--dsw-alias-label-tertiary)}",
-			".dsh-balance-pr-models{display:flex;flex-wrap:wrap;gap:6px}",
-			".dsh-balance-pr-model{border:1px solid var(--dsw-alias-border-l2);background:transparent;border-radius:999px;padding:2px 10px;font-size:12px;color:inherit;cursor:pointer;transition:color .15s,border-color .15s}",
-			".dsh-balance-pr-model:hover{border-color:var(--dsw-alias-border-l3)}",
-			".dsh-balance-pr-model.on{color:var(--dsw-alias-accent,#5e9cff);border-color:var(--dsw-alias-accent,#5e9cff)}",
+			".dsh-balance-pr-model-selector{position:relative}",
+			".dsh-balance-pr-current-model{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;cursor:pointer;transition:border-color .15s}",
+			".dsh-balance-pr-current-model:hover{border-color:var(--dsw-alias-border-l3)}",
+			".dsh-balance-pr-current-model-info{display:flex;flex-direction:column;flex:1;min-width:0}",
+			".dsh-balance-pr-model-name{font-weight:500;color:var(--dsw-alias-label-primary)}",
+			".dsh-balance-pr-model-provider{font-size:11px;color:var(--dsw-alias-label-tertiary)}",
+			".dsh-balance-pr-model-id{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:monospace}",
+			".dsh-balance-pr-model-arrow{font-size:10px;color:var(--dsw-alias-label-tertiary);transition:transform .15s}",
+			".dsh-balance-pr-model-arrow.open{transform:rotate(180deg)}",
+			".dsh-balance-pr-model-picker{position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--dsw-alias-bg-elevated,#fff);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:1000;max-height:300px;overflow:hidden}",
+			".dsh-balance-pr-model-picker-list{max-height:300px;overflow-y:auto;padding:4px}",
+			".dsh-balance-pr-model-option{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;border-radius:6px;transition:background .1s}",
+			".dsh-balance-pr-model-option:hover{background:var(--dsw-alias-bg-hover,rgba(0,0,0,.05))}",
+			".dsh-balance-pr-model-option.selected{background:var(--dsw-alias-accent-subtle,rgba(94,156,255,.1))}",
+			".dsh-balance-pr-model-option-info{display:flex;flex-direction:column;flex:1;min-width:0}",
+			".dsh-balance-pr-model-option-name{font-size:13px;color:var(--dsw-alias-label-primary)}",
+			".dsh-balance-pr-model-option-provider{font-size:11px;color:var(--dsw-alias-label-tertiary)}",
+			".dsh-balance-pr-model-option-id{font-size:11px;color:var(--dsw-alias-label-tertiary);font-family:monospace}",
 			".dsh-balance-pr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}",
 			".dsh-balance-pr-tier{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}",
 			".dsh-balance-pr-tier-title{font-size:12px;color:var(--dsw-alias-label-tertiary)}",

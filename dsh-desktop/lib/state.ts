@@ -16,7 +16,7 @@
 
 import type { BrowserWindow, Tray } from 'electron';
 import type { ChildProcess } from 'node:child_process';
-import type { WriteStream } from 'node:fs';
+import type { StreamWriteGuard } from '../stream-write-guard.js';
 
 /** TODO(后续 Task): session-watcher.js 迁 TS 后替换为真实类型。 */
 interface SessionWatcherLike {
@@ -80,7 +80,7 @@ export interface AppState {
   /** DSH_HOME（dsh 主目录）。 */
   dshHome: string;
   /** 桌面日志写入流（desktop.log）。 */
-  desktopLog: WriteStream | null;
+  desktopLog: StreamWriteGuard | null;
   /** 系统托盘（仅 Windows）。 */
   tray: Tray | null;
   /** 强制退出标志（跳过托盘驻留等确认流程）。 */

@@ -1,6 +1,6 @@
 # picturereader
 
-> **v3.0.0** — 给纯文本模型（DeepSeek / text-only）的全能「看图 / 读文档」能力：**粘贴即用、原生缩略图**。
+> **v3.0.6** — 给纯文本模型（DeepSeek / text-only）的全能「看图 / 读文档」能力：**粘贴即用、原生缩略图**。
 > 融合 **视觉孪生 adapter**（把任意文本模型原位包装成「支持图片」→ DSH 原生缩略图 + 图片块自动分析）、**三模式路由**、**本地像素级工具链**（scan / OCR×3 引擎 / crop / palette / compare / batch）、**文档转图片**（pdf / word / excel / ppt）与**可选外部 VLM 桥**。一个插件全包，无需另装。
 
 [![dsh-plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
@@ -19,6 +19,8 @@ picturereader 解决两件事：
 2. **通过「视觉孪生 adapter」让纯文本模型在 DSH 里获得原生缩略图体验**：勾选模型即生成「(视觉)」变体，粘贴图片显示原生缩略图、图片块进会话、并被自动分析成文本路径 + 本地证据再交给模型——模型拿到的永远是纯文本，不会触发 `UNSUPPORTED_CONTENT`。
 
 > 版本徽章与兼容性：已验证兼容 **DeepSeek Harness EAC 4.2.0** 与 `@deepseek-ai/dsh-client-ui-workspace` rc.7。
+
+> 🚀 **后续将作为 DeepSeek Harness EAC 的内置视觉插件**：本插件计划替换内置的 `dsh-tool-vision`，随 DSH EAC 桌面版直接捆绑发布，开箱即用（见上游 PR）。作为独立包发布的目的，是让非 EAC / 旧版用户也能通过 `dsh plugin add picturereader` 或 Git/npm 安装获得同等「看图 / 读文档」能力。
 
 ## 功能总览
 
@@ -172,6 +174,26 @@ node scripts/setup-doc-venv.mjs  # 建 doc_venv 装 PyMuPDF
   文档用 document_to_image 逐页转成图片再看）
 ```
 
+## Code Mode（工具折叠）兼容说明
+
+DSH 的 `tools` 呈现有三种 `mode`：`native`（默认，模型可直呼所有工具）、`code`（只允许模型直呼 `run_code`，其它工具折叠进 `run_code` 的生成 SDK 内调用）、`both`（两种都能用）。
+
+- **picturereader 所有工具与 mode 无关**：`native` / `both` 下全部可直呼；`code` 下也**完全可用**，只是要经 `run_code` 程序内调用（`await tools.image_scan(...)` / `await tools.vision_analyze(...)`）。工具会被自动投影进 `run_code` 生成的 SDK，一个都不少。
+- **若报错** `Error: unknown tool "vision_analyze" ... only run_code is callable directly ...`——这不是插件坏了，而是当前会话处于 `code` 模式、仍以直呼方式发起了调用。两种情况任选其一：
+  1. 把该部署的 `tools.mode` 设为 `both`（最省心：直呼 + run_code 都能用，不会降速）；
+  2. 保持 `code` 模式，改用 `run_code` 程序调用（见下方示例）。
+- **推荐**：日常使用直接保持 `native` 或 `both`；`code` 是平台级的"只留 run_code"硬化模式，对本地看图工具是净亏（更多轮数、更多 token），非必要不开。
+
+在 `code` 模式下用 `run_code` 调用示例（Python）：
+
+```python
+async def main():
+    r = await tools.image_scan({"file_path": r"C:\path\to\img.png"})
+    return r
+
+await main()
+```
+
 ## 三模式（使用模式）
 
 在 Web 设置 →「图片阅读」卡片顶部选择，修改即时生效。
@@ -255,7 +277,42 @@ node scripts/setup-doc-venv.mjs  # 建 doc_venv 装 PyMuPDF
 
 ## 测试情况
 
-内置 `node:test` 单测（工具、三模式、桥）+ 真实素材集成测试通过：本地工具链、文档转图片（pdf/docx/pptx/xlsx）、外部 VLM 真调通路（LM Studio）、三模式路由、视觉孪生 Proxy 均验证通过（24/24）。
+### v3.0.3 集成测试（2026-08-20）
+
+132/132 单元测试通过 + 13/13 文档转换测试通过 + 全功能集成测试：
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| image_scan | ✅ | 4 种格式、region/focus/px_per_cell/palette/mode 全部正确 |
+| image_ocr (windows) | ✅ | 中英文识别正常 |
+| image_ocr (rapid) | ✅ | 带 confidence score |
+| image_ocr (paddle) | ✅ | v3.0.3 修复字段名后正常 |
+| image_sample | ✅ | 8×8 精确像素取样 |
+| image_crop | ✅ | 裁剪导出 PNG |
+| image_palette | ✅ | 主色提取 + hue families |
+| image_compare | ✅ | 相同/不同图片判定正确 |
+| image_batch | ✅ | v3.0.3 修复 cordis inject 后正常 |
+| document_to_image | ✅ | PDF/DOCX/PPTX/XLSX 全部正常 |
+| vision_analyze (本地) | ✅ | scan + OCR 证据返回正常 |
+| 三模式路由 | ✅ | privacy/smart/strict 逻辑全部正确 |
+| 视觉孪生 adapter | ✅ | 3 个 provider 激活 |
+| 设置持久化 | ✅ | vision_models / ocr_engine / mode 全部保留 |
+
+### v3.0.6 修复
+
+- **依赖安装完整性修复**：修复了 picturereader 安装后图像分析功能（scan / ocr / vision）静默失败的问题。根因是 npm install 未完整执行，`jpeg-js`、`omggif`、`pngjs` 三个运行时依赖没有正确安装到 `node_modules/` 目录下，导致 `core.js` 顶层 import 失败。修复方案：在内置插件打包时预装依赖，确保 `node_modules/` 随插件一起分发。
+
+### v3.0.5 修复
+
+- **scope.load() 兼容性修复**：修复了在某些 DSH 版本中设置页「图片阅读」卡片打开空白的问题。根因是 `client.js` 直接调用 `scope.load()` 但该宿主版本的 `settingsScope` API 没有 `load` 方法（只有 getSnapshot/subscribe/set/unset），导致组件渲染时抛出 `TypeError: scope.load is not a function`。修复方案：在调用前检查 `typeof scope.load === "function"`，不存在时直接从 `scope.getSnapshot()` 读取。
+
+### v3.0.3 修复
+
+- **视觉桥模型列表持久化修复**：修复了设置页「视觉桥模型」勾选后重新打开设置丢失勾选状态的问题。根因是 `settings/document-updated` 事件触发 `scope.load()` 覆盖本地修改，改为通过 `lastSavedRef` 跟踪保存值，跳过同步覆盖。
+- **OCR 引擎/模式设置持久化修复**：修复了 `ocr_engine` 和 `mode` 等 select 字段修改后重新打开设置恢复默认的问题。根因是 `onSave` 函数未正确处理 select 类型字段的默认值回退。
+- **cordis 4 兼容性修复**：修复了 `image-batch.js` 和 `doc-tools.js` 中访问未声明 `ctx` 属性导致的报错。
+- **PaddleOCR 字段名修复**：`w/h` 字段改为 `width/height` 以匹配 schema。
+- **本地 VLM 端点检测修复**：`isManagedEndpoint` 扩展为识别所有 `127.0.0.1`/`localhost` 地址，不再要求 API key。
 
 ## 开发 / 仓库布局
 

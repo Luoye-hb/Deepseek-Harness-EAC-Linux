@@ -33,6 +33,7 @@ import { killTree, waitForProcExit, nodeExe, updCtx, dshBin } from './proc.js';
 import { desktopProfile, desktopProfileDir } from './paths.js';
 import { bridge } from './bridge.js';
 import { allowBuilds } from './market-modules.js';
+import { createStreamWriteGuard } from '../stream-write-guard.js';
 
 /** dsh 子进程环境：剔除 harness/session 残留变量，保留其余（代理/API Key）。 */
 export function childEnv(): NodeJS.ProcessEnv {
@@ -164,6 +165,9 @@ export function watchServerProc(
     let settled = false;
     let handedOff = false; // 受限端口重启：本实例的退出不再影响外层 Promise/弹窗
     let bootTimer: NodeJS.Timeout | null = null;
+    const output = createStreamWriteGuard(out, {
+      onError: (error) => log('warn', 'dsh web 日志流异常: ' + error.message),
+    });
     const finish = (fn: (v: never) => void, value: unknown): void => {
       if (!settled) {
         settled = true;
@@ -175,7 +179,7 @@ export function watchServerProc(
       }
     };
     const onData = (chunk: Buffer): void => {
-      out.write(chunk);
+      output.write(chunk);
       const text = chunk.toString();
       for (const line of text.split(/\r?\n/)) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
@@ -226,8 +230,18 @@ export function watchServerProc(
       }
     };
     proc.stdout?.on('data', onData);
-    proc.stderr?.on('data', (c: Buffer) => out.write(c));
+    const onStderrData = (chunk: Buffer): void => {
+      output.write(chunk);
+    };
+    proc.stderr?.on('data', onStderrData);
     proc.on('error', (err) => finish(reject, err));
+    // close 在 exit 之后、并且 stdio 已完全关闭时才触发。此处结束日志流，
+    // 才不会截断尾部输出或让晚到的数据写到已结束的 Writable。
+    proc.once('close', () => {
+      proc.stdout?.removeListener('data', onData);
+      proc.stderr?.removeListener('data', onStderrData);
+      output.end();
+    });
     // V4：HTTP 就绪探测与 stdout 就绪行并行竞争 —— 就绪行被管道缓冲吞掉
     // 或格式变化时不再白白等满 bootTimer（「启动 60 秒超时」的主要假阳性
     // 来源）。expectedPort 由 chooseStableWebPort 挑选、已避开 Chromium
@@ -257,7 +271,6 @@ export function watchServerProc(
       })();
     }
     proc.on('exit', (code, signal) => {
-      out.end();
       log('dsh', `进程退出 code=${code} signal=${signal}`);
       // 原地重启（插件市场）或已替换为新进程时，不打扰用户、也不清掉新进程的句柄。
       const intentional = state.restartingServer || state.serverProc !== proc;

@@ -26,6 +26,7 @@ const entryFiles = [
   'watchdog.js',
   'shortcut-maintenance.js',
   'stable-port.js',
+  'stream-write-guard.js',
   'koffi-preflight.js',
   'profile-module-heal.js',
   'patch-row-heal.js',

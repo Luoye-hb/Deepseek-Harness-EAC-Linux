@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import { app, dialog, clipboard, Menu } from 'electron';
 import * as updater from '../updater.js';
 import * as structuredLogger from '../logger.js';
+import { createStreamWriteGuard } from '../stream-write-guard.js';
 import * as bundleIntegrity from '../bundle-integrity.js';
 import type { BundleManifest } from '../bundle-integrity.js';
 import { SessionWatcher } from '../session-watcher.js';
@@ -316,7 +317,10 @@ export async function boot(): Promise<void> {
       /* console 不可用则静默 */
     }
   }
-  state.desktopLog = fs.createWriteStream(path.join(state.logsDir, 'desktop.log'), { flags: 'a' });
+  state.desktopLog = createStreamWriteGuard(
+    fs.createWriteStream(path.join(state.logsDir, 'desktop.log'), { flags: 'a' }),
+    { onError: (error) => { try { console.error('[desktop.log]', error.message); } catch { /* stderr unavailable */ } } },
+  );
   log('boot', `Deepseek Harness EAC（封装 ${app.getVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。

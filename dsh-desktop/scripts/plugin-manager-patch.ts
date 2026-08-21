@@ -26,12 +26,14 @@ function yamlQuote(s: string): string {
   return "'" + String(s).replace(/'/g, "''") + "'";
 }
 
-const LEADING = /^([ \t]*)(.*)$/;
+// split('\n') 会在 Windows 文本中保留行尾 \r；显式接纳它，避免逐行
+// 解析返回 null。首行 BOM 也可能出现在用户/PowerShell 写入的 patch 中。
+const LEADING = /^([ \t]*)(.*)\r?$/;
 
 /** 行是否是指定 id 的条目起始行；返回缩进宽度，否则 null。indentLo/Hi 限定层级。 */
 function entryIndentOf(line: string, id: string, indentLo: number, indentHi: number): number | null {
   const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m = new RegExp('^- id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').exec(line.replace(/^[ \t]+/, ''));
+  const m = new RegExp('^- id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').exec(line.replace(/^\uFEFF/, '').replace(/^[ \t]+/, ''));
   if (!m) return null;
   const lead = LEADING.exec(line);
   const ind = lead?.[1]?.length ?? -1;
@@ -47,6 +49,39 @@ interface EntryBlock {
 }
 
 /**
+ * 行是否是指定 id 的「空块项 + 独立 id」条目起始行（dsh 官方 patch 常用写法）：
+ *     -
+ *         id: <id>
+ *         name: '…'
+ * 即一行只有 `-`（无内联内容），其后的非空行若以 `id: <id>` 开头即命中。
+ * 返回空块项 `-` 行的缩进（作为条目块语义缩进；id/name 行都更深），
+ * 否则 null；indentLo/Hi 限定该空块项层级。
+ */
+function dashEntryIndentOf(lines: string[], i: number, id: string, indentLo: number, indentHi: number): number | null {
+  const dash = LEADING.exec(lines[i] ?? '');
+  if (!dash) return null;
+  const [, dashWs, dashRest] = dash;
+  if (dashWs === undefined || dashRest === undefined) return null;
+  if (!/^-\s*$/.test(dashRest.replace(/^\uFEFF/, ''))) return null; // 不是纯 `-` 空块项
+  const next = lines[i + 1];
+  if (next === undefined) return null;
+  const nextMatch = LEADING.exec(next);
+  if (!nextMatch) return null;
+  const [, nextWs, nextRest] = nextMatch;
+  if (nextWs === undefined || nextRest === undefined) return null;
+  const trimmed = nextRest.replace(/^\uFEFF/, '').replace(/^[ \t]+/, '');
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('^id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').exec(trimmed);
+  if (!m) return null;
+  const dashIndent = dashWs.length;
+  const idIndent = nextWs.length;
+  // 空块项必须浅于 id 行（id/name 都是它的内容）
+  if (idIndent <= dashIndent) return null;
+  if (dashIndent < indentLo || dashIndent > indentHi) return null;
+  return dashIndent;
+}
+
+/**
  * 在行数组中定位第一个满足层级的 `- id: <id>` 条目块。
  * 返回 { start, end, indent }（end 为独占下界）：块 = 起始行 + 其后所有
  * 缩进比起始行更深的非空行（空行视为块结束，保守不吞）。
@@ -54,14 +89,7 @@ interface EntryBlock {
 function findEntryBlock(lines: string[], id: string, indentLo: number, indentHi: number): EntryBlock | null {
   for (let i = 0; i < lines.length; i++) {
     let ind = entryIndentOf(lines[i] ?? '', id, indentLo, indentHi);
-    if (ind === null && /^\s*-\s*$/.test(lines[i] ?? '')) {
-      const itemIndent = LEADING.exec(lines[i] ?? '')?.[1]?.length ?? -1;
-      const idLine = lines[i + 1] ?? '';
-      const idIndent = LEADING.exec(idLine)?.[1]?.length ?? -1;
-      const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const isTarget = new RegExp('^id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').test(idLine.trimStart());
-      if (isTarget && idIndent > itemIndent && itemIndent >= indentLo && itemIndent <= indentHi) ind = itemIndent;
-    }
+    if (ind === null) ind = dashEntryIndentOf(lines, i, id, indentLo, indentHi);
     if (ind === null) continue;
     let j = i + 1;
     while (j < lines.length) {
@@ -123,7 +151,7 @@ export function togglePluginInPatch(text: string, id: string, enabled: boolean, 
   // dsh-app-boot initializes a new profile patch as `[]`. Appending a list item
   // after that scalar-looking document produces invalid YAML (`[]\n- id: ...`).
   // Treat the standalone empty sequence as an empty editable document first.
-  let lines = /^\s*\[\]\s*$/.test(text) ? [] : text.split('\n');
+  let lines = /^\uFEFF?\s*\[\]\s*$/.test(text) ? [] : text.split('\n');
 
   if (!enabled) {
     // 1) 从 insert 块内移除内层条目（缩进 >= 1 视为内层；同一 id 只留一个登记点）
