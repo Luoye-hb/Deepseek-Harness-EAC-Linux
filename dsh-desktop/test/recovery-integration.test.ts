@@ -38,6 +38,17 @@ test('watchdog lifecycle: run-state write, spawn, clean-exit mark', () => {
   assert.ok(/startWatchdog\(\);/.test(bootSrc), 'startWatchdog() is never called');
 });
 
+test('boot detects the previous run before replacing run-state.json', () => {
+  const detect = bootSrc.indexOf('const uncleanPrev = detectUncleanPreviousRun();');
+  const write = bootSrc.indexOf('writeRunState();', detect);
+  const watchdog = bootSrc.indexOf('startWatchdog();', write);
+  assert.ok(detect >= 0, 'previous-run detection missing');
+  assert.ok(write > detect, 'current run-state must be written after previous-run detection');
+  assert.ok(watchdog > write, 'watchdog must start after current run-state is written');
+  assert.ok(bootSrc.indexOf('autoRollbackClientIfCrashed(uncleanPrev);', detect) > watchdog);
+  assert.ok(bootSrc.indexOf('if (uncleanPrev) notifyUncleanRestart(uncleanPrev);', detect) > watchdog);
+});
+
 test('heartbeat IPC is registered and heartbeats are polled', () => {
   assert.ok(recoveryIpcSrc.includes("'dsh:renderer-heartbeat'"), 'heartbeat IPC channel missing');
   assert.ok(/checkHeartbeats\(\)/.test(windowSrc), 'checkHeartbeats() loop missing');

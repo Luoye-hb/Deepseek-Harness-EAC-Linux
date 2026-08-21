@@ -141,6 +141,10 @@ window.__ModuleLoader__.load({
       "    width: 100% !important;",
       "  }",
       "}",
+      "/* 8. Let long workspace names wrap without pushing row actions out. */",
+      ".YDXeBa_projectRow { height: auto !important; min-height: 34px; }",
+      ".YDXeBa_projectRow .YDXeBa_projectText { min-width: 0 !important; flex: 1 1 auto !important; overflow: visible !important; }",
+      ".YDXeBa_projectRow .YDXeBa_projectText .YDXeBa_title { white-space: normal !important; overflow-wrap: anywhere !important; word-break: break-word !important; overflow: visible !important; }",
     ].join("\n");
 
     function apply(ctx) {

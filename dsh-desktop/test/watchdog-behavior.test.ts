@@ -51,6 +51,16 @@ async function runUntilLog(args, needle, timeoutMs = 12000) {
     }
   }
   if (existsSync(logFile)) out = readFileSync(logFile, 'utf8');
+  // The target log line can be visible just before Node delivers the exit event.
+  if (child.exitCode === null) {
+    await Promise.race([
+      new Promise((resolve) => {
+        child.once('exit', resolve);
+        child.once('error', resolve);
+      }),
+      sleep(2000),
+    ]);
+  }
   return { log: out, code: child.exitCode };
 }
 

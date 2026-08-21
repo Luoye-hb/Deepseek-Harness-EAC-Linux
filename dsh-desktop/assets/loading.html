@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<title>Deepseek Harness EAC v1.0</title>
+<title>Deepseek Harness EAC</title>
 <style>
   :root { color-scheme: dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -35,10 +35,30 @@
 </style>
 </head>
 <body>
-  <img class="icon" src="icon.png" alt="Deepseek Harness EAC v1.0" draggable="false" />
+  <img class="icon" src="icon.png" alt="Deepseek Harness EAC" draggable="false" />
   <div class="spinner"></div>
   <h1>DeepSeek Harness 正在启动…</h1>
   <p>正在本机启动 dsh web 服务，首次启动可能需要几十秒。</p>
-  <p class="hint">Deepseek Harness EAC v1.0 — 数据目录中的日志可帮助排查启动问题。</p>
+  <p class="hint">Deepseek Harness EAC <span id="version">加载中…</span> — 数据目录中的日志可帮助排查启动问题。</p>
+  <script>
+    (async function () {
+      var version = document.getElementById('version');
+      try {
+        if (window.dshDesktop && window.dshDesktop.getInfo) {
+          var info = await window.dshDesktop.getInfo();
+          if (info && info.appVersion) {
+            var label = 'v' + info.appVersion;
+            version.textContent = label;
+            document.title = 'Deepseek Harness EAC ' + label;
+            document.querySelector('.icon').alt = 'Deepseek Harness EAC ' + label;
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to get version:', e);
+      }
+      version.textContent = 'v?.?.?';
+    })();
+  </script>
 </body>
 </html>

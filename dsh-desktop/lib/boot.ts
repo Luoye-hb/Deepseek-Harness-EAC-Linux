@@ -339,10 +339,11 @@ export async function boot(): Promise<void> {
   // 新老用户判定必须在任何写盘之前：run-state / migrate 标记 / 稳定端口
   // 都会在启动早期创建 settings.json，事后无法区分全新安装与升级。
   const onboardingNeeded = computeOnboardingNeed();
+  // 必须先读取上一次状态，再覆盖写入本次状态；否则当前 PID 会掩盖异常退出。
+  const uncleanPrev = detectUncleanPreviousRun();
   // 看门狗 + 运行状态标记（安装版）：意外崩溃后自动拉起并告知用户。
   writeRunState();
   startWatchdog();
-  const uncleanPrev = detectUncleanPreviousRun();
   // V4.1 更新保障③：便携版客户端更新后若新版崩溃（非干净退出 + 上一版
   // 备份 marker 仍在），先用上一版还原再继续启动，随后再告知用户。
   autoRollbackClientIfCrashed(uncleanPrev);
