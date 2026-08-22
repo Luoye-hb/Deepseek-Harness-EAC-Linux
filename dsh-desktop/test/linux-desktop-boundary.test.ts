@@ -45,7 +45,9 @@ test('Linux update guidance is typed and covers AppImage plus four package manag
   assert.match(image.detail, /Deepseek Harness EAC\.AppImage/);
 });
 
-test('Linux terminal shims are user-data-local, executable, and target bundled Node/npm', () => {
+test('Linux terminal shims are user-data-local, executable, and target bundled Node/npm', {
+  skip: process.platform === 'win32',
+}, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-shims-'));
   const nodePath = '/opt/deepseek harness/resources/node/node';
   const npmCli = '/opt/deepseek harness/resources/npm/bin/npm-cli.js';
@@ -127,7 +129,7 @@ test('Linux companion sync mounts picturereader and disables overlapping image i
   assert.equal(byId.has('tool-vision'), false);
   assert.equal(pluginRegistry.PLUGIN_UPDATE_SOURCES.picturereader.npm, 'picturereader');
   assert.equal(pluginRegistry.PLUGIN_UPDATE_SOURCES['tool-vision'], undefined);
-  assert.equal(byId.get('file-drop-eac')?.disabled, true);
+  assert.notEqual(byId.get('file-drop-eac')?.disabled, true);
   assert.equal(byId.get('image-paste')?.disabled, true);
 
   const pluginDir = path.join(root, 'assets', 'plugins', byId.get('picturereader')?.dir ?? '');

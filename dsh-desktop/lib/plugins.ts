@@ -8,7 +8,6 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { Notification } from 'electron';
 import { syncBundledPresets, ensureDefaultAgentPreset } from '../preset-sync.js';
 import { removeMarketDuplicate, patchHasForeignRows } from '../builtin-collision.js';
 import {
@@ -20,6 +19,7 @@ import { CORE_PLUGIN_IDS } from '../scripts/onboarding.js';
 import { healProfileModuleShadowing } from '../profile-module-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { desktopPlatform } from './desktop-platform.js';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './paths.js';
 import { COMPANION_PLUGINS, builtinPluginSourceDir } from './plugin-registry-data.js';
 import { readJsonFile, copyPluginPackage } from './plugin-copy.js';
@@ -30,6 +30,7 @@ import { artifactKeep } from './market-modules.js';
 import { profileDirFor, artifactCacheDirFor } from './paths.js';
 import { bridge } from './bridge.js';
 import { dshHomePath } from './dsh-home.js';
+import { retireRemovedBuiltinPlugins } from './retired-plugins.js';
 
 /** 皮肤包目录：assets/skins/<id>/（完整 client 插件包，默认 disabled 注册）。 */
 export const SKINS_DIR = path.join(__dirname, '..', 'assets', 'skins');
@@ -121,6 +122,8 @@ export function syncCompanionPlugins(): void {
     const home = dshHomePath();
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
     ensureDesktopProfileInit();
+    // 已退役插件不得因旧 profile 行或包副本继续加载。
+    retireRemovedBuiltinPlugins(desktopProfileDir(), (message) => log('boot', message));
     // V4 运行时补丁（幂等）：对话删除/归档 —— dsh-session-manager 的前置依赖。
     applySessionManageFix();
     const profileDirP = desktopProfileDir();
@@ -198,18 +201,15 @@ export function syncCompanionPlugins(): void {
       });
     }
     if (migratedBuiltins.length) {
-      try {
-        const names = migratedBuiltins.map((m) => m.name).join('、');
-        const n = new Notification({
-          title: '内置插件已接管同名市场包',
-          body: `检测到市场安装的重复包，已改用内置版本（${names}）。插件树已自动整理，本次启动生效。`,
-          icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-        });
-        n.on('click', () => bridge.showMainWindow());
-        n.show();
-      } catch (err) {
+      const names = migratedBuiltins.map((m) => m.name).join('、');
+      void desktopPlatform.showNotification({
+        title: '内置插件已接管同名市场包',
+        body: `检测到市场安装的重复包，已改用内置版本（${names}）。插件树已自动整理，本次启动生效。`,
+        iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+        onClick: () => bridge.showMainWindow(),
+      }).catch((err: unknown) => {
         log('boot', '内置接管通知发送失败: ' + String((err as Error).message));
-      }
+      });
     }
     // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
     for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {

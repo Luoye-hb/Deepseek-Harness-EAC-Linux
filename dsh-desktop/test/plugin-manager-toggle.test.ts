@@ -109,24 +109,24 @@ test('移除：id 白名单校验（防注入）', () => {
 
 // —— dsh 官方「空块项 + 独立 id」多行格式（web-desktop profile 实际写法）——
 
-test('移除：dsh 官方 `-` 空块项 + 独立 id 格式（退役 tdai-memory 场景）', () => {
+test('移除：dsh 官方 `-` 空块项 + 独立 id 格式（退役插件场景）', () => {
   const t =
     '-\n' +
     '    insert:\n' +
     '        -\n' +
-    '            id: tdai-memory\n' +
-    '            name: \'dsh-tdai-memory\'\n' +
+    '            id: retired-plugin\n' +
+    '            name: \'dsh-retired-plugin\'\n' +
     '-\n' +
     '    insert:\n' +
     '        -\n' +
     '            id: mobile-fix\n' +
     '            name: \'dsh-web-mobile-fix\'\n';
-  assert.equal(hasEntryId(t, 'tdai-memory'), true, '应识别空块项格式的 tdai-memory');
-  const r = removePluginFromPatch(t, 'tdai-memory');
-  assert.equal(hasEntryId(r, 'tdai-memory'), false, 'tdai-memory 应被移除');
+  assert.equal(hasEntryId(t, 'retired-plugin'), true, '应识别空块项格式的退役插件');
+  const r = removePluginFromPatch(t, 'retired-plugin');
+  assert.equal(hasEntryId(r, 'retired-plugin'), false, '退役插件应被移除');
   assert.ok(r.includes('mobile-fix'), '兄弟条目 mobile-fix 必须保留');
-  assert.ok(!/name:\s*dsh-tdai-memory/.test(r), '不得残留孤立 name 行');
-  assert.ok(!r.includes('tdai-memory'), '整块（含 name）都应清除');
+  assert.ok(!/name:\s*dsh-retired-plugin/.test(r), '不得残留孤立 name 行');
+  assert.ok(!r.includes('retired-plugin'), '整块（含 name）都应清除');
 });
 
 test('移除：dsh 官方格式删 picturereader（web profile 重复挂载清理场景）', () => {
@@ -157,13 +157,13 @@ test('hasEntryId：dsh 官方空块项格式命中与短 id 前缀不误配', ()
 test('移除：兼容带 BOM 的 Windows CRLF patch', () => {
   const t =
     '\uFEFF- insert:\r\n' +
-    '    - id: tdai-memory\r\n' +
-    "      name: 'dsh-tdai-memory'\r\n" +
+    '    - id: retired-plugin\r\n' +
+    "      name: 'dsh-retired-plugin'\r\n" +
     '- insert:\r\n' +
     '    - id: mobile-fix\r\n' +
     "      name: 'dsh-web-mobile-fix'\r\n";
-  const r = removePluginFromPatch(t, 'tdai-memory');
-  assert.equal(hasEntryId(r, 'tdai-memory'), false);
+  const r = removePluginFromPatch(t, 'retired-plugin');
+  assert.equal(hasEntryId(r, 'retired-plugin'), false);
   assert.equal(hasEntryId(r, 'mobile-fix'), true);
   assert.ok(r.includes('\r\n'), '应保留 Windows CRLF 换行');
 });

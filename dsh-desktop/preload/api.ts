@@ -10,77 +10,8 @@
  */
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-
-/** window.dshDesktop 的完整 API 面（对页面与客户端插件公开）。 */
-export interface DshDesktopApi {
-  appVersion: string;
-  windowControls: {
-    minimize(): Promise<unknown>;
-    toggleMaximize(): Promise<unknown>;
-    close(): Promise<unknown>;
-    isMaximized(): Promise<boolean>;
-    onMaximizeChange(cb: (isMax: boolean) => void): () => void;
-  };
-  menu: {
-    action(action: string, payload?: Record<string, unknown>): Promise<unknown>;
-  };
-  getInfo(): Promise<ChromeInfo | null>;
-  refreshBalance(): Promise<unknown>;
-  restartService(): Promise<unknown>;
-  floatWindow: {
-    open(sessionId: string): Promise<unknown>;
-    close(): void;
-  };
-  guard: {
-    action(action: string, value?: unknown): Promise<unknown>;
-  };
-  pluginWizard: {
-    open(): Promise<unknown>;
-  };
-  pluginManager: {
-    list(): Promise<unknown>;
-    setEnabled(id: string, enabled: boolean): Promise<unknown>;
-    setRemoved(id: string, removed: boolean): Promise<unknown>;
-  };
-  pluginUpdates: {
-    list(force?: boolean): Promise<unknown>;
-    update(id: string): Promise<unknown>;
-    setAutoUpdate(enabled: boolean): Promise<unknown>;
-  };
-  imagePaste: {
-    save(payload: unknown): Promise<unknown>;
-  };
-  balancePrices: {
-    get(model: string): Promise<unknown>;
-    set(model: string, prices: unknown): Promise<unknown>;
-    reset(model: string): Promise<unknown>;
-  };
-  revertFiles(changes: unknown): Promise<unknown>;
-  openPath(path: string): Promise<unknown>;
-  openExternal(url: string): Promise<unknown>;
-  copyText(text: string): Promise<{ ok?: boolean } | null>;
-  getPathForFile(file: unknown): string;
-  recovery: {
-    getState(): Promise<unknown>;
-    reload(): Promise<unknown>;
-    restart(): Promise<unknown>;
-    exportLogs(): Promise<unknown>;
-  };
-}
-
-/** chrome:init 返回的应用信息（菜单头 + 徽标消费）。 */
-export interface ChromeInfo {
-  appVersion?: string;
-  agentVersion?: string;
-  agentSource?: string;
-  notifyOnTurnEnd?: boolean;
-  closeToTray?: boolean;
-  exitAction?: string;
-  shortcutPolicy?: string;
-  repoUrls?: { github?: string; gitee?: string };
-  iconDataUri?: string;
-  [k: string]: unknown;
-}
+import type { ChromeInfo, DshDesktopApi } from '../shared/contract/desktop-api.js';
+export type { ChromeInfo, DshDesktopApi } from '../shared/contract/desktop-api.js';
 
 /** 浮窗模式标记（window.__DSH_FLOAT__）。 */
 export interface FloatMode {
@@ -89,6 +20,91 @@ export interface FloatMode {
 
 /** 当前是否浮窗（由 --dsh-float= 启动参数注入，见 exposeBridge）。 */
 export let FLOAT_MODE: FloatMode | null = null;
+
+/** Electron fallback implementation; Tauri will translate native drop events. */
+function pathForFile(file: unknown): string {
+  try {
+    return webUtils.getPathForFile(file as File) || '';
+  } catch {
+    return '';
+  }
+}
+
+function jsonSafe(value: unknown): unknown {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return null;
+  }
+}
+
+async function collectIndexedDb(): Promise<unknown[]> {
+  if (typeof indexedDB === 'undefined' || typeof indexedDB.databases !== 'function') return [];
+  const databases = await indexedDB.databases();
+  const result: unknown[] = [];
+  for (const info of databases) {
+    const name = info.name;
+    if (!name) continue;
+    const db = await new Promise<IDBDatabase | null>((resolve) => {
+      const request = indexedDB.open(name, info.version);
+      request.onerror = () => resolve(null);
+      request.onsuccess = () => resolve(request.result);
+    });
+    if (!db) continue;
+    const stores: unknown[] = [];
+    for (const storeName of Array.from(db.objectStoreNames)) {
+      const records = await new Promise<unknown[]>((resolve) => {
+        try {
+          const tx = db.transaction(storeName, 'readonly');
+          const store = tx.objectStore(storeName);
+          const keys = store.getAllKeys();
+          const values = store.getAll();
+          tx.onerror = () => resolve([]);
+          tx.oncomplete = () => {
+            const keyList = keys.result ?? [];
+            const valueList = values.result ?? [];
+            resolve(keyList.flatMap((key, index) => {
+              const value = valueList[index];
+              const safeKey = jsonSafe(key);
+              const safeValue = jsonSafe(value);
+              return safeKey === null || safeValue === null ? [] : [{ key: safeKey, value: safeValue }];
+            }));
+          };
+        } catch {
+          resolve([]);
+        }
+      });
+      const tx = db.transaction(storeName, 'readonly');
+      const store = tx.objectStore(storeName);
+      stores.push({
+        name: storeName,
+        keyPath: store.keyPath,
+        autoIncrement: store.autoIncrement,
+        records,
+      });
+    }
+    db.close();
+    result.push({ name, version: info.version ?? 1, stores });
+  }
+  return result;
+}
+
+function scheduleWebViewMigrationExport(): void {
+  if (FLOAT_MODE || !/^https?:$/.test(location.protocol) || !/^(127\.0\.0\.1|localhost)$/i.test(location.hostname)) return;
+  void collectIndexedDb().then((indexedDb) => {
+    const localStorageData: Record<string, string> = {};
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (key !== null) localStorageData[key] = localStorage.getItem(key) ?? '';
+    }
+    ipcRenderer.send('dsh:webview-state', {
+      localStorage: localStorageData,
+      indexedDb,
+    });
+  }).catch(() => {
+    ipcRenderer.send('dsh:webview-state', { localStorage: {}, indexedDb: [] });
+  });
+}
 
 /**
  * 暴露 window.dshDesktop 并挂全部被动通道（异常上报 / 余额转发 / 心跳 /
@@ -181,11 +197,28 @@ export function exposeBridge(): DshDesktopApi {
     // （webUtils.getPathForFile，仅 Electron 环境；浏览器打开 WebUI 时
     // 返回空字符串，插件自动降级为可读提示）。
     getPathForFile: (file: unknown): string => {
-      try {
-        return webUtils.getPathForFile(file as File) || '';
-      } catch {
-        return '';
-      }
+      return pathForFile(file);
+    },
+    // Stage 1 compatibility surface. This observes DOM drops without
+    // preventing existing plugin handlers from processing the same event.
+    files: {
+      onDrop: (cb) => {
+        const listener = (event: DragEvent): void => {
+          const files = Array.from(event.dataTransfer?.files ?? [])
+            .map((file) => {
+              const item: { path: string; name?: string; size?: number } = {
+                path: pathForFile(file),
+                size: file.size,
+              };
+              if (file.name) item.name = file.name;
+              return item;
+            })
+            .filter((file) => file.path);
+          if (files.length > 0) cb({ files });
+        };
+        document.addEventListener('drop', listener);
+        return () => document.removeEventListener('drop', listener);
+      },
     },
     // 恢复页面（assets/recovery.html）使用的动作与状态读取。
     recovery: {
@@ -220,6 +253,8 @@ export function exposeBridge(): DshDesktopApi {
       /* 忽略持久化失败 */
     }
   }
+
+  scheduleWebViewMigrationExport();
 
   // 页面异常 → 主进程日志（desktop.log），便于排查插件空白视图。
   window.addEventListener('error', (e: ErrorEvent) => {

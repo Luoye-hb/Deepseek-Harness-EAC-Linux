@@ -105,12 +105,6 @@ for package in "${packages[@]}"; do
     'const root=process.argv[1];const sharp=require(root+"/node_modules/sharp");const koffi=require(root+"/node_modules/koffi");if(typeof sharp!=="function"||typeof koffi.load!=="function")process.exit(2)' \
     "$app_root"
 
-  memory_root="$app_root/assets/plugins/dsh-tdai-memory"
-  [[ -f "$memory_root/index.js" ]] || fail "dsh-tdai-memory entry is missing"
-  "$node_bin" --input-type=module -e \
-    'import {createRequire} from "node:module";const require=createRequire(import.meta.url);const root=process.argv[1];require(root+"/node_modules/@node-rs/jieba-linux-x64-gnu");require(root+"/node_modules/sqlite-vec");await import(root+"/index.js");' \
-    "$memory_root"
-
   picturereader_root="$app_root/assets/plugins/picturereader"
   [[ -f "$picturereader_root/package.json" ]] || fail "picturereader manifest is missing"
   "$node_bin" --input-type=module -e \
@@ -122,7 +116,7 @@ for package in "${packages[@]}"; do
 
   mapfile -t native_payloads < <(find "$extract_dir" -type f \( -name '*.node' -o -name '*.so' -o -path '*/resources/node/node' \) | sort)
   [[ ${#native_payloads[@]} -gt 0 ]] || fail "no native payloads found"
-  for required in node-pty sharp-linux-x64 koffi-linux-x64 jieba-linux-x64-gnu sqlite-vec-linux-x64; do
+  for required in node-pty sharp-linux-x64 koffi-linux-x64; do
     printf '%s\n' "${native_payloads[@]}" | grep -q "$required" || fail "mandatory native payload is missing: $required"
   done
 

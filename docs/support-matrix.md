@@ -10,7 +10,7 @@ This branch builds, tests, and releases Linux x86_64 only. Windows and macOS are
 
 ## Linux compatibility gate
 
-Linux packages are built and audited in Debian 12 CI. `node-pty` is rebuilt there with the official Node v24.19.0 distribution, never with a distribution `nodejs` package. Every pacman, deb, rpm, and AppImage archive must contain the bundled Node/npm runtime, Electron, node-pty, Sharp, Koffi, `dsh-tdai-memory`, Jieba, and sqlite-vec. Required ELF payloads must have no unresolved `ldd` dependency and must not reference a GLIBC symbol newer than `GLIBC_2.34`.
+Linux packages are built and audited in Debian 12 CI. `node-pty` is rebuilt there with the official Node v24.19.0 distribution, never with a distribution `nodejs` package. Every pacman, deb, rpm, and AppImage archive must contain the bundled Node/npm runtime, Electron, node-pty, Sharp, and Koffi. Required ELF payloads must have no unresolved `ldd` dependency and must not reference a GLIBC symbol newer than `GLIBC_2.34`.
 
 Linux lifecycle fencing uses a dedicated POSIX process group and a validated `0600` lease. It provides bounded `SIGTERM` to `SIGKILL` cleanup and stale-group recovery. It does not provide cgroup v2 resource limits, a low-privilege account sandbox, or guaranteed immediate cleanup after an uncatchable host crash; rejected or ambiguous leases are preserved as incident evidence and are never signalled.
 

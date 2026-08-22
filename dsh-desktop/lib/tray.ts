@@ -9,11 +9,12 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, Tray, Menu, shell, clipboard } from 'electron';
+import { app, Tray, Menu } from 'electron';
 import * as updater from '../updater.js';
 import * as clientUpdater from '../client-updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { desktopPlatform } from './desktop-platform.js';
 import { IS_WIN, updCtx, dshVersion, dshVersionSource } from './proc.js';
 import { restartWebServiceCore } from './server.js';
 import { showBox } from './window.js';
@@ -106,8 +107,8 @@ export async function showAbout(): Promise<void> {
       '\n\n交流群：EAC 交流群（群号 523412163）\n反馈问题：⋯ 菜单 → 反馈建议',
     buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
   });
-  if (response === 0) clipboard.writeText(urls.github);
-  else if (response === 1) clipboard.writeText(urls.gitee);
+  if (response === 0) await desktopPlatform.writeClipboard(urls.github);
+  else if (response === 1) await desktopPlatform.writeClipboard(urls.gitee);
 }
 
 /** 首次驻留托盘时气泡提示一次。 */
@@ -163,7 +164,7 @@ export function createTray(): void {
       // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
       { label: '重启 Web 服务', click: () => { showMainWindow(); void restartWebServiceCore(); } },
       { type: 'separator' },
-      { label: '反馈建议…', click: () => { showMainWindow(); void shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
+      { label: '反馈建议…', click: () => { showMainWindow(); void desktopPlatform.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
       { type: 'separator' },
       { label: '退出', click: () => { state.forceQuit = true; app.quit(); } },
     ]);

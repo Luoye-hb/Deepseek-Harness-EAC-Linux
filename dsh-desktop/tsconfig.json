@@ -18,6 +18,15 @@
     "types": ["node"],
     "noEmit": false
   },
-  "include": ["lib/**/*.ts", "shared/**/*.ts", "preload/**/*.ts", "scripts/**/*.ts", "*.ts", "types-*.d.ts"],
+  "include": [
+    "lib/**/*.ts",
+    "platform/**/*.ts",
+    "shared/**/*.ts",
+    "desktop-host/**/*.ts",
+    "preload/**/*.ts",
+    "scripts/**/*.ts",
+    "*.ts",
+    "types-*.d.ts"
+  ],
   "exclude": ["node_modules", "vendor", "dist", "out", "assets", "docs"]
 }

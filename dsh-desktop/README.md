@@ -156,7 +156,7 @@
 | `@deepseek-ai/dsh-third-party-thinking`（v4） | 第三方 OpenAI 兼容模型的 reasoning_effort 控件（字段名可自定义） | 模型参数区 |
 | `dsh-offpeak`（v4） | 峰谷价格卫士：高峰时段（北京时间 9-12 / 14-18 点）发送前拦截提醒，一键继续或定时到闲时价自动执行（浏览器不在线也执行） | 发送时弹窗（「插件 → 管理」可关闭） |
 
-> **Windows 文件锁排队**：运行中的 Web 服务加载着原生模块（sqlite-vec 等 DLL）时，插件安装/卸载会遇到 `EPERM` 文件锁 —— 任务会自动排队（`.dsh-market-pending.json`），下次服务重启前（无锁窗口）自动完成，市场界面提供「立即重启并完成」按钮。
+> **Windows 文件锁排队**：运行中的 Web 服务加载着原生模块 DLL 时，插件安装/卸载会遇到 `EPERM` 文件锁 —— 任务会自动排队（`.dsh-market-pending.json`），下次服务重启前（无锁窗口）自动完成，市场界面提供「立即重启并完成」按钮。
 >
 > **NSIS 升级修复**：安装器在卸载旧版前自动结束新旧进程，修复了旧版 "Failed to uninstall old application files: 2"（应用运行中导致文件被锁）。
 

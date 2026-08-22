@@ -8,7 +8,6 @@
  */
 
 import * as path from 'node:path';
-import { Notification } from 'electron';
 import * as updater from '../updater.js';
 import * as balance from '../balance.js';
 import type { BalanceResult, PriceEntry, TierPrice } from '../balance.js';
@@ -17,6 +16,7 @@ import { dshHomePath } from './dsh-home.js';
 import type { AppState } from './state.js';
 import { log } from './log.js';
 import { updCtx } from './proc.js';
+import { desktopPlatform } from './desktop-platform.js';
 
 /** 查询并加工余额/定价，结果推主窗并缓存（state.balanceCache）。 */
 export async function refreshBalance(): Promise<BalanceResult> {
@@ -78,21 +78,18 @@ export function onSessionTurnEnd(info: TurnEndInfo): void {
   if (now - last < 30000) return; // same session: at most one toast per 30s
   lastNotifyAt.set(key, now);
   log('notify', '任务完成: ' + JSON.stringify(info));
-  try {
-    const n = new Notification({
-      title: info.title || 'DSH 任务完成',
-      body: info.body || '会话任务已完成',
-      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    });
-    n.on('click', () => {
+  void desktopPlatform.showNotification({
+    title: info.title || 'DSH 任务完成',
+    body: info.body || '会话任务已完成',
+    iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+    onClick: () => {
       if (state.mainWindow) {
         if (state.mainWindow.isMinimized()) state.mainWindow.restore();
         state.mainWindow.show();
         state.mainWindow.focus();
       }
-    });
-    n.show();
-  } catch (err) {
+    },
+  }).catch((err: unknown) => {
     log('notify', '通知发送失败: ' + String((err as Error).message));
-  }
+  });
 }

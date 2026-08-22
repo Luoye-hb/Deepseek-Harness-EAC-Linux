@@ -11,9 +11,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
-import { app, Notification } from 'electron';
+import { app } from 'electron';
 import { state } from './state.js';
 import { log } from './log.js';
+import { desktopPlatform } from './desktop-platform.js';
 import { IS_WIN, nodeExe } from './proc.js';
 import { runStatePath } from './run-state.js';
 import { bridge } from './bridge.js';
@@ -72,17 +73,14 @@ export function startJunctionWatchdog(): void {
       const res = g.repairJunctions();
       if (res.repaired.length && !notified) {
         notified = true;
-        try {
-          const n = new Notification({
-            title: '已自动修复共享模块指向',
-            body: '检测到原生 dsh 改写了共享模块目录，桌面端已恢复指向自身版本。原生 CLI 如有异常，重启它即可。',
-            icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-          });
-          n.on('click', () => bridge.showMainWindow());
-          n.show();
-        } catch {
+        void desktopPlatform.showNotification({
+          title: '已自动修复共享模块指向',
+          body: '检测到原生 dsh 改写了共享模块目录，桌面端已恢复指向自身版本。原生 CLI 如有异常，重启它即可。',
+          iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+          onClick: () => bridge.showMainWindow(),
+        }).catch(() => {
           /* 通知失败不影响修复 */
-        }
+        });
       }
     } catch {
       /* 巡检失败静默 */

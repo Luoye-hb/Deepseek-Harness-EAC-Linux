@@ -19,10 +19,11 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, ipcMain, BrowserWindow, shell } from 'electron';
+import { app, ipcMain, BrowserWindow } from 'electron';
 import * as structuredLogger from '../../logger.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
+import { desktopPlatform } from '../desktop-platform.js';
 import { desktopProfile, desktopProfileDir } from '../paths.js';
 import { ensureGuard } from '../guard.js';
 import { restartWebServiceCore } from '../server.js';
@@ -188,7 +189,7 @@ function registerRecoveryCenterIpc(): void {
             userDataDir: state.userDataDir,
             dshHome: state.dshHome,
           });
-          shell.showItemInFolder(zipPath);
+          await desktopPlatform.showItemInFolder(zipPath);
           return { ok: true, zipPath };
         }
         default:

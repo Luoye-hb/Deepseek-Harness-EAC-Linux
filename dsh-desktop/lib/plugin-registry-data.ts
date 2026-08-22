@@ -38,7 +38,6 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   // config.path 必须随行写入：v2.0.0 只写了 id+name，schema required 无默认值，
   // 全新安装校验失败拖垮整个插件树（详见 patch-row-heal 的存量修复）。
   { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
-  { id: 'tdai-memory', name: 'dsh-tdai-memory', dir: 'dsh-tdai-memory' },
   { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
   { id: 'message-rewind', name: 'dsh-message-rewind', dir: 'dsh-message-rewind' },
@@ -74,7 +73,6 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
 export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: string }> = {
   picturereader: { npm: 'picturereader' },
   'soul-md': { npm: 'dsh-soul-md' },
-  'tdai-memory': { npm: 'dsh-tdai-memory' },
   'dsh-pet': { npm: 'dsh-pet' },
   'better-sidebar': { npm: 'dsh-better-sidebar' },
   'dsh-navbar': { npm: '@vlln/dsh-navbar' },

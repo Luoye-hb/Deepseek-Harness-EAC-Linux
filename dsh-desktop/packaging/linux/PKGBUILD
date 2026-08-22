@@ -1,0 +1,26 @@
+pkgname=deepseek-harness-eac
+pkgver=${DSH_PACKAGE_VERSION:-4.6.0}
+pkgrel=1
+pkgdesc='Deepseek Harness EAC Tauri desktop client'
+arch=('x86_64')
+url='https://github.com/zouyuxuan122/Deepseek-Harness-EAC'
+license=('MIT')
+depends=('glibc' 'gtk3' 'webkit2gtk-4.1' 'libsoup3' 'openssl')
+install=deepseek-harness-eac.install
+options=('!strip')
+source=()
+sha256sums=()
+
+build() {
+  test -d "${DSH_TAURI_PACKAGE_ROOT:?DSH_TAURI_PACKAGE_ROOT is required}"
+}
+
+package() {
+  local root="${DSH_TAURI_PACKAGE_ROOT}"
+  install -Dm755 "$root/usr/bin/deepseek-harness-eac" \
+    "$pkgdir/usr/bin/deepseek-harness-eac"
+  cp -a "$root/usr/lib" "$pkgdir/usr/"
+  cp -a "$root/usr/share" "$pkgdir/usr/"
+  install -Dm644 "$root/usr/share/licenses/deepseek-harness-eac/LICENSE-MIT.txt" \
+    "$pkgdir/usr/share/licenses/deepseek-harness-eac/LICENSE-MIT.txt"
+}

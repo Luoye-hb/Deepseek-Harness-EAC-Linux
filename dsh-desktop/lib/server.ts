@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import * as http from 'node:http';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { app, clipboard } from 'electron';
+import { app } from 'electron';
 import * as updater from '../updater.js';
 import { restrictedPortOf, chooseStableWebPort } from '../stable-port.js';
 import type { StablePortCtx } from '../stable-port.js';
@@ -32,6 +32,12 @@ import { log } from './log.js';
 import { killTree, waitForProcExit, nodeExe, updCtx, dshBin } from './proc.js';
 import { desktopProfile, desktopProfileDir } from './paths.js';
 import { bridge } from './bridge.js';
+import { desktopPlatform } from './desktop-platform.js';
+import {
+  desktopHostRpcEnabled,
+  startDesktopHost,
+  stopDesktopHost,
+} from './desktop-host.js';
 import { allowBuilds } from './market-modules.js';
 import { createStreamWriteGuard } from '../stream-write-guard.js';
 
@@ -308,7 +314,7 @@ export function watchServerProc(
             noLink: true,
           })
           .then(({ response }) => {
-            if (response === 0) clipboard.writeText(detail);
+            if (response === 0) void desktopPlatform.writeClipboard(detail);
             else if (response === 1)
               startAndShow().catch((err) => void bridge.handleBootFailure(err));
             else app.quit();
@@ -356,6 +362,48 @@ export function waitUntilUp(url: string, timeoutMs = 120000): Promise<string> {
   });
 }
 
+/** Start dsh through the migration host when the explicit fallback flag is on. */
+async function startAndShowViaDesktopHost(overlays: string[]): Promise<string> {
+  const webPort = await chooseStableWebPort(stablePortCtx());
+  const patchArgs = overlays.flatMap((overlay) => ['--patch', overlay]);
+  const firstBoot = !fs.existsSync(path.join(desktopProfileDir(), 'node_modules'));
+  const url = await startDesktopHost(
+    {
+      nodePath: nodeExe(),
+      dshBin: dshBin(),
+      profile: desktopProfile(),
+      cwd: state.userDataDir,
+      host: '127.0.0.1',
+      port: webPort,
+      env: childEnv(),
+      extraArgs: patchArgs,
+      logPath: path.join(state.logsDir, 'dsh-web.log'),
+      assetsDir: path.join(__dirname, '..', 'assets', 'plugins'),
+      bootTimeoutMs: firstBoot ? 180000 : 60000,
+      useSystemCa: true,
+    },
+    async () => {
+      await startAndShowGuarded();
+    },
+  );
+  try {
+    const actual = Number(new URL(url).port) || 0;
+    if (actual > 0 && actual !== webPort) {
+      const settings = updater.loadSettings(updCtx());
+      settings.webPort = actual;
+      updater.saveSettings(updCtx(), settings);
+    }
+  } catch {
+    /* Persisting the actual port is best effort. */
+  }
+  state.webUrl = url;
+  log('boot', 'Web UI 就绪（desktop-host RPC）: ' + url);
+  if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+    await state.mainWindow.loadURL(url);
+  }
+  return url;
+}
+
 /** 启动服务并加载到主窗（合并 koffi 降级 overlay）。 */
 export function startAndShow(overlays: string[] = []): Promise<string> {
   // koffi 预检失败注入的目录选择器降级 overlay 一并交给 dsh web（--patch）。
@@ -365,6 +413,7 @@ export function startAndShow(overlays: string[] = []): Promise<string> {
   for (const p of overlays) {
     if (typeof p === 'string' && p && fs.existsSync(p) && !merged.includes(p)) merged.push(p);
   }
+  if (desktopHostRpcEnabled()) return startAndShowViaDesktopHost(merged);
   return startServer(4, merged)
     .then(waitUntilUp)
     .then((url) => {
@@ -491,12 +540,16 @@ export async function restartWebServiceCore(): Promise<RestartResult> {
   log('service', '请求重启 dsh web 服务');
   state.restartingServer = true;
   try {
-    const oldProc = state.serverProc;
-    killTree(state.serverProc);
-    state.serverProc = null;
-    // 等旧进程真正退出（DLL 文件锁随之释放），再执行插件市场排队任务，
-    // 最后才拉起新服务 —— 排队安装正需要这个"无锁窗口"。
-    await waitForProcExit(oldProc, 20000);
+    if (desktopHostRpcEnabled()) {
+      await stopDesktopHost();
+    } else {
+      const oldProc = state.serverProc;
+      killTree(state.serverProc);
+      state.serverProc = null;
+      // 等旧进程真正退出（DLL 文件锁随之释放），再执行插件市场排队任务，
+      // 最后才拉起新服务 —— 排队安装正需要这个"无锁窗口"。
+      await waitForProcExit(oldProc, 20000);
+    }
     await bridge.processPendingMarketOps();
     // pnpm（排队安装/卸载）会重写 profile node_modules：可能删掉配套插件
     // 副本、重新 hoist 核心包。服务拉起前重建 + 清理，顺序不能反。

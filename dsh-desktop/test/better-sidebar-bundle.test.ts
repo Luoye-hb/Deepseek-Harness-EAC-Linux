@@ -48,13 +48,12 @@ test('schemastery (the plugin\'s only missing server dep) is declared', () => {
 });
 
 test('desktop profile initialization resolves the DSH home before linking schemastery', () => {
-  const main = readFileSync(join(ROOT, 'main.js'), 'utf8');
-  const start = main.indexOf('function ensureDesktopProfileInit()');
-  const end = main.indexOf('\n}\n', start);
-  const body = main.slice(start, end);
-  assert.match(body, /const home = dshHome \|\| path\.join\(os\.homedir\(\), '\.dsh'\)/,
-    'ensureDesktopProfileInit must define home before path.join(home, ...)');
-  assert.match(body, /path\.join\(home, 'profiles', 'node_modules'\)/);
+  const paths = readFileSync(join(ROOT, 'lib', 'paths.ts'), 'utf8');
+  assert.match(paths, /function desktopProfileDir\(\)[\s\S]*dshHomePath\(\)/,
+    'desktopProfileDir must resolve the shared DSH home');
+  assert.match(paths, /function ensureDesktopProfileInit\(\)[\s\S]*const dir = desktopProfileDir\(\)/,
+    'profile initialization must resolve its directory through desktopProfileDir');
+  assert.match(paths, /path\.join\(dir, 'package\.json'\)/);
 });
 
 // issue #14 / zcode 报告：app 层声明不足以让 fallback 闭包（BFS 起点是

@@ -10,12 +10,17 @@
  */
 
 import * as path from 'node:path';
-import { app, BrowserWindow, Menu, shell, dialog, Notification } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import type { WebContents } from 'electron';
 import { RendererRecovery } from '../renderer-recovery.js';
 import type { FailureRecord, RecoveryWindow } from '../renderer-recovery.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import {
+  desktopPlatform,
+  fromDesktopDialogResult,
+  toDesktopDialogOptions,
+} from './desktop-platform.js';
 import { IS_WIN } from './proc.js';
 import { writeRunState } from './run-state.js';
 import { waitUntilUp } from './server.js';
@@ -26,9 +31,16 @@ export const FLOAT_MAX = 8;
 
 /** 消息框：有主窗时挂主窗（模态感），否则无父窗。 */
 export function showBox(opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
-  if (state.mainWindow && !state.mainWindow.isDestroyed())
-    return dialog.showMessageBox(state.mainWindow, opts);
-  return dialog.showMessageBox(opts);
+  const parentId =
+    state.mainWindow && !state.mainWindow.isDestroyed()
+      ? String(state.mainWindow.id)
+      : undefined;
+  return desktopPlatform
+    .showDialog(toDesktopDialogOptions(opts, parentId))
+    .then((result) => ({
+      ...fromDesktopDialogResult(result),
+      checkboxChecked: result.checkboxChecked ?? false,
+    }));
 }
 
 // H1（共享给主窗/浮窗）：origin 精确比较（protocol+host+port），杜绝前缀/
@@ -153,7 +165,7 @@ export function createWindow(opts: CreateWindowOpts = {}): void {
 
   // Open target=_blank / window.open in the system browser.
   state.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) void desktopPlatform.openExternal(url);
     return { action: 'deny' };
   });
 
@@ -163,7 +175,7 @@ export function createWindow(opts: CreateWindowOpts = {}): void {
   const guardNavigation = (event: Electron.Event, url: string): void => {
     if (isAllowedWebUrl(url)) return;
     event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) void desktopPlatform.openExternal(url);
   };
   state.mainWindow.webContents.on('will-navigate', guardNavigation);
   state.mainWindow.webContents.on('will-redirect', guardNavigation);
@@ -248,13 +260,13 @@ export function createWindow(opts: CreateWindowOpts = {}): void {
 /** 浮窗 webContents 围栏：与主窗同规则的导航/开窗拦截 + 浮窗专属错误采集。 */
 export function guardFloatWebContents(wc: WebContents): void {
   wc.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) void desktopPlatform.openExternal(url);
     return { action: 'deny' };
   });
   const guardNavigation = (event: Electron.Event, url: string): void => {
     if (isAllowedWebUrl(url)) return;
     event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//i.test(url)) void desktopPlatform.openExternal(url);
   };
   wc.on('will-navigate', guardNavigation);
   wc.on('will-redirect', guardNavigation);
@@ -391,17 +403,16 @@ export function initRendererRecovery(): unknown {
       writeRunState({ renderer: { state: 'healthy', at: new Date().toISOString() } });
     },
     notify: (title: string, body: string): void => {
-      try {
-        const n = new Notification({
+      void desktopPlatform
+        .showNotification({
           title,
           body,
-          icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+          iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+          onClick: () => bridge.showMainWindow(),
+        })
+        .catch((err: unknown) => {
+          log('recovery', '通知发送失败: ' + String((err as Error).message));
         });
-        n.on('click', () => bridge.showMainWindow());
-        n.show();
-      } catch (err) {
-        log('recovery', '通知发送失败: ' + String((err as Error).message));
-      }
     },
   };
   state.recovery = new RendererRecovery(opts);

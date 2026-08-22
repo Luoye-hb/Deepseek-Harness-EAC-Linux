@@ -1,0 +1,35 @@
+[workspace]
+members = ["."]
+resolver = "2"
+
+[package]
+name = "dsh-desktop-tauri"
+version = "4.6.0"
+description = "Deepseek Harness EAC Tauri desktop shell"
+authors = ["DSH Desktop"]
+license = "MIT"
+edition = "2021"
+publish = false
+
+[lib]
+name = "dsh_desktop_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "deepseek-harness-eac"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-updater = "=2.10.1"
+url = "2"
+arboard = "=3.6.1"
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

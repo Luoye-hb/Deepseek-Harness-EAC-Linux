@@ -4,6 +4,12 @@ vendor/
 *.log
 data/
 .playwright-mcp/
+src-tauri/target/
+src-tauri/tauri.generated.conf.json
+.tauri-staging/
+.tauri-pacman-root/
+.tauri-pacman-src/
+/*.AppImage
 .DS_Store
 # TypeScript 编译产物：只提交 .ts 源码，.js 由 `npm run build` 原地生成
 # （scripts/koffi-preflight.cjs 为运行时探针资产，保持入库，见下方否定规则）
@@ -12,6 +18,9 @@ data/
 /shared/**/*.js
 /preload/*.js
 /preload-lib/**/*.js
+/desktop-host/**/*.js
+/platform/electron-fallback/**/*.js
+/platform/tauri/bridge/**/*.js
 /scripts/*.js
 !scripts/koffi-preflight.cjs
 # Rust 围栏模块：cargo target 不入库；index.node 为预编译产物（367KB，

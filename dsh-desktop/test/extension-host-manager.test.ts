@@ -257,7 +257,8 @@ test('降级路径：Rust 模块不可用时 taskkill 围栏仍可完整运行',
   jobFence._forceNativeUnavailableForTest(true);
   const home = freshHome();
   try {
-    assert.equal(jobFence.fenceMode(), 'posix-process-group');
+    const expectedMode = IS_WIN ? 'taskkill-fallback' : 'posix-process-group';
+    assert.equal(jobFence.fenceMode(), expectedMode);
     assert.equal(
       installPlugin(home, 'fenced', `
         module.exports.activate = function (ctx) {
@@ -268,7 +269,7 @@ test('降级路径：Rust 模块不可用时 taskkill 围栏仍可完整运行',
       true,
     );
     const mgr = fastManager();
-    assert.equal(mgr.fenceMode(), 'posix-process-group');
+    assert.equal(mgr.fenceMode(), expectedMode);
     try {
       assert.equal(await mgr.startPlugin('fenced'), true);
       assert.equal(entryOf('fenced').state, 'running');

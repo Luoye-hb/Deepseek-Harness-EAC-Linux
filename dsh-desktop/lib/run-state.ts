@@ -11,10 +11,14 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, dialog, Notification } from 'electron';
+import { app } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import {
+  desktopPlatform,
+  toDesktopDialogOptions,
+} from './desktop-platform.js';
 import { IS_WIN, updCtx } from './proc.js';
 import { bridge } from './bridge.js';
 
@@ -83,13 +87,14 @@ export function notifyUncleanRestart(prev: Record<string, unknown>): void {
       started && !Number.isNaN(started.getTime())
         ? started.toLocaleString('zh-CN', { hour12: false })
         : '上次';
-    const n = new Notification({
+    void desktopPlatform.showNotification({
       title: 'Deepseek Harness EAC 已自动恢复',
       body: `检测到应用在 ${when} 前后未正常退出，看门狗已重新启动应用。`,
-      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+      iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+      onClick: () => bridge.showMainWindow(),
+    }).catch((err: unknown) => {
+      log('crash', '恢复通知发送失败: ' + String((err as Error).message));
     });
-    n.on('click', () => bridge.showMainWindow());
-    n.show();
   } catch (err) {
     log('crash', '恢复通知发送失败: ' + String((err as Error).message));
   }
@@ -121,13 +126,14 @@ export function autoRollbackClientIfCrashed(prevUnclean: Record<string, unknown>
     fs.rmSync(p.marker, { force: true });
     log('client-update', '检测到客户端更新后启动失败，已自动回退到上一版本');
     try {
-      const n = new Notification({
+      void desktopPlatform.showNotification({
         title: 'Deepseek Harness EAC 已自动回退',
         body: '更新后的版本启动失败，已自动回退到上一版本并保留崩溃副本。',
-        icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+        iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+        onClick: () => bridge.showMainWindow(),
+      }).catch((err: unknown) => {
+        log('client-update', '回退通知发送失败: ' + String((err as Error).message));
       });
-      n.on('click', () => bridge.showMainWindow());
-      n.show();
     } catch (err) {
       log('client-update', '回退通知发送失败: ' + String((err as Error).message));
     }
@@ -220,10 +226,12 @@ export function offerBackupCleanupConfirm(): void {
       noLink: true,
     };
     // Electron 类型重载不收 undefined；无主窗时走无父窗重载（运行时语义一致）。
-    const p = state.mainWindow
-      ? dialog.showMessageBox(state.mainWindow, opts)
-      : dialog.showMessageBox(opts);
-    p
+    const parentId =
+      state.mainWindow && !state.mainWindow.isDestroyed()
+        ? String(state.mainWindow.id)
+        : undefined;
+    void desktopPlatform
+      .showDialog(toDesktopDialogOptions(opts, parentId))
       .then(({ response }) => {
         const backupDir = path.join(state.userDataDir, 'backups', ts);
         if (response === 1) {
@@ -241,17 +249,14 @@ export function offerBackupCleanupConfirm(): void {
             if (fs.existsSync(backupDir))
               fs.rmSync(backupDir, { recursive: true, force: true, maxRetries: 3 });
             log('client-update', `已清理备份 ${ts}（保留诊断副本）`);
-            try {
-              const n = new Notification({
-                title: '备份已清理',
-                body: '更新前的备份已删除，诊断清单保留在 backups 目录下。',
-                icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-              });
-              n.on('click', () => bridge.showMainWindow());
-              n.show();
-            } catch {
+            void desktopPlatform.showNotification({
+              title: '备份已清理',
+              body: '更新前的备份已删除，诊断清单保留在 backups 目录下。',
+              iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+              onClick: () => bridge.showMainWindow(),
+            }).catch(() => {
               /* 通知失败不影响清理结果 */
-            }
+            });
           } catch (err) {
             log('client-update', `清理备份 ${ts} 失败: ` + String((err as Error).message));
           }
