@@ -41,6 +41,15 @@
 - `src-tauri/src/process/host.rs`：Linux host spawn 时设置 `PR_SET_PDEATHSIG`，并处理 fork/exec 竞态；将 lease 路径传给 host。
 - `src-tauri/src/lib.rs`：Linux 捕获 SIGTERM/SIGINT，在退出前调用 `HostManager::stop()`，覆盖 Tauri `ExitRequested` 不会触发的外部 signal 路径。
 
+## 后续修复
+
+- 修复 Tauri 首次启动时插件安装向导不出现：在 `dsh:start` 创建 profile 和同步插件之前冻结首次使用判定，避免新用户被新建的 `node_modules` 目录误判为已有用户；新增 desktop-host RPC 回归测试。
+- 修复损坏的既有 `settings.json` 在恢复时被误判为首次使用的问题：先记录文件和 profile 的存在状态，再读取并恢复设置。
+- 修复 Tauri shared CI 的诊断 zip 测试缺少 `bsdtar`：Ubuntu job 显式安装 `libarchive-tools`。
+- 修复 Windows `fetch-node` 的 PowerShell 解压参数未绑定问题，改为 `param($archive, $destination)` 脚本块，并添加回归检查。
+- 将 settings 持久化失败回归从目录权限模拟改为显式注入原子替换失败，因此可在 root 容器和 Windows runner 中稳定运行。
+- 串行化 Rust Linux fence 测试对 `DSH_DESKTOP_USERDATA` 的进程全局环境修改，消除并发创建同一 lease 临时文件的竞态。
+
 ## 仍未完成的计划门禁
 
 - host crash、DSH crash、WebView hang 的真实 Tauri 回归尚未逐项完成。

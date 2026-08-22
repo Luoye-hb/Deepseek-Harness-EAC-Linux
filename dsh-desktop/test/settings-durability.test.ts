@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -81,17 +82,26 @@ test('an invalid interrupted temp never replaces an existing valid primary', () 
   } finally { f.cleanup(); }
 });
 
-test('a failed write leaves the previous settings file intact', { skip: process.platform === 'win32' }, () => {
+test('a failed atomic replacement leaves the previous settings file intact', () => {
   const f = fixture();
   try {
     const file = settingsPath(f.ctx);
     writeFileSync(file, '{"notifyOnTurnEnd":true}\n', { mode: 0o600 });
-    chmodSync(f.dir, 0o500);
-    saveSettings(f.ctx, { notifyOnTurnEnd: false });
+    let replacements = 0;
+    saveSettings(f.ctx, { notifyOnTurnEnd: false }, {
+      ...fs,
+      renameSync(source, destination) {
+        if (destination === file && (process.platform !== 'win32' || replacements++ < 2)) {
+          const error = new Error(`injected replacement failure for ${source}`) as NodeJS.ErrnoException;
+          error.code = 'EACCES';
+          throw error;
+        }
+        fs.renameSync(source, destination);
+      },
+    });
     assert.equal(JSON.parse(readFileSync(file, 'utf8')).notifyOnTurnEnd, true);
     assert.ok(f.logs.some((message) => message.includes('保存 settings 失败')));
   } finally {
-    chmodSync(f.dir, 0o700);
     f.cleanup();
   }
 });

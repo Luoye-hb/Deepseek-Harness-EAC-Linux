@@ -495,13 +495,19 @@ mod tests {
     use std::os::unix::process::CommandExt;
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
+    use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
 
     use super::ProcessFence;
 
+    // These integration tests set a process-global lease location. Rust runs
+    // unit tests concurrently, so serialize only the environment mutation.
+    static USERDATA_ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn linux_fence_writes_private_lease_and_reclaims_process_group() {
+        let _environment = USERDATA_ENV_LOCK.lock().expect("userdata environment lock");
         let root =
             std::env::temp_dir().join(format!("dsh-tauri-fence-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -544,6 +550,7 @@ mod tests {
 
     #[test]
     fn linux_fence_reaps_descendants_after_group_leader_exits() {
+        let _environment = USERDATA_ENV_LOCK.lock().expect("userdata environment lock");
         let root = std::env::temp_dir().join(format!(
             "dsh-tauri-fence-descendant-test-{}",
             std::process::id()

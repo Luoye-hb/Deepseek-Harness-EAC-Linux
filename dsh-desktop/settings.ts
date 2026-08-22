@@ -14,6 +14,10 @@ export interface SettingsContext {
   log(tag: string, msg: string): void;
 }
 
+type SettingsWriteFileSystem = Pick<typeof fs,
+  'mkdirSync' | 'openSync' | 'writeFileSync' | 'fsyncSync' | 'closeSync' |
+  'renameSync' | 'rmSync' | 'existsSync' | 'chmodSync'>;
+
 /** settings.json fields owned by the desktop shell; unknown extensions survive. */
 export interface DshSettings {
   schemaVersion?: number;
@@ -89,15 +93,15 @@ function readValidated(file: string, ctx: SettingsContext): DshSettings {
   return normalizeSettings(JSON.parse(fs.readFileSync(file, 'utf8')) as unknown, ctx);
 }
 
-function syncDirectory(dir: string): void {
+function syncDirectory(dir: string, fileSystem: Pick<SettingsWriteFileSystem, 'openSync' | 'fsyncSync' | 'closeSync'> = fs): void {
   let fd: number | undefined;
   try {
-    fd = fs.openSync(dir, 'r');
-    fs.fsyncSync(fd);
+    fd = fileSystem.openSync(dir, 'r');
+    fileSystem.fsyncSync(fd);
   } catch {
     // Windows does not support opening directories for fsync.
   } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    if (fd !== undefined) fileSystem.closeSync(fd);
   }
 }
 
@@ -182,7 +186,11 @@ export function loadSettings(ctx: SettingsContext): DshSettings {
   }
 }
 
-export function saveSettings(ctx: SettingsContext, settings: DshSettings): void {
+export function saveSettings(
+  ctx: SettingsContext,
+  settings: DshSettings,
+  fileSystem: SettingsWriteFileSystem = fs,
+): void {
   const file = settingsPath(ctx);
   const dir = path.dirname(file);
   const temp = `${file}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -190,36 +198,36 @@ export function saveSettings(ctx: SettingsContext, settings: DshSettings): void 
   let fd: number | undefined;
   try {
     const value = normalizeSettings(isPlainObject(settings) ? settings : {}, ctx);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fd = fs.openSync(temp, 'wx', 0o600);
-    fs.writeFileSync(fd, JSON.stringify(value, null, 2) + '\n', 'utf8');
-    fs.fsyncSync(fd);
-    fs.closeSync(fd);
+    fileSystem.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fd = fileSystem.openSync(temp, 'wx', 0o600);
+    fileSystem.writeFileSync(fd, JSON.stringify(value, null, 2) + '\n', 'utf8');
+    fileSystem.fsyncSync(fd);
+    fileSystem.closeSync(fd);
     fd = undefined;
 
     try {
-      fs.renameSync(temp, file);
+      fileSystem.renameSync(temp, file);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (process.platform !== 'win32' || !['EEXIST', 'EPERM', 'ENOTEMPTY', 'EACCES'].includes(String(code))) throw err;
-      fs.rmSync(backup, { force: true });
-      if (fs.existsSync(file)) fs.renameSync(file, backup);
+      fileSystem.rmSync(backup, { force: true });
+      if (fileSystem.existsSync(file)) fileSystem.renameSync(file, backup);
       try {
-        fs.renameSync(temp, file);
+        fileSystem.renameSync(temp, file);
       } catch (replaceErr) {
-        if (!fs.existsSync(file) && fs.existsSync(backup)) fs.renameSync(backup, file);
+        if (!fileSystem.existsSync(file) && fileSystem.existsSync(backup)) fileSystem.renameSync(backup, file);
         throw replaceErr;
       }
-      fs.rmSync(backup, { force: true });
+      fileSystem.rmSync(backup, { force: true });
     }
-    fs.chmodSync(file, 0o600);
-    syncDirectory(dir);
+    fileSystem.chmodSync(file, 0o600);
+    syncDirectory(dir, fileSystem);
   } catch (err) {
     if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch { /* already closed */ }
+      try { fileSystem.closeSync(fd); } catch { /* already closed */ }
     }
     ctx.log('settings', '保存 settings 失败: ' + String((err as Error).message));
   } finally {
-    try { fs.rmSync(temp, { force: true }); } catch { /* keep recovery best effort */ }
+    try { fileSystem.rmSync(temp, { force: true }); } catch { /* keep recovery best effort */ }
   }
 }

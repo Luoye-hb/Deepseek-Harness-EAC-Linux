@@ -74,7 +74,9 @@ async function fetchOfficialRuntime(): Promise<void> {
     if (process.platform === 'win32') {
       execFileSync('powershell.exe', [
         '-NoProfile', '-NonInteractive', '-Command',
-        'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force', archive, tempDir,
+        '& { param([string]$archive, [string]$destination) Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force }',
+        archive,
+        tempDir,
       ], { stdio: 'inherit' });
     } else {
       execFileSync('tar', ['-xJf', archive, '-C', tempDir], { stdio: 'inherit' });

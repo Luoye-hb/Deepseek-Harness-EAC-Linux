@@ -55,6 +55,8 @@ test('runtime fetch pins official Node and removes the stale opposite executable
   assert.match(source, /SHA-256 mismatch/);
   assert.match(source, /fs\.rmSync\(path\.join\(runtimeDir, process\.platform === 'win32' \? 'node' : 'node\.exe'/);
   assert.match(source, /Windows\/Linux x64 only/);
+  assert.match(source, /param\(\[string\]\$archive, \[string\]\$destination\)/);
+  assert.doesNotMatch(source, /\$args\[0\]/);
 });
 
 test('afterPack is cross-platform and Windows path surgery stays guarded', () => {
