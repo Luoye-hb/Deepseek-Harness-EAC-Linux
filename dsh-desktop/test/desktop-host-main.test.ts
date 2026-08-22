@@ -228,7 +228,9 @@ test('desktop-host main starts dsh web through the same RPC boundary', async () 
   }
 });
 
-test('desktop-host SIGTERM stops the detached dsh process group before exiting', async () => {
+test('desktop-host SIGTERM stops the detached dsh process group before exiting', {
+  skip: process.platform === 'win32',
+}, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-host-sigterm-'));
   const fakeDsh = path.join(dir, 'fake-dsh.cjs');
   const lease = path.join(dir, 'desktop-host.lease.json');

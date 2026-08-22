@@ -212,8 +212,9 @@ export async function startDshWeb(options: DshWebStartOptions): Promise<DshWebHa
     if (settled) return;
     settled = true;
     if (bootTimer) clearTimeout(bootTimer);
-    rejectReady?.(error);
-    void stopProcess(child, detached);
+    // A caller commonly removes its temporary runtime immediately after a
+    // failed start. Wait for the child to release Windows file handles first.
+    void stopProcess(child, detached).finally(() => rejectReady?.(error));
   };
   const finishReady = (url: string): void => {
     if (settled) return;

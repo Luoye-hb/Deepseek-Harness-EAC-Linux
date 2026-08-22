@@ -11,7 +11,7 @@ const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   desktopName?: string;
   scripts: Record<string, string>;
 };
-const builder = readFileSync(join(root, 'electron-builder.yml'), 'utf8');
+const builder = readFileSync(join(root, 'electron-builder.yml'), 'utf8').replace(/\r\n/g, '\n');
 
 test('Linux packaging exposes four x64 targets and no macOS target', () => {
   for (const [script, target] of [

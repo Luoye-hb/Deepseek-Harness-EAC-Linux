@@ -45,7 +45,9 @@ test('Linux update guidance is typed and covers AppImage plus four package manag
   assert.match(image.detail, /Deepseek Harness EAC\.AppImage/);
 });
 
-test('Linux terminal shims are user-data-local, executable, and target bundled Node/npm', () => {
+test('Linux terminal shims are user-data-local, executable, and target bundled Node/npm', {
+  skip: process.platform === 'win32',
+}, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'terminal-shims-'));
   const nodePath = '/opt/deepseek harness/resources/node/node';
   const npmCli = '/opt/deepseek harness/resources/npm/bin/npm-cli.js';

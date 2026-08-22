@@ -49,6 +49,9 @@
 - 修复 Windows `fetch-node` 的 PowerShell 解压参数未绑定问题，改为 `param($archive, $destination)` 脚本块，并添加回归检查。
 - 将 settings 持久化失败回归从目录权限模拟改为显式注入原子替换失败，因此可在 root 容器和 Windows runner 中稳定运行。
 - 串行化 Rust Linux fence 测试对 `DSH_DESKTOP_USERDATA` 的进程全局环境修改，消除并发创建同一 lease 临时文件的竞态。
+- Tauri shared CI 安装完整的 GTK/WebKit 编译依赖，使 Ubuntu 上的 Cargo 检查与 Linux 打包环境一致。
+- `startDshWeb()` 启动失败后会等待子进程退出再返回错误，避免 Windows 尚未释放运行时文件句柄时留下临时目录。
+- 将 Linux/POSIX 专属的测试断言限定到相应平台，并使打包配置审计对 CRLF/LF 无关，恢复 Windows CI 的有效覆盖。
 
 ## 仍未完成的计划门禁
 
