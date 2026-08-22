@@ -1,7 +1,7 @@
 /**
  * dsh-change-review — browser half: AI 变更审核（V4，用户建议⑤）.
  *
- * 机制（与 dsh-auto-compact 同一手法）：在 conversation.composer.dock 挂
+ * 机制：在 conversation.composer.dock 挂
  * 一个不可见的 occupant，标准 props 里持续拿到
  *   · useProjection("fileChanges") —— 官方 dsh-file-changes 投影，含本会话
  *     agent 修改过的全部文件（path/op/写前写后全文，见「文件」标签页）

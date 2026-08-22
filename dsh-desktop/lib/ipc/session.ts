@@ -10,10 +10,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ipcMain, shell } from 'electron';
+import { ipcMain } from 'electron';
 import * as updater from '../../updater.js';
 import * as balance from '../../balance.js';
 import { state } from '../state.js';
+import { desktopPlatform } from '../desktop-platform.js';
 import { dshHomePath } from '../dsh-home.js';
 import { log } from '../log.js';
 import { updCtx } from '../proc.js';
@@ -203,8 +204,7 @@ export function registerSessionIpc(): void {
       return { ok: false, error: 'executable files are not openable from the file view' };
     try {
       if (!fs.existsSync(p)) return { ok: false, error: 'file not found' };
-      const msg = await shell.openPath(p);
-      if (msg) return { ok: false, error: msg };
+      await desktopPlatform.openPath(p);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String((err as Error).message) };

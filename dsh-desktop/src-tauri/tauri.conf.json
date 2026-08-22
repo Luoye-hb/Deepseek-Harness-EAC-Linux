@@ -1,0 +1,69 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Deepseek Harness EAC",
+  "version": "4.6.0",
+  "identifier": "com.deepseek.dsh.desktop",
+  "build": {
+    "frontendDist": "../platform/tauri/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "Deepseek Harness EAC",
+        "url": "loading.html",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "visible": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "deb", "rpm", "appimage"],
+    "createUpdaterArtifacts": true,
+    "license": "MIT",
+    "licenseFile": "../packaging/LICENSE-MIT.txt",
+    "resources": [
+      "../desktop-host",
+      "../shared",
+      "../lib",
+      "../scripts",
+      "../balance.js",
+      "../logger.js",
+      "../updater.js",
+      "../plugin-updater.js",
+      "../session-watcher.js",
+      "../patch-row-heal.js",
+      "../plugin-guard.js",
+      "../plugin-manager-state.js",
+      "../package.json",
+      "../node_modules",
+      "../assets/plugins",
+      "../vendor/node",
+      "../vendor/npm",
+      "../packaging/LICENSE-MIT.txt"
+    ],
+    "icon": [
+      "../assets/icon.png",
+      "../assets/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "__TAURI_UPDATER_PUBLIC_KEY_REQUIRED__",
+      "endpoints": [
+        "https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

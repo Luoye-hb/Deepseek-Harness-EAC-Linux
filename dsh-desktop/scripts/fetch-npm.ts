@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const candidates = [
   path.resolve(__dirname, '..', 'vendor', 'node', 'lib', 'node_modules', 'npm'),
@@ -26,6 +27,26 @@ if (!fs.existsSync(path.join(src, 'bin', 'npm-cli.js'))) {
 
 fs.rmSync(dest, { recursive: true, force: true });
 fs.cpSync(src, dest, { recursive: true });
+const npmPackagePath = path.join(dest, 'package.json');
+const npmPackage = JSON.parse(fs.readFileSync(npmPackagePath, 'utf8')) as Record<string, unknown>;
+delete npmPackage.devDependencies;
+delete npmPackage.workspaces;
+fs.writeFileSync(npmPackagePath, JSON.stringify(npmPackage, null, 2) + '\n', 'utf8');
+const npmCommand = process.env.npm_execpath
+  ? process.execPath
+  : process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const npmArgs = process.env.npm_execpath ? [process.env.npm_execpath] : [];
+execFileSync(npmCommand, [
+  ...npmArgs,
+  'install',
+  '--prefix', dest,
+  '--omit=dev',
+  '--ignore-scripts',
+  '--no-package-lock',
+  '--no-audit',
+  '--no-fund',
+  '--workspaces=false',
+], { cwd: path.resolve(__dirname, '..'), stdio: 'inherit' });
 const version = (JSON.parse(fs.readFileSync(path.join(dest, 'package.json'), 'utf8')) as { version: string }).version;
 console.log(`已复制 npm@${version}`);
 console.log(`    ${src}`);

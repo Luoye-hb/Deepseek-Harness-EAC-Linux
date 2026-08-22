@@ -31,6 +31,13 @@ test('Linux packaging exposes four x64 targets and no macOS target', () => {
   }
 });
 
+test('Pacman metadata does not require the retired http-parser package', () => {
+  const pacmanBlock = builder.slice(builder.indexOf('pacman:'), builder.indexOf('\ndeb:'));
+  assert.match(pacmanBlock, /depends:/);
+  assert.doesNotMatch(pacmanBlock, /^\s+- http-parser\s*$/m);
+  assert.match(pacmanBlock, /libappindicator-gtk3/);
+});
+
 test('builder resources isolate runtimes and Windows supervisor by platform', () => {
   assert.match(builder, /win:[\s\S]*from: vendor\/node\/node\.exe[\s\S]*from: native\/supervisor\/index\.node/);
   assert.match(builder, /linux:[\s\S]*from: vendor\/node\/node\n[\s\S]*target:/);
@@ -55,7 +62,8 @@ test('afterPack is cross-platform and Windows path surgery stays guarded', () =>
   assert.doesNotMatch(source, /electronPlatformName !== 'win32'\) return/);
   assert.match(source, /electronPlatformName === 'win32'[\s\S]*trimLongPathFiles\(appOutDir\);[\s\S]*dedupeNestedModules\(appOutDir\);/);
   assert.match(source, /auditNodePty\(appOutDir, electronPlatformName\)/);
-  assert.match(source, /auditBundledPluginRuntime\(pluginsDest, electronPlatformName\)/);
+  assert.match(source, /bundled plugins copied verbatim/);
+  assert.doesNotMatch(source, /dsh-tdai-memory|jieba-linux|sqlite-vec/);
   assert.match(source, /closeAndVerifyNpm\(appOutDir, dest, electronPlatformName\)/);
   assert.match(source, /npm bundled dependency cannot be resolved/);
   assert.match(source, /mandatory .* is missing/);

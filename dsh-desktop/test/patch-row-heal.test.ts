@@ -16,8 +16,8 @@ const BROKEN_PATCH = [
   '    - id: soul-md',
   "      name: 'dsh-soul-md'",
   '- insert:',
-  '    - id: tdai-memory',
-  "      name: 'dsh-tdai-memory'",
+  '    - id: unrelated-plugin',
+  "      name: 'dsh-unrelated-plugin'",
   '',
 ].join('\n');
 
@@ -26,7 +26,7 @@ test('healSoulMdPatchRow 补上缺失的 config.path（v2.0.0 存量坏行）', 
   assert.deepEqual(healed, ['soul-md']);
   assert.match(patch, /- id: soul-md\n\s*name: 'dsh-soul-md'\n\s*config:\n\s*path: "soul\.md"\n/);
   // 其他行不受影响
-  assert.match(patch, /- id: tdai-memory\n\s*name: 'dsh-tdai-memory'\n/);
+  assert.match(patch, /- id: unrelated-plugin\n\s*name: 'dsh-unrelated-plugin'\n/);
   assert.equal(patch.match(/- id: soul-md/g).length, 1, '不应重复插入行');
 });
 
@@ -196,17 +196,17 @@ test('removeBundledRowDuplicates: 按 bundle 声明的 entry id 去重（跨包�
     '    - id: tool-vision',
     "      name: 'dsh-tool-vision'",
     '- insert:',
-    '    - id: tdai-memory',
-    "      name: 'dsh-tdai-memory'",
+    '    - id: unrelated-plugin',
+    "      name: 'dsh-unrelated-plugin'",
     '',
   ].join('\n');
-  const rowIds = { 'tool-vision': 'dsh-tool-vision', 'tdai-memory': 'dsh-tdai-memory' };
+  const rowIds = { 'tool-vision': 'dsh-tool-vision', 'unrelated-plugin': 'dsh-unrelated-plugin' };
   // bundle 是 git fork：包名 dsh-vision-local，但包内 patch 声明 id: tool-vision。
   const bundleEntryIds = new Set(['tool-vision']);
   const { patch: out, removed } = removeBundledRowDuplicates(patch, rowIds, ['dsh-vision-local'], bundleEntryIds);
   assert.deepEqual(removed, ['tool-vision']);
   assert.doesNotMatch(out, /tool-vision/);
-  assert.match(out, /- id: tdai-memory/, '无关行保留');
+  assert.match(out, /- id: unrelated-plugin/, '无关行保留');
 });
 
 test('removeBundledRowDuplicates: bundleEntryIds 为空时退化为原有按包名行为', () => {

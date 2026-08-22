@@ -9,10 +9,11 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, ipcMain, shell } from 'electron';
+import { app, ipcMain } from 'electron';
 import * as updater from '../../updater.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
+import { desktopPlatform } from '../desktop-platform.js';
 import { updCtx, dshVersion, dshVersionSource } from '../proc.js';
 import { restartWebServiceCore } from '../server.js';
 import { showBox } from '../window.js';
@@ -23,6 +24,7 @@ import {
 import { openBuiltinTerminal } from '../terminal.js';
 import { runUpdateFlow, runClientUpdateFlow } from '../update-flow.js';
 import { fromMainWindow } from './sender.js';
+import { persistWebViewMigration } from '../webview-migration.js';
 
 /** 注册应用外壳域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
 export function registerAppIpc(): void {
@@ -41,6 +43,7 @@ export function registerAppIpc(): void {
     const urls = repoUrls();
     return {
       appVersion: app.getVersion(),
+      desktopShell: desktopPlatform.shell,
       agentVersion: dshVersion(),
       agentSource: dshVersionSource(),
       notifyOnTurnEnd: state.notifyOnTurnEnd,
@@ -80,9 +83,9 @@ export function registerAppIpc(): void {
       case 'open-terminal': openBuiltinTerminal(); break;
       case 'devtools': mw?.webContents.toggleDevTools(); break;
       case 'fullscreen': if (mw) mw.setFullScreen(!mw.isFullScreen()); break;
-      case 'open-browser': if (state.webUrl) void shell.openExternal(state.webUrl); break;
-      case 'open-logs': void shell.openPath(state.logsDir); break;
-      case 'feedback': void shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); break;
+      case 'open-browser': if (state.webUrl) void desktopPlatform.openExternal(state.webUrl); break;
+      case 'open-logs': void desktopPlatform.openPath(state.logsDir); break;
+      case 'feedback': void desktopPlatform.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); break;
       case 'check-agent-update': void runUpdateFlow(true); break;
       case 'check-client-update': void runClientUpdateFlow(true); break;
       case 'toggle-notify': {
@@ -140,11 +143,10 @@ export function registerAppIpc(): void {
   });
 
   // 复制文本到剪贴板（菜单「更新源」复制按钮 / 关于对话框）。
-  ipcMain.handle('dsh:copy-text', (event, { text } = {}) => {
+  ipcMain.handle('dsh:copy-text', async (event, { text } = {}) => {
     if (!fromMainWindow(event)) return { ok: false };
     if (typeof text !== 'string' || !text || text.length > 2048) return { ok: false };
-    const { clipboard } = require('electron') as typeof import('electron');
-    clipboard.writeText(text);
+    await desktopPlatform.writeClipboard(text);
     return { ok: true };
   });
 
@@ -154,13 +156,27 @@ export function registerAppIpc(): void {
     log('page-error', String(payload));
   });
 
+  ipcMain.on('dsh:webview-state', (event, payload = {}) => {
+    if (!fromMainWindow(event)) return;
+    const origin = event.sender.getURL();
+    if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//i.test(origin)) return;
+    void event.sender.session.cookies.get({}).then((cookies) => {
+      persistWebViewMigration(state.userDataDir, origin, payload as {
+        localStorage?: unknown;
+        indexedDb?: unknown;
+      }, cookies);
+    }).catch((error) => {
+      log('migration', 'WebView 状态导出失败: ' + String((error as Error).message || error));
+    });
+  });
+
   // 预览面板：用系统浏览器打开 http(s) URL。
   ipcMain.handle('dsh:open-external', async (event, { url } = {}) => {
     if (!fromMainWindow(event)) return { ok: false, error: 'forbidden' };
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url))
       return { ok: false, error: 'invalid url' };
     try {
-      await shell.openExternal(url);
+      await desktopPlatform.openExternal(url);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String((err as Error).message) };

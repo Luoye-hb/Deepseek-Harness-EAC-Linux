@@ -11,8 +11,12 @@
  * 同步 require 阶段，早于任何事件回调，语义与原 main.js 闭包直调等价。
  */
 
-import { dialog } from 'electron';
 import { log } from './log.js';
+import {
+  desktopPlatform,
+  fromDesktopDialogResult,
+  toDesktopDialogOptions,
+} from './desktop-platform.js';
 
 /** dialog.showMessageBox 的选项与返回（只声明用到字段）。 */
 export interface MessageBoxOpts {
@@ -24,6 +28,8 @@ export interface MessageBoxOpts {
   defaultId?: number;
   cancelId?: number;
   noLink?: boolean;
+  checkboxLabel?: string;
+  checkboxChecked?: boolean;
 }
 
 export interface MessageBoxResult {
@@ -40,7 +46,10 @@ export const bridge = {
     log('bridge', 'showMainWindow 未装配（装配期外的调用）');
   },
   /** 消息框（窗口域；默认无父窗实现，main.js 覆写为带主窗版本）。 */
-  showBox: (opts: MessageBoxOpts): Promise<MessageBoxResult> => dialog.showMessageBox(opts),
+  showBox: (opts: MessageBoxOpts): Promise<MessageBoxResult> =>
+    desktopPlatform
+      .showDialog(toDesktopDialogOptions(opts))
+      .then(fromDesktopDialogResult),
   /** 插件保护中心实例（guard 域，延迟创建）。 */
   ensureGuard: (): GuardLike => {
     throw new Error('bridge.ensureGuard 未装配');

@@ -14,13 +14,14 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, BrowserWindow, Notification } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import * as updater from '../updater.js';
 import type { AgentProgressEvent } from '../updater.js';
 import * as clientUpdater from '../client-updater.js';
 import * as pluginUpdater from '../plugin-updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { desktopPlatform } from './desktop-platform.js';
 import { updCtx, killTree, killTreeAndWait, nodeExe } from './proc.js';
 import { desktopProfile, desktopProfileDir } from './paths.js';
 import { markCleanExit } from './run-state.js';
@@ -260,18 +261,15 @@ interface PluginUpdateItem {
 }
 
 function notifyPluginUpdates(updatable: PluginUpdateItem[]): void {
-  try {
-    const names = updatable.slice(0, 5).map((x) => x.name).join('、');
-    const n = new Notification({
-      title: '有 ' + updatable.length + ' 个内置插件可更新',
-      body: names + (updatable.length > 5 ? ' 等' : '') + ' 已发布新版本。打开「设置 → 插件 → 更新」查看并更新（自动更新默认关闭，仅提示）。',
-      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    });
-    n.on('click', () => showMainWindow());
-    n.show();
-  } catch (err) {
+  const names = updatable.slice(0, 5).map((x) => x.name).join('、');
+  void desktopPlatform.showNotification({
+    title: '有 ' + updatable.length + ' 个内置插件可更新',
+    body: names + (updatable.length > 5 ? ' 等' : '') + ' 已发布新版本。打开「设置 → 插件 → 更新」查看并更新（自动更新默认关闭，仅提示）。',
+    iconPath: path.join(__dirname, '..', 'assets', 'icon.png'),
+    onClick: () => showMainWindow(),
+  }).catch((err: unknown) => {
     log('plugin-update', '更新通知发送失败: ' + String((err as Error).message));
-  }
+  });
 }
 
 /**

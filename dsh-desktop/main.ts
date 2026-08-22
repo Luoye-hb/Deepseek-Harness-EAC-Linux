@@ -33,6 +33,7 @@ import { state } from './lib/state.js';
 import { log } from './lib/log.js';
 import { IS_WIN, killTreeAndWait } from './lib/proc.js';
 import { bridge } from './lib/bridge.js';
+import { desktopHostRpcEnabled, stopDesktopHost } from './lib/desktop-host.js';
 import { closeAllFloatWindows, showBox } from './lib/window.js';
 import { showMainWindow, getExitAction, askExitAction, trayHintOnce } from './lib/tray.js';
 import { ensureGuard } from './lib/guard.js';
@@ -103,7 +104,8 @@ if (!gotLock) {
             log('boot', '插件市场任务进程树清理失败: ' + String((err as Error).message));
           }
         }
-        await killTreeAndWait(state.serverProc);
+        if (desktopHostRpcEnabled()) await stopDesktopHost();
+        else await killTreeAndWait(state.serverProc);
         // VNext Phase 2：树杀全部 SDK 插件 Host（Job 围栏下 Supervisor 崩溃
         // 也有 OS 兜底回收；此处覆盖正常退出路径）。
         await shutdownExtensionHosts();

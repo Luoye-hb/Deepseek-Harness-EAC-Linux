@@ -33,6 +33,8 @@ files:
   - lib/process-tree.js
   - lib/paths.js
   - lib/bridge.js
+  - lib/desktop-platform.js
+  - lib/desktop-host.js
   - lib/run-state.js
   - lib/watchdog-boot.js
   - lib/server.js
@@ -48,8 +50,10 @@ files:
   - lib/plugin-registry-data.js
   - lib/plugin-manager-core.js
   - lib/plugins.js
+  - lib/retired-plugins.js
   - lib/market-ops.js
   - lib/migration.js
+  - lib/webview-migration.js
   - lib/guard.js
   - lib/preflight.js
   - lib/onboarding.js
@@ -97,6 +101,18 @@ files:
   - lib/extension-host/sdk/index.js
   - lib/recovery-center/register.js
   - shared/protocol.js
+  # Tauri migration: shell-neutral desktop-host RPC and dsh web core.
+  - desktop-host/main.js
+  - desktop-host/service.js
+  - desktop-host/rpc.js
+  - platform/electron-fallback/desktop-host-client.js
+  - shared/contract/desktop-api.js
+  - shared/contract/desktop-host.js
+  - shared/contract/errors.js
+  - shared/contract/events.js
+  - shared/contract/index.js
+  - shared/desktop-core/dsh-web.js
+  - platform/electron-fallback/index.js
   # VNext Phase 2：Host 进程入口由平台对应的内置 Node 拉起。Windows Rust
   # 围栏作为 win.extraResources 单独收录，Linux 包不得携带该 PE 原生模块。
   - host-bootstrap.js
@@ -191,6 +207,22 @@ linux:
 
 pacman:
   artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}
+  # electron-builder's default still includes http-parser, which was removed
+  # from the Arch repositories after its functionality moved into other libs.
+  depends:
+    - c-ares
+    - ffmpeg
+    - gtk3
+    - libevent
+    - libvpx
+    - libxslt
+    - libxss
+    - minizip
+    - nss
+    - re2
+    - snappy
+    - libnotify
+    - libappindicator-gtk3
 
 deb:
   artifactName: Deepseek-Harness-EAC-${version}-${arch}.${ext}

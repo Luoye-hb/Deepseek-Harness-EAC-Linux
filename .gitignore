@@ -57,3 +57,6 @@ dsh-desktop/bench-*.json
 
 # ---- Reasonix 工具元数据（勿提交）----
 .reasonix/
+
+# Local integration clone used during migration; never add as a nested repository.
+temp-dsh-desktop/

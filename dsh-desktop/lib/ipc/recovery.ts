@@ -7,10 +7,11 @@
  * 读取，全部校验来源必须是主窗。
  */
 
-import { app, ipcMain, shell } from 'electron';
+import { app, ipcMain } from 'electron';
 import * as structuredLogger from '../../logger.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
+import { desktopPlatform } from '../desktop-platform.js';
 import { killTree } from '../proc.js';
 import { markCleanExit } from '../run-state.js';
 import { startAndShowGuarded } from '../server.js';
@@ -71,7 +72,7 @@ export function registerRecoveryIpc(): void {
         userDataDir: state.userDataDir,
         dshHome: state.dshHome,
       });
-      shell.showItemInFolder(zipPath);
+      await desktopPlatform.showItemInFolder(zipPath);
       return { ok: true, zipPath };
     } catch (err) {
       log('boot', '导出诊断日志失败: ' + String((err as Error).message));

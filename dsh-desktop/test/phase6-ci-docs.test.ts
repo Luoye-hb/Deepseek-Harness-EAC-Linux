@@ -30,6 +30,22 @@ test('Linux CI builds on Debian 12 with official Node and audits four formats', 
   assert.match(workflow, /make_latest: false/);
 });
 
+test('Tauri validation has shared checks and real platform package jobs', () => {
+  const workflow = read('.github/workflows/tauri.yml');
+  assert.match(workflow, /name: Tauri migration validation/);
+  assert.match(workflow, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
+  assert.match(workflow, /runs-on: windows-latest/);
+  assert.match(workflow, /--bundles nsis/);
+  assert.match(workflow, /image: debian:12/);
+  assert.match(workflow, /--bundles deb,rpm,appimage/);
+  assert.match(workflow, /audit-tauri-linux-package\.sh/);
+  assert.match(workflow, /linux-pacman:/);
+  assert.match(workflow, /image: archlinux:base-devel/);
+  assert.match(workflow, /build-tauri-pacman\.sh/);
+  assert.match(workflow, /dist\/tauri\/\*\.pkg\.tar\.\*/);
+  assert.doesNotMatch(workflow, /electron-builder/);
+});
+
 test('support documentation limits releases and records Linux boundaries', () => {
   const matrix = read('docs/support-matrix.md');
   const vnext = read('vnext-plugin-isolation-architecture.md');

@@ -39,15 +39,13 @@ export async function afterPack(context: AfterPackContext): Promise<void> {
   console.log(`afterPack: bundled npm copied (deps: ${deps})`);
 
   // 同一个复制器也会剥离 app 文件（assets/**）里的嵌套 node_modules / vendor
-  // 树。社区插件（尤其 tdai-memory）自带自包含运行时依赖（sqlite-vec、jieba、
-  // ai sdk、BM25 语料数据），必须原样存活 —— 把插件树整体拷回。
+  // 树。插件可能携带自包含运行时依赖，必须原样存活 —— 把插件树整体拷回。
   const pluginsSrc = path.resolve(__dirname, '..', 'assets', 'plugins');
   const pluginsDest = path.join(appOutDir, 'resources', 'app', 'assets', 'plugins');
   requireDirectory(pluginsSrc, 'bundled plugin tree');
   fs.rmSync(pluginsDest, { recursive: true, force: true });
   fs.cpSync(pluginsSrc, pluginsDest, { recursive: true });
   console.log('afterPack: bundled plugins copied verbatim');
-  auditBundledPluginRuntime(pluginsDest, electronPlatformName);
 
   if (electronPlatformName === 'win32') {
     trimLongPathFiles(appOutDir);
@@ -178,37 +176,11 @@ function auditNodePty(appOutDir: string, platform: string): void {
   checkGlibc(path.join(root, present[0]!));
 }
 
-function auditBundledPluginRuntime(pluginsRoot: string, platform: string): void {
-  const modules = path.join(pluginsRoot, 'dsh-tdai-memory', 'node_modules');
-  const required = [
-    path.join(modules, '@tencentdb-agent-memory', 'tcvdb-text', 'dist', 'index.js'),
-    path.join(modules, '@ai-sdk', 'gateway', 'dist', 'index.mjs'),
-    path.join(modules, 'ai', 'dist', 'index.mjs'),
-  ];
-  if (platform === 'linux') {
-    required.push(
-      path.join(modules, '@node-rs', 'jieba-linux-x64-gnu', 'jieba.linux-x64-gnu.node'),
-      path.join(modules, 'sqlite-vec-linux-x64', 'vec0.so'),
-    );
-  } else {
-    required.push(
-      path.join(modules, '@node-rs', 'jieba-win32-x64-msvc', 'jieba.win32-x64-msvc.node'),
-      path.join(modules, 'sqlite-vec-windows-x64', 'vec0.dll'),
-    );
-  }
-  const missing = required.filter((file) => !fs.existsSync(file));
-  if (missing.length > 0) {
-    throw new Error(`afterPack: dsh-tdai-memory payload is incomplete for ${platform}:\n${missing.join('\n')}`);
-  }
-}
-
 function auditLinuxNativePayloads(appOutDir: string): void {
   const root = path.join(appOutDir, 'resources', 'app');
   const requiredPatterns: Array<[string, RegExp]> = [
     ['Sharp', /node_modules[\\/]@img[\\/]sharp-linux-x64[\\/].+\.node$/],
     ['Koffi', /node_modules[\\/]@koromix[\\/]koffi-linux-x64[\\/].+\.node$/],
-    ['Jieba', /dsh-tdai-memory[\\/]node_modules[\\/]@node-rs[\\/]jieba-linux-x64-gnu[\\/].+\.node$/],
-    ['sqlite-vec', /dsh-tdai-memory[\\/]node_modules[\\/]sqlite-vec-linux-x64[\\/]vec0\.so$/],
   ];
   const files: string[] = [];
   const walk = (directory: string): void => {

@@ -9,7 +9,7 @@
  *      全部运行中隔离插件的工具元数据，逐个以 `eac_<pluginId>_<tool>`
  *      注册为 dsh Agent 工具；execute 经 HTTP 转发到对应 Extension Host。
  *   2. 上下文注入：挂 system-prompt/assemble 瀑布（agent ctx，同
- *      tdai-memory 的挂法），每回合向 Supervisor 收集隔离插件的上下文
+ *      受信任宿主插件的挂法），每回合向 Supervisor 收集隔离插件的上下文
  *      贡献并追加到 assembly.contexts；任何失败/超时（1.2s）都返回原
  *      assembly —— 扩展卡死绝不阻塞核心回合。
  *
@@ -138,7 +138,7 @@ export async function apply(ctx) {
   }, TOOLS_REFRESH_MS).unref?.();
 
   // ── 上下文注入：agent 作用域的 system-prompt/assemble 瀑布 ─────────────
-  // （与 tdai-memory 同一挂法：session/created 后一拍再取 agent.ctx，
+  // （session/created 后一拍再取 agent.ctx，
   //  根级监听器看不到 agent 作用域的 assembly。）
   ctx.on("session/created", (session) => {
     setTimeout(() => {

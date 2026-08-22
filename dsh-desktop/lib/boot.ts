@@ -11,7 +11,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, dialog, clipboard, Menu } from 'electron';
+import { app, Menu } from 'electron';
 import * as updater from '../updater.js';
 import * as structuredLogger from '../logger.js';
 import { createStreamWriteGuard } from '../stream-write-guard.js';
@@ -20,6 +20,7 @@ import type { BundleManifest } from '../bundle-integrity.js';
 import { SessionWatcher } from '../session-watcher.js';
 import { buildErrorDetail } from '../error-detail.js';
 import { state } from './state.js';
+import { desktopPlatform } from './desktop-platform.js';
 import { dshHomePath } from './dsh-home.js';
 import { log } from './log.js';
 import { IS_WIN, updCtx, dshVersion, dshVersionSource } from './proc.js';
@@ -200,8 +201,7 @@ export function fatal(title: string, err: unknown): void {
   log('fatal', title + ': ' + String((err as Error)?.stack || (err as Error)?.message || err));
   const detail = buildErrorDetail(err, state.logsDir, ['dsh-web.log', 'desktop.log']);
   if (!state.mainWindow || state.mainWindow.isDestroyed()) {
-    void dialog
-      .showMessageBox({
+    void showBox({
         type: 'error',
         title,
         message: title,
@@ -217,7 +217,7 @@ export function fatal(title: string, err: unknown): void {
           openRecoveryCenter();
           return;
         }
-        if (response === 1) clipboard.writeText(detail);
+        if (response === 1) void desktopPlatform.writeClipboard(detail);
         markCleanExit(); // 启动失败属已知退出：避免看门狗反复拉起反复失败
         app.exit(1);
       });
@@ -237,7 +237,7 @@ export function fatal(title: string, err: unknown): void {
       openRecoveryCenter();
       return;
     }
-    if (response === 1) clipboard.writeText(detail);
+    if (response === 1) void desktopPlatform.writeClipboard(detail);
     else if (response === 2) void startAndShow().catch((err2) => handleBootFailure(err2));
     else app.quit();
   });
