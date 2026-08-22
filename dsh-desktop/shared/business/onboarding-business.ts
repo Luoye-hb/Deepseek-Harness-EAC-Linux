@@ -207,14 +207,19 @@ export class OnboardingBusinessService {
 
   needsOnboarding(): boolean {
     const settingsPath = updater.settingsPath(this.updaterContext());
+    // Capture existence before reading settings. A corrupted legacy settings file
+    // may be moved aside during recovery, but it still identifies an existing user.
+    const settingsFileExists = fs.existsSync(settingsPath);
+    const profileDirExists = fs.existsSync(path.join(profileDir(this.runtime), 'node_modules'));
+    const sharedProfileExists = fs.existsSync(
+      path.join(this.runtime.dshHome, 'profiles', 'web'),
+    );
     const settings = updater.loadSettings(this.updaterContext()) as Record<string, unknown>;
     return onboardingLogic.needsPluginOnboarding({
       settings,
-      settingsFileExists: fs.existsSync(settingsPath),
-      profileDirExists: fs.existsSync(path.join(profileDir(this.runtime), 'node_modules')),
-      sharedProfileExists: fs.existsSync(
-        path.join(this.runtime.dshHome, 'profiles', 'web'),
-      ),
+      settingsFileExists,
+      profileDirExists,
+      sharedProfileExists,
     });
   }
 

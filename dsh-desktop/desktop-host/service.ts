@@ -82,6 +82,9 @@ export class DesktopHostService {
   private readonly recovery: RecoveryBusinessService;
   private readonly updates: UpdateBusinessService;
   private lastStartParams: (DshStartParams & { nodePath: string; dshBin: string }) | null = null;
+  // First-run detection must happen before profile initialization or plugin sync.
+  // Those operations create the very files used to distinguish a new user.
+  private onboardingNeeded: boolean | null = null;
 
   constructor(options: DesktopHostServiceOptions) {
     this.notify = options.notify;
@@ -190,16 +193,24 @@ export class DesktopHostService {
       if (message) this.notify('log', { tag: 'page-error', message });
       return { ok: true as const };
     });
-    peer.handle('onboard:needs', () => ({ needed: this.onboarding.needsOnboarding() }));
+    peer.handle('onboard:needs', () => ({
+      needed: this.onboardingNeeded ?? this.onboarding.needsOnboarding(),
+    }));
     peer.handle('onboard:list', (params) => {
       const input = (params ?? {}) as { mode?: unknown };
       return this.onboarding.list(input.mode);
     });
     peer.handle('onboard:submit', (params) => {
       const input = (params ?? {}) as { mode?: unknown; ids?: unknown };
-      return this.onboarding.submit(input.mode, input.ids);
+      const result = this.onboarding.submit(input.mode, input.ids);
+      if (result.ok) this.onboardingNeeded = false;
+      return result;
     });
-    peer.handle('onboard:close', () => this.onboarding.cancel());
+    peer.handle('onboard:close', () => {
+      const result = this.onboarding.cancel();
+      this.onboardingNeeded = false;
+      return result;
+    });
     peer.handle('menu:state', () => this.business.menuState());
     peer.handle('menu:action', (params) => {
       const input = (params ?? {}) as { action?: unknown; value?: unknown };
@@ -285,6 +296,9 @@ export class DesktopHostService {
     this.onboarding.configure(runtime);
     this.recovery.configure(runtime);
     this.updates.configure(runtime);
+    if (this.onboardingNeeded === null) {
+      this.onboardingNeeded = this.onboarding.needsOnboarding();
+    }
     ensureProfileRuntimeClosure(
       runtime.dshHome ?? path.join(os.homedir(), '.dsh'),
       options.dshBin,

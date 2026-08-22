@@ -141,6 +141,10 @@ test('desktop-host main starts dsh web through the same RPC boundary', async () 
     });
     assert.equal(started.ok, true);
     assert.match(String((started.result as { url: string }).url), /^http:\/\/127\.0\.0\.1:\d+\/$/);
+    // dsh:start creates web-desktop/node_modules while synchronizing bundled
+    // plugins. The first-run decision must already be frozen at that point.
+    const onboardingNeeded = await request(child, 'onboard-needs-1', 'onboard:needs');
+    assert.deepEqual(onboardingNeeded.result, { needed: true });
     const balancePackage = path.join(
       dir,
       'profiles',
@@ -189,14 +193,17 @@ test('desktop-host main starts dsh web through the same RPC boundary', async () 
     assert.equal((reloaded.result as { reused: boolean }).reused, true);
 
     const onboarding = await request(child, 'onboard-list-1', 'onboard:list', {
-      mode: 'rerun',
+      mode: 'first',
     });
-    assert.equal((onboarding.result as { mode: string }).mode, 'rerun');
+    assert.equal((onboarding.result as { mode: string }).mode, 'first');
+    assert.equal((onboarding.result as { current: unknown }).current, null);
     assert.ok(Array.isArray((onboarding.result as { catalog: unknown[] }).catalog));
     const cancelled = await request(child, 'onboard-close-1', 'onboard:close', {
-      mode: 'rerun',
+      mode: 'first',
     });
     assert.deepEqual(cancelled.result, { ok: true, cancelled: true });
+    const onboardingDone = await request(child, 'onboard-needs-2', 'onboard:needs');
+    assert.deepEqual(onboardingDone.result, { needed: false });
     const pageError = await request(child, 'page-error-1', 'diagnostic:page-error', {
       message: 'test page error',
     });
